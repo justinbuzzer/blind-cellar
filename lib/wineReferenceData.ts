@@ -280,6 +280,11 @@ export function isKnownGrapeVariety(value: string): boolean {
   return KNOWN_GRAPE_BY_NORMALIZED_NAME.has(normalizeText(value));
 }
 
+/** Resolves a raw grape name/alias to its canonical *display* form (e.g. "Shiraz" -> "Syrah"), or null if unrecognised. */
+export function resolveKnownGrapeDisplayName(raw: string): string | null {
+  return KNOWN_GRAPE_BY_NORMALIZED_NAME.get(normalizeText(raw)) ?? null;
+}
+
 /**
  * Canonicalises one grape name/token for comparison purposes: resolves known
  * aliases (Shiraz -> Syrah, etc.) to a single normalised form, and otherwise
@@ -306,4 +311,108 @@ export function blendTokensFromText(raw: string): string[] {
     .split(BLEND_SEPARATOR_REGEX)
     .map((token) => canonicalizeGrapeToken(token))
     .filter((token) => token.length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Structured blend selector helpers. The multi-select picker stores its
+// state as two pieces — curated `selectedGrapes` (checkbox picks) and free
+// `otherGrapesText` (for varieties not on the curated list) — and these
+// helpers turn that into the single canonical, alphabetically-ordered
+// component list used for both the flattened display/storage text
+// ("Cabernet Sauvignon / Merlot") and blend-vs-blend scoring, which already
+// works by re-tokenising that same flattened text (see `blendTokensFromText`
+// above) — so no scoring changes were needed for this feature.
+// ---------------------------------------------------------------------------
+
+// Deliberately excludes the hyphen that BLEND_SEPARATOR_REGEX uses: this
+// splits *free-typed* "other grapes" text, where a hyphen is more likely to
+// be part of a grape name than a separator (unlike the flattened blend
+// display text, which this app always joins with " / ").
+const OTHER_GRAPES_SEPARATOR_REGEX = /[,/;&\n]/;
+
+/**
+ * Splits the free-text "other grapes" field into individual entries,
+ * resolving any recognised grape/alias to its canonical display form (e.g.
+ * "Shiraz" -> "Syrah") and otherwise preserving the entry as typed. Trims
+ * whitespace and drops case-insensitive duplicates within the field itself.
+ */
+export function parseOtherGrapesText(raw: string): string[] {
+  const tokens = raw
+    .split(OTHER_GRAPES_SEPARATOR_REGEX)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const token of tokens) {
+    const display = resolveKnownGrapeDisplayName(token) ?? token;
+    const key = normalizeText(display);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(display);
+  }
+  return result;
+}
+
+/**
+ * Combines curated multi-select grapes with parsed "other grapes" free text
+ * into the final canonical blend component list: deduplicated (a grape
+ * already picked from the curated list can't also be re-added via free
+ * text), alphabetically ordered by canonical name (not selection order).
+ */
+export function combineBlendComponents(
+  selectedGrapes: string[],
+  otherGrapesText: string
+): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const grape of [...selectedGrapes, ...parseOtherGrapesText(otherGrapesText)]) {
+    const key = normalizeText(grape);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(grape);
+  }
+  return result.sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Best-effort reconstruction of the structured multi-select state from a
+ * flattened blend string that has no structured `grape_blend_components`
+ * record — either a historical blend from before this feature, or (in
+ * principle) any blend-mode value that only has the flattened text. Splits
+ * on the same separators as `blendTokensFromText`; any token that resolves
+ * to a known grape/alias becomes a pre-checked curated selection, and
+ * everything else is preserved verbatim (not re-canonicalised) in the
+ * "other grapes" text so nothing the contributor originally entered is lost
+ * or silently rewritten just by opening the edit form.
+ */
+export function reconstructBlendComponentsFromText(rawText: string): {
+  selectedGrapes: string[];
+  otherGrapesText: string;
+} {
+  const tokens = rawText
+    .split(BLEND_SEPARATOR_REGEX)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+
+  const selectedGrapes: string[] = [];
+  const otherTokens: string[] = [];
+  const seenSelected = new Set<string>();
+  for (const token of tokens) {
+    const known = resolveKnownGrapeDisplayName(token);
+    if (known) {
+      const key = normalizeText(known);
+      if (!seenSelected.has(key)) {
+        seenSelected.add(key);
+        selectedGrapes.push(known);
+      }
+    } else {
+      otherTokens.push(token);
+    }
+  }
+
+  return {
+    selectedGrapes: selectedGrapes.sort((a, b) => a.localeCompare(b)),
+    otherGrapesText: otherTokens.join(", "),
+  };
 }

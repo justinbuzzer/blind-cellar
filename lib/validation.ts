@@ -1,8 +1,13 @@
 import { BottleFormErrors } from "@/components/registration/BottleForm";
 import { BottleFormInput } from "@/lib/supabase/guestActions";
-import { isKnownCountry, isValidRegionForCountry } from "@/lib/wineReferenceData";
+import { combineBlendComponents, isKnownCountry, isValidRegionForCountry } from "@/lib/wineReferenceData";
+import { WineGuess } from "@/types/tasting";
 
 const FOUR_DIGIT_YEAR = /^\d{4}$/;
+
+/** Shared with guess-entry's final-submit check, so the guidance is worded identically everywhere it appears. */
+export const BLEND_MIN_GRAPES_MESSAGE =
+  "Select at least two grapes for a blend, or choose Single variety instead.";
 
 /** A bottle's vintage must be a plausible four-digit year, or "NV" (non-vintage). */
 export function isValidVintage(value: string): boolean {
@@ -29,11 +34,15 @@ export function validateBottleForm(input: BottleFormInput): BottleFormErrors {
   }
   if (!input.grapeBlendMode) {
     errors.grapeBlendMode = "Choose single variety or blend.";
-  } else if (!input.grapeBlend.trim()) {
-    errors.grapeBlend =
-      input.grapeBlendMode === "single"
-        ? "Select a grape variety."
-        : "Describe the blend.";
+  } else if (input.grapeBlendMode === "single") {
+    if (!input.grapeBlend.trim()) {
+      errors.grapeBlend = "Select a grape variety.";
+    }
+  } else {
+    const components = combineBlendComponents(input.selectedGrapes, input.otherGrapesText);
+    if (components.length < 2) {
+      errors.grapeBlend = BLEND_MIN_GRAPES_MESSAGE;
+    }
   }
   if (!input.producer.trim()) errors.producer = "Producer is required.";
   if (!input.wineName.trim()) errors.wineName = "Wine / cuvée is required.";
@@ -42,10 +51,26 @@ export function validateBottleForm(input: BottleFormInput): BottleFormErrors {
   } else if (!isValidVintage(input.vintage)) {
     errors.vintage = "Enter a valid four-digit year, or “NV”.";
   }
+  if (!input.wineStyle) {
+    errors.wineStyle = "Choose a wine style.";
+  }
 
   return errors;
 }
 
 export function hasBottleFormErrors(errors: BottleFormErrors): boolean {
   return Object.keys(errors).length > 0;
+}
+
+/**
+ * Guess entry stays optional/incomplete-friendly for autosave (a blank
+ * grape/blend guess earns zero points, not a validation error) — but a
+ * blend guess with exactly one grape selected is a likely mis-click rather
+ * than an intentional guess, so it's blocked at final submit, same as a
+ * missing rating. Zero grapes (blank) and two-or-more are both fine.
+ */
+export function hasIncompleteBlend(guess: WineGuess): boolean {
+  if (guess.grapeBlendMode !== "blend") return false;
+  const components = combineBlendComponents(guess.selectedGrapes, guess.otherGrapesText);
+  return components.length === 1;
 }

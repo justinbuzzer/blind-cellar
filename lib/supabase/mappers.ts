@@ -1,4 +1,5 @@
 import { GuestSubmission, WineAnswerKey, WineGuess } from "@/types/tasting";
+import { reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
 import { GuestGuessDTO, GuestVisibleWineRow, RevealedWineGuessRow } from "./types";
 
 /**
@@ -20,6 +21,8 @@ export function mapRevealedWineRowToAnswerKey(row: GuestVisibleWineRow): WineAns
     producer: row.producer ?? "",
     wineName: row.wine_cuvee ?? "",
     vintage: row.vintage ?? "",
+    wineStyle: row.wine_style ?? "other",
+    tastingOrder: row.tasting_order,
     hostNotes: row.host_notes ?? undefined,
   };
 }
@@ -29,14 +32,36 @@ export function mapRevealedWineRowToAnswerKey(row: GuestVisibleWineRow): WineAns
  * domain type, for use as *editable* guess-entry form state. A missing mode
  * (legacy guess row, or a wine never touched yet) defaults to "single" here
  * since the guess form always needs a concrete segment selected.
+ *
+ * A blend-mode draft with no structured selectedGrapes/otherGrapesText (a
+ * guess saved before the structured picker existed) falls back to
+ * re-parsing the flattened grapeBlendGuess text, same as
+ * `bottleFormInputFromDto` does for bottles — see
+ * `reconstructBlendComponentsFromText`.
  */
 export function mapGuestGuessDtoToWineGuess(dto: GuestGuessDTO): WineGuess {
+  const grapeBlendMode = dto.grapeBlendMode ?? "single";
+  let selectedGrapes = dto.selectedGrapes ?? [];
+  let otherGrapesText = dto.otherGrapesText ?? "";
+  if (
+    grapeBlendMode === "blend" &&
+    selectedGrapes.length === 0 &&
+    !otherGrapesText &&
+    dto.grapeBlendGuess
+  ) {
+    const reconstructed = reconstructBlendComponentsFromText(dto.grapeBlendGuess);
+    selectedGrapes = reconstructed.selectedGrapes;
+    otherGrapesText = reconstructed.otherGrapesText;
+  }
+
   return {
     wineId: dto.wineId,
     country: dto.countryGuess,
     region: dto.regionGuess,
-    grapeBlendMode: dto.grapeBlendMode ?? "single",
+    grapeBlendMode,
     grapeBlend: dto.grapeBlendGuess,
+    selectedGrapes,
+    otherGrapesText,
     producer: dto.producerGuess,
     wineName: dto.wineCuveeGuess,
     vintage: dto.vintageGuess,
@@ -49,7 +74,10 @@ export function mapGuestGuessDtoToWineGuess(dto: GuestGuessDTO): WineGuess {
 /**
  * Maps a post-reveal `revealed_wine_guesses` row to the domain type, for
  * read-only scoring/display. Preserves an unknown mode as "" — see
- * `mapRevealedWineRowToAnswerKey`.
+ * `mapRevealedWineRowToAnswerKey`. Scoring and display only ever need the
+ * flattened `grapeBlend` text (see `lib/scoring.ts`), so the structured
+ * selectedGrapes/otherGrapesText fields are just left empty here rather than
+ * read off the row.
  */
 export function mapRevealedGuessRowToWineGuess(row: RevealedWineGuessRow): WineGuess {
   return {
@@ -58,6 +86,8 @@ export function mapRevealedGuessRowToWineGuess(row: RevealedWineGuessRow): WineG
     region: row.region_guess,
     grapeBlendMode: row.grape_blend_mode ?? "",
     grapeBlend: row.grape_style_guess,
+    selectedGrapes: [],
+    otherGrapesText: "",
     producer: row.producer_guess,
     wineName: row.wine_cuvee_guess,
     vintage: row.vintage_guess,

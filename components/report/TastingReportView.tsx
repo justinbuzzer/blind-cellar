@@ -55,7 +55,12 @@ export function TastingReportView({ report }: TastingReportViewProps) {
         </h2>
         <div className="flex flex-col gap-4">
           {wineResults.map((result, index) => (
-            <WineResultCard key={result.wine.id} result={result} rank={index + 1} />
+            <WineResultCard
+              key={result.wine.id}
+              result={result}
+              rank={index + 1}
+              totalWines={wineResults.length}
+            />
           ))}
         </div>
       </section>

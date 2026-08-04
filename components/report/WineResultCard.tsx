@@ -3,6 +3,7 @@ import {
   CORE_MAX_POINTS,
   FieldScore,
   TOTAL_MAX_POINTS_PER_WINE,
+  WINE_STYLE_LABELS,
   WineResult,
 } from "@/types/tasting";
 import { Card } from "@/components/Card";
@@ -21,9 +22,25 @@ const FIELD_LABELS: Record<string, string> = {
 interface WineResultCardProps {
   result: WineResult;
   rank: number;
+  totalWines: number;
 }
 
-export function WineResultCard({ result, rank }: WineResultCardProps) {
+function ordinal(n: number): string {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1:
+      return `${n}st`;
+    case 2:
+      return `${n}nd`;
+    case 3:
+      return `${n}rd`;
+    default:
+      return `${n}th`;
+  }
+}
+
+export function WineResultCard({ result, rank, totalWines }: WineResultCardProps) {
   const { wine } = result;
 
   return (
@@ -37,6 +54,10 @@ export function WineResultCard({ result, rank }: WineResultCardProps) {
         </h3>
         <p className="text-sm text-cellar-text/70">
           {[wine.country, wine.region, wine.grapeBlend].filter(Boolean).join(" · ")}
+        </p>
+        <p className="mt-1 text-sm text-cellar-text/70">
+          Style: {WINE_STYLE_LABELS[wine.wineStyle]} · Served {ordinal(wine.tastingOrder)}{" "}
+          (tasting order {wine.tastingOrder} of {totalWines})
         </p>
         {wine.contributorName && (
           <p className="mt-1 text-sm text-cellar-text/70">

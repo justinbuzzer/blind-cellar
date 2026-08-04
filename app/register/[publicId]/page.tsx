@@ -7,6 +7,7 @@ import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { Modal } from "@/components/Modal";
 import { HomeLink } from "@/components/navigation/HomeLink";
+import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { deleteBottle, getRegistrationState } from "@/lib/supabase/guestActions";
 import { friendlyRpcError, MyBottleDTO, RegistrationStateResponse } from "@/lib/supabase/types";
@@ -141,7 +142,10 @@ export default function RegistrationHomePage() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-6 px-6 py-10">
-      <HomeLink />
+      <div className="flex items-center gap-2">
+        <HomeLink />
+        <HostControlsLink sessionPublicId={params.publicId} />
+      </div>
       <div>
         <h1 className="text-2xl font-semibold text-cellar-maroon-dark">
           {state.session.title}

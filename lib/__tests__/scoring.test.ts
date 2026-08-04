@@ -5,6 +5,7 @@ import {
   scoreGrapeBlend,
   scoreWineGuess,
 } from "@/lib/scoring";
+import { combineBlendComponents } from "@/lib/wineReferenceData";
 import { CORE_MAX_POINTS, TOTAL_MAX_POINTS_PER_WINE, WineAnswerKey, WineGuess } from "@/types/tasting";
 
 describe("scoreCoreTextField", () => {
@@ -141,6 +142,49 @@ describe("scoreGrapeBlend", () => {
   });
 });
 
+describe("scoreGrapeBlend via the structured picker's derived text (combineBlendComponents)", () => {
+  // The structured multi-select never calls scoreGrapeBlend directly — it
+  // only ever produces the flattened, alphabetised "/"-joined text that
+  // blendTokensFromText re-tokenises, same as any other blend text. These
+  // confirm that pipeline actually holds end-to-end for the new picker's
+  // output, so no scoring changes were needed for this feature.
+  function flatten(selectedGrapes: string[], otherGrapesText: string): string {
+    return combineBlendComponents(selectedGrapes, otherGrapesText).join(" / ");
+  }
+
+  it("scores full points when the same grapes are picked in a different order", () => {
+    const answerText = flatten(["Cabernet Sauvignon", "Merlot"], "");
+    const guessText = flatten(["Merlot", "Cabernet Sauvignon"], "");
+    const result = scoreGrapeBlend("blend", guessText, "blend", answerText);
+    expect(result.correct).toBe(true);
+    expect(result.points).toBe(30);
+  });
+
+  it("scores full points for an alias match (Syrah selected vs. Shiraz typed as other-grapes)", () => {
+    const answerText = flatten(["Grenache", "Syrah"], "");
+    const guessText = flatten(["Grenache"], "Shiraz");
+    const result = scoreGrapeBlend("blend", guessText, "blend", answerText);
+    expect(result.correct).toBe(true);
+    expect(result.points).toBe(30);
+  });
+
+  it("scores zero for a partial overlap — missing one of three answer components", () => {
+    const answerText = flatten(["Grenache", "Syrah", "Mourvèdre"], "");
+    const guessText = flatten(["Grenache", "Syrah"], "");
+    const result = scoreGrapeBlend("blend", guessText, "blend", answerText);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+
+  it("scores zero when a curated pick and an unlisted grape combine to a set the answer doesn't fully match", () => {
+    const answerText = flatten(["Grenache", "Syrah"], "");
+    const guessText = flatten(["Grenache"], "Counoise");
+    const result = scoreGrapeBlend("blend", guessText, "blend", answerText);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+});
+
 const answer: WineAnswerKey = {
   id: "wine-1",
   code: "Wine A",
@@ -151,6 +195,8 @@ const answer: WineAnswerKey = {
   producer: "Giacomo Conterno",
   wineName: "Cascina Francia",
   vintage: "2016",
+  wineStyle: "red",
+  tastingOrder: 1,
 };
 
 function makeGuess(overrides: Partial<WineGuess> = {}): WineGuess {
@@ -160,6 +206,8 @@ function makeGuess(overrides: Partial<WineGuess> = {}): WineGuess {
     region: "Piedmont",
     grapeBlendMode: "single",
     grapeBlend: "Nebbiolo",
+    selectedGrapes: [],
+    otherGrapesText: "",
     producer: "Giacomo Conterno",
     wineName: "Cascina Francia",
     vintage: "2016",

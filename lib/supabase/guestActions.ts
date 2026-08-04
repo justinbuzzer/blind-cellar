@@ -1,5 +1,6 @@
 import { SupabaseClient } from "@supabase/supabase-js";
-import { GrapeBlendMode, WineGuess } from "@/types/tasting";
+import { GrapeBlendMode, WineGuess, WineStyle } from "@/types/tasting";
+import { reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
 import {
   GuestSessionStateResponse,
   JoinSessionResponse,
@@ -51,6 +52,10 @@ export async function upsertGuess(
     p_rating: guess.rating,
     p_confidence: guess.confidence,
     p_tasting_note: guess.note || null,
+    p_grape_blend_components:
+      guess.grapeBlendMode === "blend"
+        ? { selectedGrapes: guess.selectedGrapes, otherGrapesText: guess.otherGrapesText }
+        : null,
   });
 }
 
@@ -78,10 +83,21 @@ export interface BottleFormInput {
   region: string;
   grapeBlendMode: GrapeBlendMode | "";
   grapeBlend: string;
+  /** Blend mode only: curated grapes picked from the multi-select. */
+  selectedGrapes: string[];
+  /** Blend mode only: raw free text for varieties not on the curated list. */
+  otherGrapesText: string;
   producer: string;
   wineName: string;
   vintage: string;
+  wineStyle: WineStyle | "";
   notes: string;
+}
+
+function grapeBlendComponentsPayload(bottle: BottleFormInput) {
+  return bottle.grapeBlendMode === "blend"
+    ? { selectedGrapes: bottle.selectedGrapes, otherGrapesText: bottle.otherGrapesText }
+    : null;
 }
 
 export async function registerBottle(
@@ -99,6 +115,8 @@ export async function registerBottle(
     p_wine_cuvee: bottle.wineName,
     p_vintage: bottle.vintage,
     p_notes: bottle.notes,
+    p_wine_style: bottle.wineStyle || null,
+    p_grape_blend_components: grapeBlendComponentsPayload(bottle),
   });
   return { data: data as RegisterBottleResponse | null, error };
 }
@@ -120,6 +138,8 @@ export async function updateBottle(
     p_wine_cuvee: bottle.wineName,
     p_vintage: bottle.vintage,
     p_notes: bottle.notes,
+    p_wine_style: bottle.wineStyle || null,
+    p_grape_blend_components: grapeBlendComponentsPayload(bottle),
   });
 }
 
@@ -139,16 +159,39 @@ export async function deleteBottle(
  * editable bottle-form state. A missing mode (bottle registered before this
  * field existed) defaults to "single" since the form always needs a
  * concrete segment selected — matches `mapGuestGuessDtoToWineGuess`.
+ *
+ * A blend bottle with no structured selectedGrapes/otherGrapesText (one
+ * registered before the structured picker existed) falls back to
+ * re-parsing the flattened grapeBlend text — see
+ * `reconstructBlendComponentsFromText` — so re-editing an old blend doesn't
+ * silently wipe it out.
  */
 export function bottleFormInputFromDto(bottle: MyBottleDTO): BottleFormInput {
+  const grapeBlendMode = bottle.grapeBlendMode ?? "single";
+  let selectedGrapes = bottle.selectedGrapes ?? [];
+  let otherGrapesText = bottle.otherGrapesText ?? "";
+  if (
+    grapeBlendMode === "blend" &&
+    selectedGrapes.length === 0 &&
+    !otherGrapesText &&
+    bottle.grapeBlend
+  ) {
+    const reconstructed = reconstructBlendComponentsFromText(bottle.grapeBlend);
+    selectedGrapes = reconstructed.selectedGrapes;
+    otherGrapesText = reconstructed.otherGrapesText;
+  }
+
   return {
     country: bottle.country,
     region: bottle.region,
-    grapeBlendMode: bottle.grapeBlendMode ?? "single",
+    grapeBlendMode,
     grapeBlend: bottle.grapeBlend,
+    selectedGrapes,
+    otherGrapesText,
     producer: bottle.producer,
     wineName: bottle.wineCuvee,
     vintage: bottle.vintage,
+    wineStyle: bottle.wineStyle,
     notes: bottle.notes ?? "",
   };
 }

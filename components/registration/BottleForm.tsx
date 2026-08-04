@@ -1,4 +1,3 @@
-import { GrapeBlendMode } from "@/types/tasting";
 import { BottleFormInput } from "@/lib/supabase/guestActions";
 import {
   COUNTRY_OPTIONS,
@@ -10,8 +9,12 @@ import { TextField } from "@/components/TextField";
 import { SelectField } from "@/components/SelectField";
 import { TextAreaField } from "@/components/TextAreaField";
 import { VintageField } from "@/components/VintageField";
-import { GrapeBlendField } from "@/components/GrapeBlendField";
+import { GrapeBlendField, GrapeBlendFormValue } from "@/components/GrapeBlendField";
+import { WineStyleField } from "@/components/WineStyleField";
 import { Button } from "@/components/Button";
+
+const WINE_CUVEE_HINT =
+  "Add the specific wine name, vineyard, cru, or appellation where relevant — e.g. Nuits-Saint-Georges, Margaux, or Santa Rita Hills.";
 
 export type BottleFormErrors = Partial<Record<keyof BottleFormInput, string>>;
 
@@ -46,8 +49,8 @@ export function BottleForm({
     });
   }
 
-  function setGrapeBlendMode(mode: GrapeBlendMode) {
-    onChange({ ...value, grapeBlendMode: mode, grapeBlend: "" });
+  function setGrapeBlend(next: GrapeBlendFormValue) {
+    onChange({ ...value, ...next });
   }
 
   return (
@@ -82,16 +85,20 @@ export function BottleForm({
             label="Wine / cuvée"
             value={value.wineName}
             error={errors.wineName}
+            hint={WINE_CUVEE_HINT}
             maxLength={100}
             onChange={(e) => set("wineName", e.target.value)}
           />
         </div>
 
         <GrapeBlendField
-          mode={value.grapeBlendMode || "single"}
-          value={value.grapeBlend}
-          onModeChange={setGrapeBlendMode}
-          onValueChange={(next) => set("grapeBlend", next)}
+          value={{
+            grapeBlendMode: value.grapeBlendMode,
+            grapeBlend: value.grapeBlend,
+            selectedGrapes: value.selectedGrapes,
+            otherGrapesText: value.otherGrapesText,
+          }}
+          onChange={setGrapeBlend}
           error={errors.grapeBlendMode ?? errors.grapeBlend}
         />
 
@@ -99,6 +106,12 @@ export function BottleForm({
           value={value.vintage}
           onChange={(next) => set("vintage", next)}
           error={errors.vintage}
+        />
+
+        <WineStyleField
+          value={value.wineStyle}
+          onChange={(next) => set("wineStyle", next)}
+          error={errors.wineStyle}
         />
 
         <TextAreaField

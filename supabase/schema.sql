@@ -92,6 +92,15 @@ create table if not exists wines (
   -- MIGRATION-SENSITIVE: who registered this bottle. Null for bottles
   -- created before this feature existed (host-entered, no single owner).
   contributor_guest_id uuid references guests(id),
+  -- MIGRATION-SENSITIVE: mutable serving/tasting sequence, arranged by the
+  -- host during registration and frozen once collecting starts. Distinct
+  -- from bottle_number (permanent, never reused) and display_order (legacy
+  -- registration-insertion-order column) — see README "Bottle number vs
+  -- tasting order". Nullable here only so a fresh CREATE TABLE and the
+  -- migration backfill below share one code path; register_bottle always
+  -- sets it at insert time, and the NOT NULL + unique constraints are added
+  -- once every row is guaranteed to have a value (see migration step 9).
+  tasting_order int,
   country text not null,
   region text not null,
   -- Physical column name kept for migration safety (see README); holds the
@@ -103,9 +112,27 @@ create table if not exists wines (
   -- back safely rather than guessing. New bottles always set 'single' or
   -- 'blend'.
   grape_blend_mode text check (grape_blend_mode is null or grape_blend_mode in ('single', 'blend')),
+  -- MIGRATION-SENSITIVE: structured source data for the blend multi-select
+  -- UI — {"selectedGrapes": [...curated picks], "otherGrapesText": "..."}.
+  -- Null for single-mode bottles and for blends that predate this field
+  -- (those fall back to re-parsing the flattened grape_style text — see
+  -- reconstructBlendComponentsFromText in lib/wineReferenceData.ts). Not the
+  -- source of truth for scoring/display — grape_style (the flattened,
+  -- alphabetised "Cabernet Sauvignon / Merlot" text) still is, this only
+  -- exists so a blend can be re-edited without losing which grapes were
+  -- picked from the curated list vs. typed as free text. Never exposed to
+  -- anon directly or in any pre-reveal view — see the grants section.
+  grape_blend_components jsonb,
   producer text not null,
   wine_cuvee text not null,
   vintage text not null,
+  -- MIGRATION-SENSITIVE: contributor-classified style, required for every
+  -- new bottle. Nullable here for the same fresh-install/migration reason as
+  -- tasting_order above; backfilled to 'other' and made NOT NULL + check-
+  -- constrained in migration step 8. Not a scored/guessed field — shown to
+  -- the contributor for their own bottles, to the host as style + anonymous
+  -- number only, and in revealed results.
+  wine_style text,
   -- MIGRATION-SENSITIVE: price band is no longer collected, scored, or
   -- displayed (see README) — nullable so new bottles simply never set it.
   -- Existing values are left in place but unused.
@@ -130,6 +157,9 @@ create table if not exists wine_guesses (
   grape_style_guess text not null default '',
   -- MIGRATION-SENSITIVE: new nullable field, same meaning as wines.grape_blend_mode.
   grape_blend_mode text check (grape_blend_mode is null or grape_blend_mode in ('single', 'blend')),
+  -- MIGRATION-SENSITIVE: same meaning/shape as wines.grape_blend_components,
+  -- for a guess's own in-progress blend selection.
+  grape_blend_components jsonb,
   producer_guess text not null default '',
   wine_cuvee_guess text not null default '',
   vintage_guess text not null default '',
@@ -182,6 +212,8 @@ alter table tasting_sessions add column if not exists next_bottle_number int not
 alter table wines add column if not exists bottle_number int;
 alter table wines add column if not exists contributor_guest_id uuid references guests(id);
 alter table wines add column if not exists updated_at timestamptz not null default now();
+alter table wines add column if not exists grape_blend_components jsonb;
+alter table wine_guesses add column if not exists grape_blend_components jsonb;
 
 -- 1a. Grape/blend + price-band update (see README "Scoring and grape/blend"):
 -- add the new nullable grape_blend_mode columns, and stop requiring
@@ -257,6 +289,46 @@ end $$;
 -- rows all have host_guest_id = null, which trivially satisfies the FK).
 alter table tasting_sessions validate constraint tasting_sessions_host_guest_id_fkey;
 
+-- 8. Wine-style classification (see README "Wine style"): add the column,
+-- backfill existing rows to the safe default 'other' (legacy bottles predate
+-- this field and have no real classification on file), then require it.
+alter table wines add column if not exists wine_style text;
+update wines set wine_style = 'other' where wine_style is null;
+alter table wines alter column wine_style set not null;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'wines_wine_style_check'
+  ) then
+    alter table wines add constraint wines_wine_style_check
+      check (wine_style in ('bubbles', 'white', 'red', 'sweet', 'other'));
+  end if;
+end $$;
+
+-- 9. Tasting order (see README "Bottle number vs tasting order"): add the
+-- column, backfill from the existing display_order (0-based -> 1-based;
+-- already populated on every row, legacy or new), then require it and make
+-- it unique per session. Every statement here is a no-op on a fresh install,
+-- where register_bottle already sets tasting_order at insert time.
+alter table wines add column if not exists tasting_order int;
+update wines set tasting_order = display_order + 1 where tasting_order is null;
+alter table wines alter column tasting_order set not null;
+-- MIGRATION-SENSITIVE: must be DEFERRABLE INITIALLY DEFERRED, not a plain
+-- unique constraint. reorder_wines and delete_bottle's repacking step both
+-- reassign tasting_order for multiple rows of the same session in a single
+-- UPDATE (e.g. swapping two bottles' positions) — a non-deferrable unique
+-- index checks each row immediately as it's written and can spuriously
+-- reject a mid-statement collision (row A moving to row B's old value
+-- before row B has moved off it), even though the final result is a valid
+-- permutation. Deferring the check to end-of-statement fixes this. A
+-- deferrable constraint can't be altered in place (Postgres only supports
+-- toggling INITIALLY DEFERRED/IMMEDIATE on an already-deferrable
+-- constraint), so this drops and re-adds it unconditionally — safe, since
+-- the data is already valid and unique by this point in the migration.
+alter table wines drop constraint if exists wines_session_id_tasting_order_key;
+alter table wines add constraint wines_session_id_tasting_order_key
+  unique (session_id, tasting_order) deferrable initially deferred;
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security (enabled everywhere; anon gets no default table grants,
 -- see the GRANT section below — RLS is defense-in-depth on top of that).
@@ -324,7 +396,13 @@ select
   case when s.status = 'revealed' then w.contributor_guest_id else null end as contributor_guest_id,
   -- Appended at the end deliberately: CREATE OR REPLACE VIEW can only add
   -- trailing columns, never reorder or remove existing ones.
-  case when s.status = 'revealed' then w.grape_blend_mode else null end as grape_blend_mode
+  case when s.status = 'revealed' then w.grape_blend_mode else null end as grape_blend_mode,
+  -- Wine style is an answer-key field (masked until revealed), same as
+  -- country/region/etc above. Tasting order is NOT masked — the serving
+  -- sequence itself is meant to be visible to every participant throughout,
+  -- only the style/identity of each bottle is secret pre-reveal.
+  case when s.status = 'revealed' then w.wine_style else null end as wine_style,
+  w.tasting_order
 from wines w
 join tasting_sessions s on s.id = w.session_id;
 
@@ -340,6 +418,56 @@ where s.status = 'revealed';
 -- of the caller's (anon's) own grants. Every one validates its token before
 -- doing anything.
 -- ---------------------------------------------------------------------------
+
+-- Shared shape/length/duplicate validation for the structured blend payload
+-- (see wines.grape_blend_components / wine_guesses.grape_blend_components
+-- above), called from register_bottle, update_bottle, and upsert_wine_guess.
+-- Not a table-touching function, so it needs no SECURITY DEFINER/search_path
+-- of its own — it only ever runs inside a caller that already has those.
+create or replace function validate_grape_blend_components(
+  p_mode text,
+  p_components jsonb
+) returns void
+language plpgsql
+as $$
+declare
+  v_selected jsonb;
+begin
+  if p_components is null then
+    return;
+  end if;
+  if coalesce(p_mode, '') <> 'blend' then
+    raise exception 'invalid_grape_blend_components';
+  end if;
+  if jsonb_typeof(p_components) <> 'object' then
+    raise exception 'invalid_grape_blend_components';
+  end if;
+
+  v_selected := coalesce(p_components->'selectedGrapes', '[]'::jsonb);
+  if jsonb_typeof(v_selected) <> 'array' then
+    raise exception 'invalid_grape_blend_components';
+  end if;
+  if jsonb_array_length(v_selected) > 20 then
+    raise exception 'invalid_grape_blend_components';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements_text(v_selected) e
+    where length(e) = 0 or length(e) > 100
+  ) then
+    raise exception 'invalid_grape_blend_components';
+  end if;
+  if (
+    select count(*) from jsonb_array_elements_text(v_selected)
+  ) <> (
+    select count(distinct lower(e)) from jsonb_array_elements_text(v_selected) e
+  ) then
+    raise exception 'invalid_grape_blend_components';
+  end if;
+  if length(coalesce(p_components->>'otherGrapesText', '')) > 500 then
+    raise exception 'invalid_grape_blend_components';
+  end if;
+end;
+$$;
 
 -- The old create_tasting_session took a `jsonb` array of wines and created
 -- them all at once. Sessions no longer collect wines at creation time — bottles
@@ -442,8 +570,10 @@ begin
       select jsonb_agg(jsonb_build_object(
         'id', w.id,
         'bottleNumber', w.bottle_number,
-        'anonymousCode', w.anonymous_code
-      ) order by w.bottle_number)
+        'anonymousCode', w.anonymous_code,
+        'wineStyle', w.wine_style,
+        'tastingOrder', w.tasting_order
+      ) order by w.tasting_order)
       from wines w where w.session_id = v_session.id
     ), '[]'::jsonb),
     'guests', coalesce((
@@ -616,9 +746,12 @@ begin
         'region', w.region,
         'grapeBlendMode', w.grape_blend_mode,
         'grapeBlend', w.grape_style,
+        'selectedGrapes', coalesce(w.grape_blend_components->'selectedGrapes', '[]'::jsonb),
+        'otherGrapesText', coalesce(w.grape_blend_components->>'otherGrapesText', ''),
         'producer', w.producer,
         'wineCuvee', w.wine_cuvee,
         'vintage', w.vintage,
+        'wineStyle', w.wine_style,
         'notes', w.host_notes
       ) order by w.bottle_number)
       from wines w where w.session_id = v_session.id and w.contributor_guest_id = v_guest.id
@@ -642,10 +775,13 @@ $$;
 -- rather than max(bottle_number)+1, is what guarantees a deleted bottle's
 -- number is never reused — max() would "forget" a deleted high-water-mark,
 -- a plain counter never decreases.
--- Signature changed (price band removed, grape/blend mode added) —
--- explicitly drop the old overload so it can't be called with stale
--- semantics; safe/no-op on a fresh install.
+-- Signature changed (price band removed, grape/blend mode added, wine style
+-- added, structured grape/blend components added) — explicitly drop old
+-- overloads so they can't be called with stale semantics; safe/no-op on a
+-- fresh install.
 drop function if exists register_bottle(text, text, text, text, text, text, text, text, text);
+drop function if exists register_bottle(text, text, text, text, text, text, text, text, text, text);
+drop function if exists register_bottle(text, text, text, text, text, text, text, text, text, text, jsonb);
 
 create or replace function register_bottle(
   p_guest_token text,
@@ -656,7 +792,9 @@ create or replace function register_bottle(
   p_producer text,
   p_wine_cuvee text,
   p_vintage text,
-  p_notes text
+  p_notes text,
+  p_wine_style text,
+  p_grape_blend_components jsonb
 ) returns jsonb
 language plpgsql
 security definer
@@ -666,6 +804,7 @@ declare
   v_guest guests%rowtype;
   v_session tasting_sessions%rowtype;
   v_next_number int;
+  v_next_order int;
   v_wine_id uuid;
 begin
   select * into v_guest from guests where guest_token = p_guest_token;
@@ -681,6 +820,10 @@ begin
   if p_grape_blend_mode not in ('single', 'blend') then
     raise exception 'invalid_grape_blend_mode';
   end if;
+  if p_wine_style not in ('bubbles', 'white', 'red', 'sweet', 'other') then
+    raise exception 'invalid_wine_style';
+  end if;
+  perform validate_grape_blend_components(p_grape_blend_mode, p_grape_blend_components);
   if btrim(coalesce(p_country, '')) = '' or btrim(coalesce(p_region, '')) = ''
      or btrim(coalesce(p_grape_blend, '')) = ''
      or btrim(coalesce(p_producer, '')) = '' or btrim(coalesce(p_wine_cuvee, '')) = ''
@@ -689,14 +832,20 @@ begin
   end if;
 
   v_next_number := v_session.next_bottle_number;
+  -- New bottles always join at the end of the current tasting order — the
+  -- session row is already locked above, so this is race-free with
+  -- concurrent registrations, reorders, and deletes.
+  select coalesce(max(tasting_order), 0) + 1 into v_next_order
+  from wines where session_id = v_session.id;
 
   insert into wines (
-    session_id, display_order, bottle_number, anonymous_code, contributor_guest_id,
-    country, region, grape_style, grape_blend_mode, producer, wine_cuvee, vintage, host_notes
+    session_id, display_order, bottle_number, tasting_order, anonymous_code, contributor_guest_id,
+    country, region, grape_style, grape_blend_mode, grape_blend_components, producer, wine_cuvee,
+    vintage, wine_style, host_notes
   ) values (
-    v_session.id, v_next_number - 1, v_next_number, 'Bottle ' || v_next_number, v_guest.id,
-    btrim(p_country), btrim(p_region), btrim(p_grape_blend), p_grape_blend_mode, btrim(p_producer),
-    btrim(p_wine_cuvee), btrim(p_vintage), nullif(btrim(coalesce(p_notes, '')), '')
+    v_session.id, v_next_number - 1, v_next_number, v_next_order, 'Bottle ' || v_next_number, v_guest.id,
+    btrim(p_country), btrim(p_region), btrim(p_grape_blend), p_grape_blend_mode, p_grape_blend_components,
+    btrim(p_producer), btrim(p_wine_cuvee), btrim(p_vintage), p_wine_style, nullif(btrim(coalesce(p_notes, '')), '')
   )
   returning wines.id into v_wine_id;
 
@@ -708,9 +857,12 @@ $$;
 
 -- Participant: edit their own bottle. Bottle number and anonymous_code are
 -- never touched (not in the SET list), so they're preserved exactly.
--- Signature changed (price band removed, grape/blend mode added) —
--- explicitly drop the old overload; safe/no-op on a fresh install.
+-- Signature changed (price band removed, grape/blend mode added, wine style
+-- added, structured grape/blend components added) — explicitly drop old
+-- overloads; safe/no-op on a fresh install.
 drop function if exists update_bottle(text, uuid, text, text, text, text, text, text, text, text);
+drop function if exists update_bottle(text, uuid, text, text, text, text, text, text, text, text, text);
+drop function if exists update_bottle(text, uuid, text, text, text, text, text, text, text, text, text, jsonb);
 
 create or replace function update_bottle(
   p_guest_token text,
@@ -722,7 +874,9 @@ create or replace function update_bottle(
   p_producer text,
   p_wine_cuvee text,
   p_vintage text,
-  p_notes text
+  p_notes text,
+  p_wine_style text,
+  p_grape_blend_components jsonb
 ) returns void
 language plpgsql
 security definer
@@ -750,6 +904,10 @@ begin
   if p_grape_blend_mode not in ('single', 'blend') then
     raise exception 'invalid_grape_blend_mode';
   end if;
+  if p_wine_style not in ('bubbles', 'white', 'red', 'sweet', 'other') then
+    raise exception 'invalid_wine_style';
+  end if;
+  perform validate_grape_blend_components(p_grape_blend_mode, p_grape_blend_components);
   if btrim(coalesce(p_country, '')) = '' or btrim(coalesce(p_region, '')) = ''
      or btrim(coalesce(p_grape_blend, '')) = ''
      or btrim(coalesce(p_producer, '')) = '' or btrim(coalesce(p_wine_cuvee, '')) = ''
@@ -762,9 +920,11 @@ begin
     region = btrim(p_region),
     grape_style = btrim(p_grape_blend),
     grape_blend_mode = p_grape_blend_mode,
+    grape_blend_components = p_grape_blend_components,
     producer = btrim(p_producer),
     wine_cuvee = btrim(p_wine_cuvee),
     vintage = btrim(p_vintage),
+    wine_style = p_wine_style,
     host_notes = nullif(btrim(coalesce(p_notes, '')), '')
   where id = p_wine_id;
 end;
@@ -772,7 +932,10 @@ $$;
 
 -- Participant: delete their own bottle. The bottle_number is never reused
 -- (see register_bottle's next_bottle_number counter) and remaining bottles
--- are never renumbered.
+-- keep their bottle_number exactly as-is. tasting_order, however, must stay
+-- a contiguous 1..N permutation, so it's re-packed after the delete (the
+-- session row is locked first to serialize this against concurrent
+-- register/update/reorder calls on the same session).
 create or replace function delete_bottle(
   p_guest_token text,
   p_wine_id uuid
@@ -796,12 +959,80 @@ begin
     raise exception 'bottle_not_found';
   end if;
 
-  select * into v_session from tasting_sessions where id = v_wine.session_id;
+  select * into v_session from tasting_sessions where id = v_wine.session_id for update;
   if v_session.status <> 'registration' then
     raise exception 'registration_closed';
   end if;
 
   delete from wines where id = p_wine_id;
+
+  update wines w
+  set tasting_order = ranked.new_order
+  from (
+    select id, row_number() over (order by tasting_order) as new_order
+    from wines where session_id = v_session.id
+  ) ranked
+  where w.id = ranked.id and w.tasting_order <> ranked.new_order;
+end;
+$$;
+
+-- Host: rearrange the tasting order. p_wine_ids must be a full permutation
+-- of every wine currently in the session, in the desired new order — the
+-- array position (1-based) becomes each wine's new tasting_order. Never
+-- touches bottle_number. Only allowed during registration; the order is
+-- frozen the moment start_tasting_session moves the session to collecting.
+create or replace function reorder_wines(
+  p_public_id uuid,
+  p_host_token text,
+  p_wine_ids uuid[]
+) returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_session tasting_sessions%rowtype;
+  v_count int;
+  v_distinct_count int;
+  v_matching_count int;
+  v_session_bottle_count int;
+begin
+  select * into v_session from tasting_sessions where public_id = p_public_id for update;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+  if v_session.host_token_hash <> encode(digest(p_host_token, 'sha256'), 'hex') then
+    raise exception 'invalid_host_token';
+  end if;
+  if v_session.status <> 'registration' then
+    raise exception 'registration_closed';
+  end if;
+
+  v_count := coalesce(array_length(p_wine_ids, 1), 0);
+  if v_count = 0 then
+    raise exception 'invalid_reorder_payload';
+  end if;
+
+  select count(distinct id) into v_distinct_count from unnest(p_wine_ids) as id;
+  if v_distinct_count <> v_count then
+    raise exception 'invalid_reorder_payload';
+  end if;
+
+  select count(*) into v_matching_count
+  from wines w where w.session_id = v_session.id and w.id = any(p_wine_ids);
+  if v_matching_count <> v_count then
+    raise exception 'invalid_reorder_payload';
+  end if;
+
+  select count(*) into v_session_bottle_count from wines where session_id = v_session.id;
+  if v_session_bottle_count <> v_count then
+    raise exception 'invalid_reorder_payload';
+  end if;
+
+  update wines w
+  set tasting_order = u.ord
+  from unnest(p_wine_ids) with ordinality as u(id, ord)
+  where w.id = u.id;
 end;
 $$;
 
@@ -841,7 +1072,7 @@ begin
         'id', w.id,
         'bottleNumber', w.bottle_number,
         'anonymousCode', w.anonymous_code
-      ) order by w.bottle_number)
+      ) order by w.tasting_order, w.bottle_number)
       from wines w where w.session_id = v_session.id
     ), '[]'::jsonb),
     'guesses', coalesce((
@@ -851,6 +1082,8 @@ begin
         'regionGuess', wg.region_guess,
         'grapeBlendMode', wg.grape_blend_mode,
         'grapeBlendGuess', wg.grape_style_guess,
+        'selectedGrapes', coalesce(wg.grape_blend_components->'selectedGrapes', '[]'::jsonb),
+        'otherGrapesText', coalesce(wg.grape_blend_components->>'otherGrapesText', ''),
         'producerGuess', wg.producer_guess,
         'wineCuveeGuess', wg.wine_cuvee_guess,
         'vintageGuess', wg.vintage_guess,
@@ -870,9 +1103,11 @@ $$;
 -- revealed or the guest has already completed their submission. Every
 -- participant — including a bottle's own contributor — may guess every
 -- bottle, so there is no ownership check against wines here.
--- Signature changed (price band removed, grape/blend mode added) —
--- explicitly drop the old overload; safe/no-op on a fresh install.
+-- Signature changed (price band removed, grape/blend mode added, structured
+-- grape/blend components added) — explicitly drop old overloads; safe/no-op
+-- on a fresh install.
 drop function if exists upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text);
+drop function if exists upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text, jsonb);
 
 create or replace function upsert_wine_guess(
   p_guest_token text,
@@ -886,7 +1121,8 @@ create or replace function upsert_wine_guess(
   p_vintage_guess text,
   p_rating int,
   p_confidence text,
-  p_tasting_note text
+  p_tasting_note text,
+  p_grape_blend_components jsonb
 ) returns void
 language plpgsql
 security definer
@@ -913,14 +1149,19 @@ begin
     raise exception 'wine_not_in_session';
   end if;
 
+  -- Guess entry stays lenient about grape/blend mode (a blank/incomplete
+  -- draft autosaves fine, see README) — this only rejects a genuinely
+  -- malformed or mode-inconsistent components payload, not an empty one.
+  perform validate_grape_blend_components(p_grape_blend_mode, p_grape_blend_components);
+
   insert into wine_guesses (
     session_id, wine_id, guest_id, country_guess, region_guess, grape_style_guess,
-    grape_blend_mode, producer_guess, wine_cuvee_guess, vintage_guess, rating,
+    grape_blend_mode, grape_blend_components, producer_guess, wine_cuvee_guess, vintage_guess, rating,
     confidence, tasting_note, submitted_at
   ) values (
     v_session.id, p_wine_id, v_guest.id, coalesce(p_country_guess, ''), coalesce(p_region_guess, ''),
-    coalesce(p_grape_blend_guess, ''), nullif(p_grape_blend_mode, ''), coalesce(p_producer_guess, ''),
-    coalesce(p_wine_cuvee_guess, ''), coalesce(p_vintage_guess, ''), p_rating,
+    coalesce(p_grape_blend_guess, ''), nullif(p_grape_blend_mode, ''), p_grape_blend_components,
+    coalesce(p_producer_guess, ''), coalesce(p_wine_cuvee_guess, ''), coalesce(p_vintage_guess, ''), p_rating,
     coalesce(nullif(p_confidence, ''), 'medium'), nullif(p_tasting_note, ''), now()
   )
   on conflict (guest_id, wine_id) do update set
@@ -928,6 +1169,7 @@ begin
     region_guess = excluded.region_guess,
     grape_style_guess = excluded.grape_style_guess,
     grape_blend_mode = excluded.grape_blend_mode,
+    grape_blend_components = excluded.grape_blend_components,
     producer_guess = excluded.producer_guess,
     wine_cuvee_guess = excluded.wine_cuvee_guess,
     vintage_guess = excluded.vintage_guess,
@@ -1015,11 +1257,12 @@ grant execute on function start_tasting_session(uuid, text) to anon;
 grant execute on function reveal_tasting_session(uuid, text) to anon;
 grant execute on function join_tasting_session(uuid, text) to anon;
 grant execute on function get_registration_state(text) to anon;
-grant execute on function register_bottle(text, text, text, text, text, text, text, text, text) to anon;
-grant execute on function update_bottle(text, uuid, text, text, text, text, text, text, text, text) to anon;
+grant execute on function register_bottle(text, text, text, text, text, text, text, text, text, text, jsonb) to anon;
+grant execute on function update_bottle(text, uuid, text, text, text, text, text, text, text, text, text, jsonb) to anon;
 grant execute on function delete_bottle(text, uuid) to anon;
+grant execute on function reorder_wines(uuid, text, uuid[]) to anon;
 grant execute on function get_guest_session_state(text) to anon;
-grant execute on function upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text) to anon;
+grant execute on function upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text, jsonb) to anon;
 
 grant execute on function complete_guest_submission(text) to anon;
 

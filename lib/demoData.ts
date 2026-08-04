@@ -21,6 +21,8 @@ const demoWines: WineAnswerKey[] = [
     producer: "Domaine de la Janasse",
     wineName: "Chaupin",
     vintage: "2019",
+    wineStyle: "red",
+    tastingOrder: 1,
     hostNotes: "Bright red fruit, garrigue, silky tannins.",
   },
   {
@@ -34,6 +36,8 @@ const demoWines: WineAnswerKey[] = [
     producer: "Giacomo Conterno",
     wineName: "Cascina Francia",
     vintage: "2016",
+    wineStyle: "red",
+    tastingOrder: 2,
     hostNotes: "Tar and roses, firm structure, very long finish.",
   },
   {
@@ -47,15 +51,17 @@ const demoWines: WineAnswerKey[] = [
     producer: "Cloudy Bay",
     wineName: "Sauvignon Blanc",
     vintage: "2022",
+    wineStyle: "white",
+    tastingOrder: 3,
     hostNotes: "Passionfruit and lime zest, crisp acidity.",
   },
 ];
 
 function guess(
   wineId: string,
-  fields: Omit<WineGuess, "wineId">
+  fields: Omit<WineGuess, "wineId" | "selectedGrapes" | "otherGrapesText">
 ): WineGuess {
-  return { wineId, ...fields };
+  return { wineId, selectedGrapes: [], otherGrapesText: "", ...fields };
 }
 
 const demoGuests: Guest[] = [

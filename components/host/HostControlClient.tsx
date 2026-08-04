@@ -7,6 +7,7 @@ import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { Modal } from "@/components/Modal";
 import { QRCodeCard } from "@/components/QRCodeCard";
+import { TastingOrderList } from "@/components/host/TastingOrderList";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { friendlyRpcError, HostBottleDTO, HostGuestDTO, HostSessionResponse } from "@/lib/supabase/types";
@@ -74,20 +75,22 @@ export function HostControlClient({
     }
 
     async function refetchWines() {
-      if (!supabase) return;
-      const { data } = await supabase
-        .from("wines")
-        .select("id, bottle_number, anonymous_code")
-        .eq("session_id", session.id)
-        .order("bottle_number", { ascending: true });
-      if (data) {
-        setWines(
-          data.map((w) => ({
-            id: w.id,
-            bottleNumber: w.bottle_number,
-            anonymousCode: w.anonymous_code,
-          }))
-        );
+      // Goes through the host session RPC (not a direct table select) because
+      // wineStyle/tastingOrder are deliberately excluded from the anon column
+      // grant on `wines` (see supabase/schema.sql) — the RPC is the only path
+      // that can return them, and it re-validates the host token itself.
+      try {
+        const response = await fetch("/api/host/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ publicId, hostToken }),
+        });
+        if (!response.ok) return;
+        const data: HostSessionResponse = await response.json();
+        setWines(data.wines);
+      } catch {
+        // Realtime will retry on the next change; a transient fetch failure
+        // here isn't worth surfacing as an error banner.
       }
     }
 
@@ -137,7 +140,7 @@ export function HostControlClient({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [publicId, session.id]);
+  }, [publicId, session.id, hostToken]);
 
   async function handleStartTasting() {
     setStarting(true);
@@ -246,6 +249,15 @@ export function HostControlClient({
               </p>
             )}
           </Card>
+
+          {wines.length > 0 && (
+            <TastingOrderList
+              publicId={publicId}
+              hostToken={hostToken}
+              wines={wines}
+              onReordered={setWines}
+            />
+          )}
 
           <Card className="flex flex-col gap-2">
             <h2 className="text-sm font-semibold text-cellar-text">
@@ -367,7 +379,8 @@ export function HostControlClient({
         >
           <p>
             Bottle registration will close. Contributors will no longer be
-            able to edit or remove their bottles.
+            able to edit or remove their bottles. The current tasting order
+            will be locked.
           </p>
           <div className="mt-4 flex justify-end gap-2">
             <Button

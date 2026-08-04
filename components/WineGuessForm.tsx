@@ -1,4 +1,4 @@
-import { GrapeBlendMode, WineGuess } from "@/types/tasting";
+import { WineGuess } from "@/types/tasting";
 import {
   COUNTRY_OPTIONS,
   regionOptionsForCountry,
@@ -11,13 +11,17 @@ import { TextAreaField } from "./TextAreaField";
 import { RatingSlider } from "./RatingSlider";
 import { ConfidencePicker } from "./ConfidencePicker";
 import { VintageField } from "./VintageField";
-import { GrapeBlendField } from "./GrapeBlendField";
+import { GrapeBlendField, GrapeBlendFormValue } from "./GrapeBlendField";
+
+const WINE_CUVEE_HINT =
+  "Add the specific wine name, vineyard, cru, or appellation where relevant — e.g. Nuits-Saint-Georges, Margaux, or Santa Rita Hills.";
 
 interface WineGuessFormProps {
   wineCode: string;
   value: WineGuess;
   onChange: (value: WineGuess) => void;
   ratingError?: string;
+  blendError?: string;
 }
 
 export function WineGuessForm({
@@ -25,6 +29,7 @@ export function WineGuessForm({
   value,
   onChange,
   ratingError,
+  blendError,
 }: WineGuessFormProps) {
   function set<K extends keyof WineGuess>(key: K, fieldValue: WineGuess[K]) {
     onChange({ ...value, [key]: fieldValue });
@@ -38,8 +43,8 @@ export function WineGuessForm({
     });
   }
 
-  function setGrapeBlendMode(mode: GrapeBlendMode) {
-    onChange({ ...value, grapeBlendMode: mode, grapeBlend: "" });
+  function setGrapeBlend(next: GrapeBlendFormValue) {
+    onChange({ ...value, ...next });
   }
 
   return (
@@ -83,15 +88,20 @@ export function WineGuessForm({
         <TextField
           label="Wine / cuvée — bonus"
           value={value.wineName}
+          hint={WINE_CUVEE_HINT}
           onChange={(e) => set("wineName", e.target.value)}
         />
       </div>
 
       <GrapeBlendField
-        mode={value.grapeBlendMode || "single"}
-        value={value.grapeBlend}
-        onModeChange={setGrapeBlendMode}
-        onValueChange={(next) => set("grapeBlend", next)}
+        value={{
+          grapeBlendMode: value.grapeBlendMode,
+          grapeBlend: value.grapeBlend,
+          selectedGrapes: value.selectedGrapes,
+          otherGrapesText: value.otherGrapesText,
+        }}
+        onChange={setGrapeBlend}
+        error={blendError}
       />
 
       <VintageField

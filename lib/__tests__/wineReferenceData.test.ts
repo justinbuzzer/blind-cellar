@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   blendTokensFromText,
   canonicalizeGrapeToken,
+  combineBlendComponents,
   COUNTRIES,
   isKnownCountry,
   isKnownGrapeVariety,
   isValidRegionForCountry,
+  parseOtherGrapesText,
+  reconstructBlendComponentsFromText,
   regionOptionsForCountry,
   resetRegionIfInvalid,
+  resolveKnownGrapeDisplayName,
 } from "@/lib/wineReferenceData";
 
 describe("COUNTRIES", () => {
@@ -157,5 +161,102 @@ describe("blendTokensFromText", () => {
 
   it("drops empty tokens from stray separators", () => {
     expect(blendTokensFromText("Merlot // Cabernet Franc")).toHaveLength(2);
+  });
+});
+
+describe("resolveKnownGrapeDisplayName", () => {
+  it("returns the canonical display form for a curated grape", () => {
+    expect(resolveKnownGrapeDisplayName("cabernet sauvignon")).toBe("Cabernet Sauvignon");
+  });
+
+  it("resolves a known alias to its canonical display form", () => {
+    expect(resolveKnownGrapeDisplayName("Shiraz")).toBe("Syrah");
+  });
+
+  it("returns null for an unrecognised grape", () => {
+    expect(resolveKnownGrapeDisplayName("Some Obscure Field Blend Grape")).toBeNull();
+  });
+});
+
+describe("parseOtherGrapesText", () => {
+  it("splits on commas, slashes, semicolons, ampersands, and line breaks", () => {
+    expect(parseOtherGrapesText("Carignan, Counoise")).toEqual(["Carignan", "Counoise"]);
+    expect(parseOtherGrapesText("Carignan/Counoise")).toEqual(["Carignan", "Counoise"]);
+    expect(parseOtherGrapesText("Carignan; Counoise")).toEqual(["Carignan", "Counoise"]);
+    expect(parseOtherGrapesText("Carignan & Counoise")).toEqual(["Carignan", "Counoise"]);
+    expect(parseOtherGrapesText("Carignan\nCounoise")).toEqual(["Carignan", "Counoise"]);
+  });
+
+  it("does not split on a hyphen (unlike blendTokensFromText)", () => {
+    expect(parseOtherGrapesText("Field-Blend Grape")).toEqual(["Field-Blend Grape"]);
+  });
+
+  it("trims whitespace around each entry", () => {
+    expect(parseOtherGrapesText("  Carignan ,  Counoise  ")).toEqual(["Carignan", "Counoise"]);
+  });
+
+  it("drops case-insensitive duplicates within the field", () => {
+    expect(parseOtherGrapesText("Carignan, carignan, CARIGNAN")).toEqual(["Carignan"]);
+  });
+
+  it("normalises a recognised alias to its canonical display form", () => {
+    expect(parseOtherGrapesText("Shiraz, Carignan")).toEqual(["Syrah", "Carignan"]);
+  });
+
+  it("returns an empty array for blank input", () => {
+    expect(parseOtherGrapesText("")).toEqual([]);
+    expect(parseOtherGrapesText("   ")).toEqual([]);
+  });
+});
+
+describe("combineBlendComponents", () => {
+  it("merges curated selections with parsed other-grapes text", () => {
+    expect(combineBlendComponents(["Merlot"], "Carignan, Counoise")).toEqual([
+      "Carignan",
+      "Counoise",
+      "Merlot",
+    ]);
+  });
+
+  it("orders the result alphabetically by canonical name, not selection order", () => {
+    expect(combineBlendComponents(["Zinfandel", "Albariño"], "")).toEqual([
+      "Albariño",
+      "Zinfandel",
+    ]);
+  });
+
+  it("does not let a grape already selected from the curated list be re-added via free text", () => {
+    // Test #8: a known grape cannot be duplicated through selected list + other-grape text.
+    expect(combineBlendComponents(["Merlot"], "Merlot")).toEqual(["Merlot"]);
+  });
+
+  it("cross-deduplicates via alias — selecting Syrah and typing Shiraz is one grape", () => {
+    expect(combineBlendComponents(["Syrah"], "Shiraz")).toEqual(["Syrah"]);
+  });
+
+  it("returns an empty array when both inputs are empty", () => {
+    expect(combineBlendComponents([], "")).toEqual([]);
+  });
+});
+
+describe("reconstructBlendComponentsFromText", () => {
+  it("checks curated grapes it recognises and preserves everything else as other-grapes text", () => {
+    const result = reconstructBlendComponentsFromText(
+      "Cabernet Sauvignon / Merlot / Some Obscure Field Blend Grape"
+    );
+    expect(result.selectedGrapes).toEqual(["Cabernet Sauvignon", "Merlot"]);
+    expect(result.otherGrapesText).toBe("Some Obscure Field Blend Grape");
+  });
+
+  it("resolves aliases to their canonical curated selection", () => {
+    const result = reconstructBlendComponentsFromText("Grenache / Shiraz");
+    expect(result.selectedGrapes).toEqual(["Grenache", "Syrah"]);
+    expect(result.otherGrapesText).toBe("");
+  });
+
+  it("preserves entirely unrecognised legacy text verbatim", () => {
+    const result = reconstructBlendComponentsFromText("A field blend of old, unnamed local varieties");
+    expect(result.selectedGrapes).toEqual([]);
+    expect(result.otherGrapesText).toContain("A field blend of old");
   });
 });

@@ -18,6 +18,19 @@ export type GrapeBlendMode = "single" | "blend";
 
 export const GRAPE_BLEND_MODES: GrapeBlendMode[] = ["single", "blend"];
 
+/** Contributor-classified wine style. Required for every bottle; not a scored/guessed field. */
+export type WineStyle = "bubbles" | "white" | "red" | "sweet" | "other";
+
+export const WINE_STYLES: WineStyle[] = ["bubbles", "white", "red", "sweet", "other"];
+
+export const WINE_STYLE_LABELS: Record<WineStyle, string> = {
+  bubbles: "Bubbles",
+  white: "White",
+  red: "Red",
+  sweet: "Sweet",
+  other: "Other",
+};
+
 /** The private answer key for one bottle. Never shown to other participants before reveal. */
 export interface WineAnswerKey {
   id: string;
@@ -32,6 +45,9 @@ export interface WineAnswerKey {
   producer: string;
   wineName: string;
   vintage: string;
+  wineStyle: WineStyle;
+  /** 1-based serving position, host-arranged during registration and frozen at collecting. Distinct from the bottle's permanent anonymous number. */
+  tastingOrder: number;
   hostNotes?: string;
   /** Contributor's display name. Only ever populated after reveal. */
   contributorName?: string;
@@ -71,6 +87,10 @@ export interface WineGuess {
   /** "" until the guest picks single/blend mode for this wine. */
   grapeBlendMode: GrapeBlendMode | "";
   grapeBlend: string;
+  /** Blend mode only: grapes picked from the curated list. Empty/unused in single mode. */
+  selectedGrapes: string[];
+  /** Blend mode only: raw free text for varieties not on the curated list. Empty/unused in single mode. */
+  otherGrapesText: string;
   producer: string;
   wineName: string;
   vintage: string;

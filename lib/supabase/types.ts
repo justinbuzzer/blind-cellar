@@ -1,4 +1,4 @@
-import { Confidence, GrapeBlendMode, SessionStatus } from "@/types/tasting";
+import { Confidence, GrapeBlendMode, SessionStatus, WineStyle } from "@/types/tasting";
 
 // Raw shapes returned by direct table/view reads (snake_case, PostgREST).
 
@@ -45,6 +45,8 @@ export interface GuestVisibleWineRow {
   vintage: string | null;
   host_notes: string | null;
   contributor_guest_id: string | null;
+  wine_style: WineStyle | null;
+  tasting_order: number;
 }
 
 export interface RevealedWineGuessRow {
@@ -73,6 +75,8 @@ export interface HostBottleDTO {
   id: string;
   bottleNumber: number;
   anonymousCode: string;
+  wineStyle: WineStyle;
+  tastingOrder: number;
 }
 
 export interface HostGuestDTO {
@@ -110,6 +114,10 @@ export interface GuestGuessDTO {
   regionGuess: string;
   grapeBlendMode: GrapeBlendMode | null;
   grapeBlendGuess: string;
+  /** Blend mode only: curated grapes picked from the multi-select. */
+  selectedGrapes: string[];
+  /** Blend mode only: raw free text for varieties not on the curated list. */
+  otherGrapesText: string;
   producerGuess: string;
   wineCuveeGuess: string;
   vintageGuess: string;
@@ -150,9 +158,14 @@ export interface MyBottleDTO {
   region: string;
   grapeBlendMode: GrapeBlendMode | null;
   grapeBlend: string;
+  /** Blend mode only: curated grapes picked from the multi-select. */
+  selectedGrapes: string[];
+  /** Blend mode only: raw free text for varieties not on the curated list. */
+  otherGrapesText: string;
   producer: string;
   wineCuvee: string;
   vintage: string;
+  wineStyle: WineStyle;
   notes: string | null;
 }
 
@@ -193,6 +206,9 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   bottle_fields_required:
     "Country, region, grape/blend, producer, wine/cuvée, and vintage are all required.",
   invalid_grape_blend_mode: "Choose single variety or blend for the grape/blend.",
+  invalid_grape_blend_components: "That blend selection couldn't be saved — please review the grapes you picked and try again.",
+  invalid_wine_style: "Choose a wine style.",
+  invalid_reorder_payload: "That tasting order couldn't be saved — please refresh and try again.",
   no_bottles_registered: "At least one bottle must be registered before starting the tasting.",
   bottle_not_found: "That bottle couldn't be found, or isn't yours to edit.",
 };

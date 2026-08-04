@@ -7,6 +7,7 @@ import { ProgressBar } from "@/components/ProgressBar";
 import { WineGuessForm } from "@/components/WineGuessForm";
 import { SavingIndicator, SaveState } from "@/components/SavingIndicator";
 import { HomeLink } from "@/components/navigation/HomeLink";
+import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   completeSubmission,
@@ -16,6 +17,7 @@ import {
 import { friendlyRpcError, GuestSessionWineDTO } from "@/lib/supabase/types";
 import { mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
 import { emptyWineGuess } from "@/lib/guess";
+import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend } from "@/lib/validation";
 import { getGuestToken } from "@/lib/deviceStorage";
 import { WineGuess } from "@/types/tasting";
 
@@ -37,6 +39,7 @@ export default function GuestTastingPage() {
   const [guesses, setGuesses] = useState<WineGuess[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [ratingErrorWineId, setRatingErrorWineId] = useState<string | null>(null);
+  const [blendErrorWineId, setBlendErrorWineId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -146,6 +149,7 @@ export default function GuestTastingPage() {
     setGuesses((prev) => prev.map((g) => (g.wineId === wineId ? next : g)));
     scheduleSave(wineId, next);
     setRatingErrorWineId(null);
+    setBlendErrorWineId(null);
   }
 
   async function goToIndex(index: number) {
@@ -162,6 +166,17 @@ export default function GuestTastingPage() {
       const missingIndex = wines.findIndex((w) => w.id === missingWine.id);
       setCurrentIndex(missingIndex);
       setRatingErrorWineId(missingWine.id);
+      return;
+    }
+
+    const incompleteBlendWine = wines.find((wine) => {
+      const guess = guesses.find((g) => g.wineId === wine.id);
+      return guess && hasIncompleteBlend(guess);
+    });
+    if (incompleteBlendWine) {
+      const incompleteIndex = wines.findIndex((w) => w.id === incompleteBlendWine.id);
+      setCurrentIndex(incompleteIndex);
+      setBlendErrorWineId(incompleteBlendWine.id);
       return;
     }
 
@@ -217,7 +232,10 @@ export default function GuestTastingPage() {
   if (loadState === "locked" || loadState === "submitted") {
     return (
       <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-        <HomeLink />
+        <div className="flex items-center gap-2">
+          <HomeLink />
+          <HostControlsLink sessionPublicId={params.publicId} />
+        </div>
         <div className="text-4xl" aria-hidden="true">
           🔒
         </div>
@@ -240,7 +258,14 @@ export default function GuestTastingPage() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-6 px-6 py-10">
-      <HomeLink confirmBeforeLeave hasUnsavedChanges={saveState === "saving"} />
+      <div className="flex items-center gap-2">
+        <HomeLink confirmBeforeLeave hasUnsavedChanges={saveState === "saving"} />
+        <HostControlsLink
+          sessionPublicId={params.publicId}
+          confirmBeforeLeave
+          hasUnsavedChanges={saveState === "saving"}
+        />
+      </div>
       <div>
         <p className="text-sm text-cellar-text/60">Tasting as {guestName}</p>
       </div>
@@ -248,7 +273,7 @@ export default function GuestTastingPage() {
       <ProgressBar
         current={currentIndex + 1}
         total={wines.length}
-        label={`Bottle ${currentIndex + 1} of ${wines.length}`}
+        label={`${wine.anonymousCode} — ${currentIndex + 1} of ${wines.length}`}
       />
 
       <WineGuessForm
@@ -258,6 +283,7 @@ export default function GuestTastingPage() {
         ratingError={
           ratingErrorWineId === wine.id ? "A rating is required." : undefined
         }
+        blendError={blendErrorWineId === wine.id ? BLEND_MIN_GRAPES_MESSAGE : undefined}
       />
 
       <SavingIndicator state={saveState} />

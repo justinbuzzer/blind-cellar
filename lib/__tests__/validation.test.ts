@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { hasBottleFormErrors, isValidVintage, validateBottleForm } from "@/lib/validation";
+import {
+  BLEND_MIN_GRAPES_MESSAGE,
+  hasBottleFormErrors,
+  hasIncompleteBlend,
+  isValidVintage,
+  validateBottleForm,
+} from "@/lib/validation";
 import { BottleFormInput } from "@/lib/supabase/guestActions";
+import { WineGuess } from "@/types/tasting";
 
 describe("isValidVintage", () => {
   it("accepts a plausible four-digit year", () => {
@@ -34,9 +41,12 @@ function makeBottle(overrides: Partial<BottleFormInput> = {}): BottleFormInput {
     region: "Champagne",
     grapeBlendMode: "single",
     grapeBlend: "Chardonnay",
+    selectedGrapes: [],
+    otherGrapesText: "",
     producer: "Bollinger",
     wineName: "Special Cuvee",
     vintage: "NV",
+    wineStyle: "bubbles",
     notes: "",
     ...overrides,
   };
@@ -48,7 +58,10 @@ describe("validateBottleForm", () => {
   });
 
   it("passes a fully filled-in bottle (blend)", () => {
-    const bottle = makeBottle({ grapeBlendMode: "blend", grapeBlend: "Pinot Noir / Chardonnay" });
+    const bottle = makeBottle({
+      grapeBlendMode: "blend",
+      selectedGrapes: ["Pinot Noir", "Chardonnay"],
+    });
     expect(hasBottleFormErrors(validateBottleForm(bottle))).toBe(false);
   });
 
@@ -85,10 +98,47 @@ describe("validateBottleForm", () => {
     expect(errors.grapeBlend).toBeDefined();
   });
 
-  it("blend mode accepts free text not on the single-variety list", () => {
+  it("blend mode rejects exactly one selected grape with the exact required message", () => {
+    const errors = validateBottleForm(
+      makeBottle({ grapeBlendMode: "blend", selectedGrapes: ["Merlot"] })
+    );
+    expect(errors.grapeBlend).toBe(BLEND_MIN_GRAPES_MESSAGE);
+  });
+
+  it("blend mode rejects one selected grape plus a duplicate of it typed as other-grapes text", () => {
+    // Test #8: a known grape can't be double-counted through selected + other-grape text
+    // to sneak past the two-grape minimum.
+    const errors = validateBottleForm(
+      makeBottle({
+        grapeBlendMode: "blend",
+        selectedGrapes: ["Merlot"],
+        otherGrapesText: "Merlot",
+      })
+    );
+    expect(errors.grapeBlend).toBe(BLEND_MIN_GRAPES_MESSAGE);
+  });
+
+  it("blend mode accepts exactly two selected grapes", () => {
     const bottle = makeBottle({
       grapeBlendMode: "blend",
-      grapeBlend: "A field blend of old, unnamed local varieties",
+      selectedGrapes: ["Merlot", "Cabernet Sauvignon"],
+    });
+    expect(hasBottleFormErrors(validateBottleForm(bottle))).toBe(false);
+  });
+
+  it("blend mode accepts unlisted grapes typed as free text, not just curated picks", () => {
+    const bottle = makeBottle({
+      grapeBlendMode: "blend",
+      otherGrapesText: "Carignan, Counoise",
+    });
+    expect(hasBottleFormErrors(validateBottleForm(bottle))).toBe(false);
+  });
+
+  it("blend mode accepts a mix of curated picks and unlisted free text", () => {
+    const bottle = makeBottle({
+      grapeBlendMode: "blend",
+      selectedGrapes: ["Grenache"],
+      otherGrapesText: "Counoise",
     });
     expect(hasBottleFormErrors(validateBottleForm(bottle))).toBe(false);
   });
@@ -102,6 +152,7 @@ describe("validateBottleForm", () => {
         producer: "",
         wineName: "",
         vintage: "",
+        wineStyle: "",
       })
     );
     expect(errors.country).toBeDefined();
@@ -110,10 +161,69 @@ describe("validateBottleForm", () => {
     expect(errors.producer).toBeDefined();
     expect(errors.wineName).toBeDefined();
     expect(errors.vintage).toBeDefined();
+    expect(errors.wineStyle).toBeDefined();
   });
 
   it("flags an invalid vintage even when non-empty", () => {
     const errors = validateBottleForm(makeBottle({ vintage: "not-a-year" }));
     expect(errors.vintage).toBeDefined();
+  });
+
+  it("requires a wine style to be chosen", () => {
+    const errors = validateBottleForm(makeBottle({ wineStyle: "" }));
+    expect(errors.wineStyle).toBeDefined();
+  });
+
+  it("accepts every valid wine style", () => {
+    for (const style of ["bubbles", "white", "red", "sweet", "other"] as const) {
+      const errors = validateBottleForm(makeBottle({ wineStyle: style }));
+      expect(errors.wineStyle).toBeUndefined();
+    }
+  });
+});
+
+function makeGuess(overrides: Partial<WineGuess> = {}): WineGuess {
+  return {
+    wineId: "wine-1",
+    country: "",
+    region: "",
+    grapeBlendMode: "single",
+    grapeBlend: "",
+    selectedGrapes: [],
+    otherGrapesText: "",
+    producer: "",
+    wineName: "",
+    vintage: "",
+    rating: null,
+    confidence: "medium",
+    ...overrides,
+  };
+}
+
+describe("hasIncompleteBlend", () => {
+  it("is false for single-variety mode, regardless of content", () => {
+    expect(hasIncompleteBlend(makeGuess({ grapeBlendMode: "single" }))).toBe(false);
+  });
+
+  it("is false for a completely blank blend guess (blank guesses score zero, not blocked)", () => {
+    expect(hasIncompleteBlend(makeGuess({ grapeBlendMode: "blend" }))).toBe(false);
+  });
+
+  it("is true when a blend guess has exactly one selected grape", () => {
+    const guess = makeGuess({ grapeBlendMode: "blend", selectedGrapes: ["Merlot"] });
+    expect(hasIncompleteBlend(guess)).toBe(true);
+  });
+
+  it("is true when a blend guess has exactly one grape via other-grapes text", () => {
+    const guess = makeGuess({ grapeBlendMode: "blend", otherGrapesText: "Carignan" });
+    expect(hasIncompleteBlend(guess)).toBe(true);
+  });
+
+  it("is false when a blend guess has two or more grapes", () => {
+    const guess = makeGuess({
+      grapeBlendMode: "blend",
+      selectedGrapes: ["Merlot", "Cabernet Sauvignon"],
+    });
+    expect(hasIncompleteBlend(guess)).toBe(false);
   });
 });
