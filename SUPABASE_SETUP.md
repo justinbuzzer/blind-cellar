@@ -1,0 +1,128 @@
+# Supabase setup for Blind Cellar
+
+Blind Cellar uses Supabase (Postgres + Realtime) so a host can create a tasting on one device, every participant (including the host) can register their own bottles, and everyone can join and submit guesses from their own phones. This is a one-time setup per environment (local dev, and again for any deployment).
+
+## 1. Create a Supabase project
+
+1. Go to [supabase.com](https://supabase.com) and sign in (or create a free account).
+2. Click **New project**. Pick an organization, name it (e.g. `blind-cellar`), set a database password (save it somewhere — you won't need it for this app, but you'll want it if you ever connect directly to Postgres), and choose a region close to you.
+3. Wait for the project to finish provisioning (a minute or two).
+
+No Supabase CLI is required for any of this — everything below is done through the Supabase web dashboard.
+
+## 2. Find your URL and anon key
+
+1. In your project, go to **Project Settings** (gear icon) → **API**.
+2. Copy the **Project URL** — this is `NEXT_PUBLIC_SUPABASE_URL`.
+3. Copy the **anon / public** key (not the `service_role` key) — this is `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+
+You will not need the `service_role` key anywhere in this app. Never paste it into `.env.local` or any client code — it bypasses Row Level Security entirely.
+
+## 3. Configure `.env.local`
+
+In the `blind-cellar/` folder, copy `.env.example` to `.env.local` and fill in the two values from step 2:
+
+```bash
+cp .env.example .env.local
+```
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+```
+
+`.env.local` is already git-ignored, so these values stay out of version control.
+
+## 4. Run `supabase/schema.sql`
+
+1. In the Supabase dashboard, open **SQL Editor** → **New query**.
+2. Open [`supabase/schema.sql`](supabase/schema.sql) from this repo, copy its entire contents, and paste them into the SQL editor.
+3. Click **Run**.
+
+**On a brand-new project**, this creates everything in its final shape in one pass:
+- 4 tables: `tasting_sessions`, `wines`, `guests`, `wine_guesses`
+- 2 views: `guest_visible_wines`, `revealed_wine_guesses`
+- 12 RPC functions — session/host (`create_tasting_session`, `get_host_session`, `start_tasting_session`, `reveal_tasting_session`), participant identity (`join_tasting_session`), bottle registration (`get_registration_state`, `register_bottle`, `update_bottle`, `delete_bottle`), and tasting (`get_guest_session_state`, `upsert_wine_guess`, `complete_guest_submission`)
+- Row Level Security enabled on all 4 tables, with narrow column-level grants for the `anon` role
+- Realtime enabled on `tasting_sessions`, `guests`, and `wines`
+
+**If you already ran an earlier version of this file** (from before bottle registration existed), running the same file again performs a safe, one-time migration in place — see "Migrating an existing project" below. Either way, it's the same file and the same single paste-and-run action.
+
+## 5. Enable Realtime (if the SQL didn't take)
+
+The schema script ends with an `ALTER PUBLICATION supabase_realtime ADD TABLE ...` block for `tasting_sessions`, `guests`, and `wines`. On most projects this just works. If host/participant screens don't seem to update live after you've confirmed the SQL ran without error:
+
+1. Go to **Database** → **Replication** in the dashboard.
+2. Find the `supabase_realtime` publication.
+3. Make sure `tasting_sessions`, `guests`, and `wines` are all toggled **on**.
+
+Nothing else needs Realtime — `wine_guesses` is intentionally never broadcast (see security notes below).
+
+## Migrating an existing project
+
+If your project already has the pre-bottle-registration schema (sessions only ever had `status in ('collecting', 'revealed')`, and the host entered all wines at session creation), re-running `supabase/schema.sql` brings it up to date safely, without deleting any data. Every migration statement in the file is written to be a no-op on a fresh install and to run in a specific, safe order on an existing one — **do not reorder or partially copy the file**; run it top to bottom in one paste. In order, it will:
+
+1. Add the new columns (`tasting_sessions.host_guest_id`, `tasting_sessions.next_bottle_number`, `wines.bottle_number`, `wines.contributor_guest_id`, `wines.updated_at`) if they don't already exist.
+2. Widen the `tasting_sessions` status check constraint to allow `'registration'` — existing sessions keep whatever status they already had (`collecting` or `revealed`); nothing is force-transitioned.
+3. Backfill `bottle_number` for existing wine rows from their current `display_order` (so numbering stays sequential and matches original entry order). Existing anonymous labels (e.g. `Wine A`) are left untouched — only new bottles registered after this migration use the `Bottle N` label.
+4. Make `bottle_number` required now that every row has a value.
+5. Seed each existing session's `next_bottle_number` counter from its current highest bottle number, so the next bottle registered continues the sequence instead of restarting at 1.
+6. Add the `unique (session_id, bottle_number)` constraint, now that step 3 guarantees it will hold.
+7. Validate the `host_guest_id` foreign key added earlier (existing sessions simply have it `null` — they never had a host participant record, which is fine; that field only matters for new sessions).
+
+Existing sessions never gain a `host_guest_id` retroactively (there's no way to know, after the fact, which existing guest row — if any — was "the host"), and their host continues to manage them exactly as before, via the host token. This only affects the *new* host-as-participant flow for sessions created after the migration.
+
+## Migrating for the new scoring model, grape/blend, and price-band removal
+
+Re-running `supabase/schema.sql` (same paste-and-run action as always — see step 4 above) also brings an existing project up to date for this update. It is safe to re-run on a project that's already current (every statement is a no-op in that case) and safe to run on a project still on the older bottle-registration schema (both migrations apply in the correct order in one pass). In order, the new statements:
+
+1. Add a nullable `grape_blend_mode` column (`'single' | 'blend' | null`) to both `wines` and `wine_guesses`. Existing rows get `null`, which the app treats as "legacy/unknown" everywhere — scoring falls back to a plain alias-aware text comparison rather than guessing a mode, and the registration/guess forms default an edited legacy bottle or in-progress guess to "single" purely as a sensible starting point for further edits.
+2. Drop the `not null` constraint on `wines.price_band` (already-nullable on `wine_guesses.price_band_guess`, unchanged). Existing price-band values are left exactly as they are; new bottles and guesses simply never set it. The columns themselves are not dropped — see "Data model notes" in the README.
+3. Replace `register_bottle`, `update_bottle`, and `upsert_wine_guess` with new signatures (price-band parameter removed, grape-blend-mode parameter added). The file explicitly `drop function if exists`s the old signatures first — this is a schema change, not a data change, and does not touch any stored bottle/guess rows.
+4. Update `get_registration_state` and `get_guest_session_state` to return `grapeBlendMode`/`grapeBlend` instead of `grapeStyle`, and to stop returning price band.
+5. Append `grape_blend_mode` as a new trailing column on the `guest_visible_wines` view (Postgres only allows appending columns via `CREATE OR REPLACE VIEW`, never reordering or removing them — `price_band` stays exactly where it is, just unused by the app).
+
+**Nothing here is destructive.** No column is dropped, no stored value is rewritten or deleted, and every RPC signature change only affects *new* calls made by the updated frontend — it has no effect on data already in the database. The frontend and this schema file must be deployed together, though, since the frontend's `guestActions.ts` calls the new RPC parameter names.
+
+### Why `country`/`region` store a name, not an ISO code
+
+The spec for this update suggested preferring a stable canonical *code* (e.g. ISO 3166-1 alpha-2) for country, "if that fits the current architecture." This project stores the canonical **display name** instead (e.g. `"France"`, not `"FR"`), in the same `country`/`region` text columns that already held free text before this update. The reasons:
+
+- There's no `countries`/`regions` table with a foreign key here — country/region have always been, and remain, plain text columns compared via the same lenient text-normalisation matcher used for producer/wine-cuvée everywhere else. Storing a code would need a second, parallel comparison path (resolve code → name for display, resolve legacy free text → code for scoring) purely to bridge old and new data.
+- A private, single-event app with a static ~15-country list gets essentially no benefit from a code layer (no i18n, no external API, no large-scale lookup), while a code/name mismatch between an old free-text bottle ("France") and a new guess ("FR") is a real and easy-to-introduce bug class.
+- Storing the name directly means the stored value *is* the display value — no lookup step, no risk of the two drifting apart.
+
+`lib/wineReferenceData.ts` still keeps a lightweight internal `code` alongside each grape's canonical value (not country/region) purely as stable option-list identity; it is never persisted.
+
+### Why there's no free-text "Other region" input
+
+The spec allowed adding a labelled, separately-persisted "Other region" free-text field if a plain `Other / Unknown` region option proved insufficient. This update does not add one: `Other / Unknown` is offered as a normal selectable region for every country (and is the *only* region for the `Other / Unknown` country), which keeps every new bottle and guess in the fully controlled vocabulary the rest of this feature relies on, with no extra scoring-comparison path to maintain. If this turns out to be too coarse in practice (e.g. a host wants to note *which* obscure region), a dedicated free-text add-on remains straightforward to layer on later.
+
+## Bottle numbering and concurrency
+
+Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):
+
+- `tasting_sessions.next_bottle_number` is a monotonically-increasing counter — it only ever goes up, even when a bottle is deleted. This is what actually prevents number reuse: if bottle 3 is deleted, the counter is still sitting at 4, so the next registration gets 4 regardless of what remains in the `wines` table. (An earlier, naive approach of computing `max(bottle_number) + 1` would have "forgotten" the deletion and handed out 3 again — that's why a dedicated counter column exists instead.)
+- Before reading or incrementing that counter, `register_bottle` runs `select ... from tasting_sessions where id = ... for update`, which takes a row lock on the session for the rest of that function call. If two participants register a bottle for the same session at the same instant, the second call simply blocks until the first one's transaction commits, then proceeds with the now-updated counter. This makes the read-then-increment atomic per session without needing application-level retries.
+- The `unique (session_id, bottle_number)` database constraint remains as a hard backstop — it should never actually fire given the locking above, but it's there in case this function is ever bypassed or modified incorrectly.
+
+## Security model, in plain English
+
+This is a no-login MVP — nobody creates an account. Instead:
+
+- **Host token**: when a host creates a tasting, the server generates a long random token, hashes it, and stores only the hash in `tasting_sessions.host_token_hash`. The raw token is returned once and saved in that browser's `localStorage`, and appears in the host management URL (`/host/[publicId]?token=...`). Anyone who has that exact URL can manage the tasting (see the participant list, start tasting, reveal results). Anyone who doesn't, can't — even if they know the public join code.
+- **The host is also a participant.** Creating a session also creates a normal row in `guests` for the host, with its own random guest token, generated and returned in the same call. That token is stored in the same browser-storage slot a regular guest's token would use, so the host's own bottle registration and guess entry go through the exact same code paths and RPC functions as anyone else's — there is no special-cased "host bottle" or "host guess" anywhere, which is also what guarantees the host can never be double-counted in scoring: they're just one row in `guests`, like everyone else.
+- **Guest token**: when anyone (including the host) joins, Postgres generates a random token for them and returns it once. It's saved in that participant's browser `localStorage` and is required for every write — registering/editing/deleting a bottle, autosaving a guess, final submit. It's what lets someone resume their form on the same phone without re-entering their name, and it's what stops one participant from touching another's bottles or guesses.
+- **No Supabase Auth, no service-role key**: every privileged read or write goes through a Postgres function (`SECURITY DEFINER`) that checks the token *inside the database* before doing anything. The app's Next.js server and browser code only ever use the public **anon** key. All four tables have Row Level Security enabled, and the `anon` role has no direct table grants beyond a few already-public columns (used only so Realtime has something safe to broadcast — for `wines`, that's just `id`, `session_id`, `bottle_number`, `anonymous_code`, `created_at`; every answer-key column and `contributor_guest_id` are excluded). Everything else — the actual wine answer keys, contributor identity, everyone's guesses — is only reachable through the views/functions in `schema.sql`, which enforce the "don't leak the answer key or contributor identity before reveal" rule.
+- **Host-only mutations run through Next.js Route Handlers** (`app/api/host/*`), not directly from the browser. This keeps the raw host token out of client-side calls hitting Supabase's REST endpoint directly, though the real enforcement is still the Postgres function itself checking the token hash.
+- **Bug fixed in this revision**: the `guest_visible_wines` and `revealed_wine_guesses` views were previously declared with `security_invoker = true`. Combined with `wines`/`wine_guesses` having Row Level Security enabled but no SELECT policy for `anon`, that setting would have made these views return **zero rows for anon on a real Supabase project** — a security_invoker view evaluates RLS as the calling role, and anon was never granted any row-visibility on those tables directly. The fix is to not set `security_invoker` (the default, `false`, runs the view as its owner), so the view's own `CASE`/`WHERE` masking logic — not the caller's RLS — is what decides what anon sees. This was never caught before because the app had not yet been tested against a live Supabase project.
+
+### Honest MVP limitations
+
+- **Tokens are bearer credentials, not accounts.** Anyone who obtains a host or guest link (screenshot, shared clipboard, browser history on a shared device) has full access matching that role, for as long as the session exists. There's no way to revoke a token, log out, or rotate it.
+- **No rate limiting.** The RPC functions don't currently throttle repeated calls at a token, so a determined script could hammer `register_bottle` or `upsert_wine_guess` — acceptable for a private dinner-party tool, not for anything public-facing.
+- **Realtime + column privileges is one layer of defense, not independently verified against every Supabase version.** We rely on documented Supabase column-level privileges to keep `host_token_hash`, `guest_token`, `contributor_guest_id`, and all answer-key columns out of anon reads (including Realtime broadcasts). The tables/columns granted to anon at all are deliberately minimal; the actually sensitive data never has any anon table grant, masked/gated entirely through views and RPC functions instead — that's the layer we'd trust first if this were ever audited.
+- **`display_name` uniqueness is only enforced per-session**, via a generated lower/trimmed column — it doesn't handle full Unicode normalization (accents, punctuation) the way `lib/normalize.ts`'s scoring comparisons do; "Alice" and "Álice" would currently be treated as different names.
+- **No migration framework.** `supabase/schema.sql` is a single hand-maintained file with inline "MIGRATION-SENSITIVE" comments rather than a sequence of versioned migration files. That's workable for one feature step; a project with more history would want real migrations.
+
+If you need real accounts, audit logs, or token revocation later, that's a distinct follow-up step (see the README's "Recommended next features").

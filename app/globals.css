@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #faf8f4;
+  --foreground: #24201d;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Range input styling for the 50-100 rating slider */
+input[type="range"].rating-slider {
+  accent-color: #5a1f2d;
+}
+
+@layer base {
+  :focus-visible {
+    outline: 2px solid #b08d57;
+    outline-offset: 2px;
+  }
+}

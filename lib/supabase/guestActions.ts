@@ -1,0 +1,154 @@
+import { SupabaseClient } from "@supabase/supabase-js";
+import { GrapeBlendMode, WineGuess } from "@/types/tasting";
+import {
+  GuestSessionStateResponse,
+  JoinSessionResponse,
+  MyBottleDTO,
+  RegisterBottleResponse,
+  RegistrationStateResponse,
+} from "./types";
+
+export async function joinSession(
+  supabase: SupabaseClient,
+  publicId: string,
+  displayName: string
+) {
+  const { data, error } = await supabase.rpc("join_tasting_session", {
+    p_public_id: publicId,
+    p_display_name: displayName,
+  });
+  if (error) return { data: null, error };
+  const row = (Array.isArray(data) ? data[0] : data) as JoinSessionResponse;
+  return { data: row, error: null };
+}
+
+export async function getGuestSessionState(
+  supabase: SupabaseClient,
+  guestToken: string
+) {
+  const { data, error } = await supabase.rpc("get_guest_session_state", {
+    p_guest_token: guestToken,
+  });
+  return { data: data as GuestSessionStateResponse | null, error };
+}
+
+export async function upsertGuess(
+  supabase: SupabaseClient,
+  guestToken: string,
+  wineId: string,
+  guess: WineGuess
+) {
+  return supabase.rpc("upsert_wine_guess", {
+    p_guest_token: guestToken,
+    p_wine_id: wineId,
+    p_country_guess: guess.country,
+    p_region_guess: guess.region,
+    p_grape_blend_mode: guess.grapeBlendMode || null,
+    p_grape_blend_guess: guess.grapeBlend,
+    p_producer_guess: guess.producer,
+    p_wine_cuvee_guess: guess.wineName,
+    p_vintage_guess: guess.vintage,
+    p_rating: guess.rating,
+    p_confidence: guess.confidence,
+    p_tasting_note: guess.note || null,
+  });
+}
+
+export async function completeSubmission(
+  supabase: SupabaseClient,
+  guestToken: string
+) {
+  return supabase.rpc("complete_guest_submission", {
+    p_guest_token: guestToken,
+  });
+}
+
+export async function getRegistrationState(
+  supabase: SupabaseClient,
+  guestToken: string
+) {
+  const { data, error } = await supabase.rpc("get_registration_state", {
+    p_guest_token: guestToken,
+  });
+  return { data: data as RegistrationStateResponse | null, error };
+}
+
+export interface BottleFormInput {
+  country: string;
+  region: string;
+  grapeBlendMode: GrapeBlendMode | "";
+  grapeBlend: string;
+  producer: string;
+  wineName: string;
+  vintage: string;
+  notes: string;
+}
+
+export async function registerBottle(
+  supabase: SupabaseClient,
+  guestToken: string,
+  bottle: BottleFormInput
+) {
+  const { data, error } = await supabase.rpc("register_bottle", {
+    p_guest_token: guestToken,
+    p_country: bottle.country,
+    p_region: bottle.region,
+    p_grape_blend_mode: bottle.grapeBlendMode || null,
+    p_grape_blend: bottle.grapeBlend,
+    p_producer: bottle.producer,
+    p_wine_cuvee: bottle.wineName,
+    p_vintage: bottle.vintage,
+    p_notes: bottle.notes,
+  });
+  return { data: data as RegisterBottleResponse | null, error };
+}
+
+export async function updateBottle(
+  supabase: SupabaseClient,
+  guestToken: string,
+  wineId: string,
+  bottle: BottleFormInput
+) {
+  return supabase.rpc("update_bottle", {
+    p_guest_token: guestToken,
+    p_wine_id: wineId,
+    p_country: bottle.country,
+    p_region: bottle.region,
+    p_grape_blend_mode: bottle.grapeBlendMode || null,
+    p_grape_blend: bottle.grapeBlend,
+    p_producer: bottle.producer,
+    p_wine_cuvee: bottle.wineName,
+    p_vintage: bottle.vintage,
+    p_notes: bottle.notes,
+  });
+}
+
+export async function deleteBottle(
+  supabase: SupabaseClient,
+  guestToken: string,
+  wineId: string
+) {
+  return supabase.rpc("delete_bottle", {
+    p_guest_token: guestToken,
+    p_wine_id: wineId,
+  });
+}
+
+/**
+ * Maps a participant's own bottle (from get_registration_state) into
+ * editable bottle-form state. A missing mode (bottle registered before this
+ * field existed) defaults to "single" since the form always needs a
+ * concrete segment selected — matches `mapGuestGuessDtoToWineGuess`.
+ */
+export function bottleFormInputFromDto(bottle: MyBottleDTO): BottleFormInput {
+  return {
+    country: bottle.country,
+    region: bottle.region,
+    grapeBlendMode: bottle.grapeBlendMode ?? "single",
+    grapeBlend: bottle.grapeBlend,
+    producer: bottle.producer,
+    wineName: bottle.wineCuvee,
+    vintage: bottle.vintage,
+    notes: bottle.notes ?? "",
+  };
+}
