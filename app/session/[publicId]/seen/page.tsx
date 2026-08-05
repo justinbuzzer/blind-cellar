@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Button } from "@/components/Button";
+import { Card } from "@/components/Card";
+import { PageHeader } from "@/components/PageHeader";
+import { StatusChip } from "@/components/StatusChip";
+import { LoadingState } from "@/components/LoadingState";
+import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { SeenBottleCard } from "@/components/seen/SeenBottleCard";
@@ -107,11 +111,7 @@ export default function SeenTastingListPage() {
   }, [params.publicId, refresh]);
 
   if (loadState === "loading") {
-    return (
-      <main className="mx-auto flex min-h-dvh max-w-md items-center justify-center px-6">
-        <p className="text-sm text-cellar-text/60">Loading tasting…</p>
-      </main>
-    );
+    return <LoadingState message="Gathering the evening's notes…" />;
   }
 
   if (loadState === "no-config") {
@@ -135,6 +135,18 @@ export default function SeenTastingListPage() {
   }
 
   const ratedCount = bottles.filter((b) => b.myRating !== null).length;
+  const eyebrow = [
+    tastingTitle,
+    tastingDate
+      ? new Date(tastingDate).toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        })
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 px-6 py-10">
@@ -143,61 +155,23 @@ export default function SeenTastingListPage() {
         <HostControlsLink sessionPublicId={params.publicId} />
       </div>
 
-      <div>
-        <h1 className="text-2xl font-semibold text-cellar-maroon-dark">{tastingTitle}</h1>
-        {tastingDate && (
-          <p className="mt-1 text-sm text-cellar-text/70">
-            {new Date(tastingDate).toLocaleDateString(undefined, {
-              year: "numeric",
-              month: "long",
-              day: "numeric",
-            })}
-          </p>
-        )}
-        <p className="mt-2 text-sm font-medium text-cellar-maroon">
-          Seen tasting in progress
-        </p>
-        <p className="mt-1 text-sm text-cellar-text/70">
-          All wines are visible. Rate each bottle at your own pace; you can
-          revise your ratings until the host ends the tasting.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow={eyebrow}
+        title="The wines on the table"
+        supporting="All bottles are visible. Rate each at your own pace; you may revise your rating until the tasting ends."
+        action={<StatusChip tone="active">Seen tasting in progress</StatusChip>}
+      />
 
-      <p className="text-sm text-cellar-text/60">
+      <p className="text-sm text-cellar-muted">
         Tasting as {guestName} · You have rated {ratedCount} of {bottles.length}{" "}
         bottles
       </p>
 
-      <div className="flex flex-col gap-4">
+      <Card className="divide-y divide-cellar-border p-0">
         {bottles.map((bottle) => (
           <SeenBottleCard key={bottle.id} publicId={params.publicId} bottle={bottle} />
         ))}
-      </div>
-    </main>
-  );
-}
-
-function UnavailableScreen({
-  title,
-  message,
-  actionHref,
-  actionLabel,
-}: {
-  title: string;
-  message: string;
-  actionHref?: string;
-  actionLabel?: string;
-}) {
-  return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-      <HomeLink />
-      <h1 className="text-xl font-semibold text-cellar-maroon-dark">{title}</h1>
-      <p className="text-sm text-cellar-text/70">{message}</p>
-      {actionHref && actionLabel && (
-        <a href={actionHref}>
-          <Button>{actionLabel}</Button>
-        </a>
-      )}
+      </Card>
     </main>
   );
 }

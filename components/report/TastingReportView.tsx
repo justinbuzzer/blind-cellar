@@ -1,4 +1,7 @@
 import { TastingReport } from "@/types/tasting";
+import { SectionEyebrow } from "@/components/SectionEyebrow";
+import { ImageBand } from "@/components/ImageBand";
+import { resultsImage } from "@/lib/appImages";
 import { Highlight } from "./Highlight";
 import { WineResultCard } from "./WineResultCard";
 import { TasterLeaderboard } from "./TasterLeaderboard";
@@ -23,7 +26,6 @@ export function TastingReportView({ report }: TastingReportViewProps) {
         {wineOfTheNight.length > 0 && (
           <Highlight
             label="Wine of the Night"
-            icon="🏆"
             title={joinNames(wineOfTheNight.map((w) => w.wine.code))}
             detail={`Avg rating ${wineOfTheNight[0].averageRating}`}
             tie={wineOfTheNight.length > 1}
@@ -32,7 +34,6 @@ export function TastingReportView({ report }: TastingReportViewProps) {
         {bestTaster.length > 0 && (
           <Highlight
             label="Best Taster"
-            icon="👃"
             title={joinNames(bestTaster.map((t) => t.guestName))}
             detail={`${bestTaster[0].totalPoints} / ${bestTaster[0].totalPossible} total points, including ${bestTaster[0].bonusPoints} bonus points`}
             tie={bestTaster.length > 1}
@@ -41,7 +42,6 @@ export function TastingReportView({ report }: TastingReportViewProps) {
         {mostDivisiveWine.length > 0 && mostDivisiveWine[0].ratingSpread ? (
           <Highlight
             label="Most Divisive Wine"
-            icon="⚡"
             title={joinNames(mostDivisiveWine.map((w) => w.wine.code))}
             detail={`Spread of ${mostDivisiveWine[0].ratingSpread} points`}
             tie={mostDivisiveWine.length > 1}
@@ -50,9 +50,7 @@ export function TastingReportView({ report }: TastingReportViewProps) {
       </div>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-xl font-semibold text-cellar-maroon-dark">
-          Wine results
-        </h2>
+        <SectionEyebrow>The tasting ledger</SectionEyebrow>
         <div className="flex flex-col gap-4">
           {wineResults.map((result, index) => (
             <WineResultCard
@@ -66,11 +64,11 @@ export function TastingReportView({ report }: TastingReportViewProps) {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-xl font-semibold text-cellar-maroon-dark">
-          Taster leaderboard
-        </h2>
+        <SectionEyebrow>Taster leaderboard</SectionEyebrow>
         <TasterLeaderboard results={tasterResults} />
       </section>
+
+      <ImageBand image={resultsImage} className="hidden h-48 rounded-sm sm:block" />
     </div>
   );
 }

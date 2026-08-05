@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/Button";
 import { BottleForm, BottleFormErrors } from "@/components/registration/BottleForm";
+import { PageHeader } from "@/components/PageHeader";
+import { LoadingState } from "@/components/LoadingState";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -76,27 +78,22 @@ export default function AddBottlePage() {
   }
 
   if (!ready) {
-    return (
-      <main className="mx-auto flex min-h-dvh max-w-md items-center justify-center px-6">
-        <p className="text-sm text-cellar-text/60">Loading…</p>
-      </main>
-    );
+    return <LoadingState message="Preparing the table…" />;
   }
 
   if (registeredNumber !== null) {
     return (
       <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
         <HomeLink />
-        <div className="text-4xl" aria-hidden="true">
-          🍾
+        <div className="w-full border-t border-cellar-gold/40 pt-5">
+          <h1 className="font-display text-2xl font-semibold text-cellar-maroon-dark">
+            Registered as {bottleLabel(registeredNumber)}
+          </h1>
+          <p className="mt-2 text-sm text-cellar-muted">
+            Your wine has been registered as {bottleLabel(registeredNumber)}. Keep
+            its identity secret until reveal.
+          </p>
         </div>
-        <h1 className="text-2xl font-semibold text-cellar-maroon-dark">
-          Registered as {bottleLabel(registeredNumber)}
-        </h1>
-        <p className="text-sm text-cellar-text/70">
-          Your wine has been registered as {bottleLabel(registeredNumber)}. Keep
-          its identity secret until reveal.
-        </p>
         <div className="flex w-full flex-col gap-2">
           <Button
             fullWidth
@@ -138,15 +135,11 @@ export default function AddBottlePage() {
           hasUnsavedChanges={hasUnsavedChanges}
         />
       </div>
-      <div>
-        <h1 className="text-2xl font-semibold text-cellar-maroon-dark">
-          Register a bottle
-        </h1>
-        <p className="mt-1 text-sm text-cellar-text/70">
-          Enter the real details privately. Only you can see them until the
-          host reveals the tasting.
-        </p>
-      </div>
+
+      <PageHeader
+        title="Register a bottle"
+        supporting="These details remain private until reveal."
+      />
 
       <BottleForm
         value={value}

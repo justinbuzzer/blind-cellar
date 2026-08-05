@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Card } from "@/components/Card";
+import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { moveItem } from "@/lib/reorder";
 import { HostBottleDTO } from "@/lib/supabase/types";
 import { WINE_STYLE_LABELS } from "@/types/tasting";
@@ -84,32 +85,32 @@ export function TastingOrderList({
   }
 
   return (
-    <Card className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-cellar-text">Tasting order</h2>
+    <Card className="flex flex-col gap-3 p-0">
+      <div className="flex items-center justify-between gap-2 px-5 pt-5">
+        <SectionEyebrow>Order of service</SectionEyebrow>
         <SaveStatus state={saveState} onRetry={retry} />
       </div>
-      <p className="text-sm text-cellar-text/60">
+      <p className="px-5 text-sm text-cellar-muted">
         Arrange the order bottles will be tasted in. This locks once the
         tasting starts.
       </p>
-      <ol className="flex flex-col gap-2">
+      <ol className="flex flex-col divide-y divide-cellar-border">
         {localWines.map((wine, index) => (
           <li
             key={wine.id}
-            className="flex items-center justify-between gap-3 rounded-lg border border-cellar-border px-3 py-2"
+            className="flex items-center justify-between gap-3 px-5 py-3"
           >
             <div className="flex items-center gap-3">
               <span
                 aria-hidden="true"
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cellar-maroon/10 text-sm font-semibold text-cellar-maroon"
+                className="flex h-8 w-8 shrink-0 items-center justify-center font-display text-lg font-semibold text-cellar-maroon"
               >
                 {index + 1}
               </span>
               <span className="text-sm font-medium text-cellar-text">
                 {wine.anonymousCode}
               </span>
-              <span className="rounded-full border border-cellar-border px-2 py-0.5 text-xs text-cellar-text/70">
+              <span className="rounded-full border border-cellar-border px-2 py-0.5 text-xs text-cellar-muted">
                 {WINE_STYLE_LABELS[wine.wineStyle]}
               </span>
             </div>
@@ -119,7 +120,7 @@ export function TastingOrderList({
                 aria-label={`Move ${wine.anonymousCode} up`}
                 disabled={index === 0 || saveState === "saving"}
                 onClick={() => move(index, "up")}
-                className="flex h-11 w-11 items-center justify-center rounded-lg border border-cellar-border text-cellar-text transition-colors duration-150 hover:border-cellar-maroon/40 focus:outline-none focus:ring-2 focus:ring-cellar-gold disabled:opacity-30 disabled:hover:border-cellar-border"
+                className="flex h-11 w-11 items-center justify-center rounded-sm border border-cellar-border text-cellar-text transition-colors duration-150 hover:border-cellar-maroon/40 focus:outline-none focus:ring-2 focus:ring-cellar-gold disabled:opacity-30 disabled:hover:border-cellar-border"
               >
                 <span aria-hidden="true">↑</span>
               </button>
@@ -128,7 +129,7 @@ export function TastingOrderList({
                 aria-label={`Move ${wine.anonymousCode} down`}
                 disabled={index === localWines.length - 1 || saveState === "saving"}
                 onClick={() => move(index, "down")}
-                className="flex h-11 w-11 items-center justify-center rounded-lg border border-cellar-border text-cellar-text transition-colors duration-150 hover:border-cellar-maroon/40 focus:outline-none focus:ring-2 focus:ring-cellar-gold disabled:opacity-30 disabled:hover:border-cellar-border"
+                className="flex h-11 w-11 items-center justify-center rounded-sm border border-cellar-border text-cellar-text transition-colors duration-150 hover:border-cellar-maroon/40 focus:outline-none focus:ring-2 focus:ring-cellar-gold disabled:opacity-30 disabled:hover:border-cellar-border"
               >
                 <span aria-hidden="true">↓</span>
               </button>
@@ -136,6 +137,7 @@ export function TastingOrderList({
           </li>
         ))}
       </ol>
+      <div className="h-1" />
     </Card>
   );
 }
@@ -157,7 +159,7 @@ function SaveStatus({ state, onRetry }: { state: SaveState; onRetry: () => void 
     );
   }
   return (
-    <p role="alert" className="flex items-center gap-1 text-xs font-medium text-red-600">
+    <p role="alert" className="flex items-center gap-1 text-xs font-medium text-cellar-danger">
       Unable to save order —
       <button type="button" onClick={onRetry} className="underline underline-offset-2">
         Retry

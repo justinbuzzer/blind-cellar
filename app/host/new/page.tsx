@@ -6,6 +6,8 @@ import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { TextField } from "@/components/TextField";
 import { TastingModeField } from "@/components/TastingModeField";
+import { PageHeader } from "@/components/PageHeader";
+import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { setGuestToken, setHostToken } from "@/lib/deviceStorage";
 import { TastingMode } from "@/types/tasting";
@@ -85,58 +87,66 @@ export default function HostSetupPage() {
         confirmBeforeLeave
         hasUnsavedChanges={Boolean(title.trim() || hostDisplayName.trim())}
       />
-      <div>
-        <h1 className="text-2xl font-semibold text-cellar-maroon-dark">
-          Host a tasting
-        </h1>
-        <p className="mt-1 text-sm text-cellar-text/70">
-          Set up the tasting, then invite everyone — including yourself — to
-          register their own bottles.
-        </p>
-      </div>
 
-      <Card>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
-          <TextField
-            label="Tasting title"
-            value={title}
-            error={errors?.title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Friday Night Rhone vs Piedmont"
-          />
-          <TextField
-            label="Date"
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-          />
-          <TextField
-            label="Your display name"
-            value={hostDisplayName}
-            error={errors?.hostDisplayName}
-            onChange={(e) => setHostDisplayName(e.target.value)}
-            placeholder="e.g. Alice"
-            maxLength={60}
-          />
+      <PageHeader
+        title="Create a tasting"
+        supporting="Set the table, choose the format, and invite your guests when you are ready."
+      />
 
-          <TastingModeField
-            value={tastingMode}
-            onChange={setTastingMode}
-            error={errors?.tastingMode}
-          />
+      <Card className="p-0">
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="flex flex-col gap-4 border-b border-cellar-border p-5">
+            <SectionEyebrow>Occasion</SectionEyebrow>
+            <TextField
+              label="Tasting title"
+              value={title}
+              error={errors?.title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Friday Night Rhone vs Piedmont"
+            />
+            <TextField
+              label="Date"
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-4 border-b border-cellar-border p-5">
+            <SectionEyebrow>Host</SectionEyebrow>
+            <TextField
+              label="Your display name"
+              value={hostDisplayName}
+              error={errors?.hostDisplayName}
+              onChange={(e) => setHostDisplayName(e.target.value)}
+              placeholder="e.g. Alice"
+              maxLength={60}
+            />
+          </div>
+
+          <div className="flex flex-col gap-4 p-5">
+            <SectionEyebrow>Format</SectionEyebrow>
+            <TastingModeField
+              value={tastingMode}
+              onChange={setTastingMode}
+              error={errors?.tastingMode}
+            />
+          </div>
 
           {submitError && (
             <p
               role="alert"
-              className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+              className="mx-5 mb-5 rounded-sm border border-cellar-danger/30 bg-cellar-danger/5 px-3 py-2 text-sm text-cellar-danger"
             >
               {submitError}
             </p>
           )}
 
-          <Button type="submit" fullWidth disabled={submitting}>
-            {submitting ? "Creating tasting…" : "Create tasting"}
-          </Button>
+          <div className="border-t border-cellar-border p-5">
+            <Button type="submit" fullWidth disabled={submitting}>
+              {submitting ? "Creating tasting…" : "Create private tasting"}
+            </Button>
+          </div>
         </form>
       </Card>
     </main>

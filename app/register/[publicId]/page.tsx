@@ -6,6 +6,12 @@ import Link from "next/link";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { Modal } from "@/components/Modal";
+import { PageHeader } from "@/components/PageHeader";
+import { SectionEyebrow } from "@/components/SectionEyebrow";
+import { StatusChip } from "@/components/StatusChip";
+import { EmptyState } from "@/components/EmptyState";
+import { LoadingState } from "@/components/LoadingState";
+import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -111,11 +117,7 @@ export default function RegistrationHomePage() {
   }
 
   if (loadState === "loading") {
-    return (
-      <main className="mx-auto flex min-h-dvh max-w-md items-center justify-center px-6">
-        <p className="text-sm text-cellar-text/60">Loading tasting…</p>
-      </main>
-    );
+    return <LoadingState message="Preparing the table…" />;
   }
 
   if (loadState === "no-config") {
@@ -146,76 +148,70 @@ export default function RegistrationHomePage() {
         <HomeLink />
         <HostControlsLink sessionPublicId={params.publicId} />
       </div>
-      <div>
-        <h1 className="text-2xl font-semibold text-cellar-maroon-dark">
-          {state.session.title}
-        </h1>
-        <p className="mt-1 text-sm text-cellar-text/70">
-          {new Date(state.session.tastingDate).toLocaleDateString(undefined, {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-          })}
-        </p>
+
+      <PageHeader
+        title="Your contribution"
+        supporting="Register your bottle privately. Its identity remains hidden until the tasting reveals it."
+      />
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-cellar-muted">
+        <span>{state.session.title}</span>
+        <span aria-hidden="true">·</span>
+        <StatusChip tone="active">Bottle registration open</StatusChip>
+        <span aria-hidden="true">·</span>
+        <span>Registering as {state.guest.displayName}</span>
       </div>
 
-      <Card className="flex flex-col gap-1">
-        <p className="text-sm font-medium text-cellar-maroon">
-          Bottle registration open
-        </p>
-        <p className="text-sm text-cellar-text/70">
-          Registering as {state.guest.displayName}
-        </p>
-        <p className="text-sm text-cellar-text/70">
-          {state.bottleCount} {state.bottleCount === 1 ? "bottle" : "bottles"} registered
-        </p>
-      </Card>
-
       <div className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold text-cellar-text">
-          Your contributed bottles
-        </h2>
+        <SectionEyebrow>
+          Your contributed bottles ({state.myBottles.length})
+        </SectionEyebrow>
         {state.myBottles.length === 0 ? (
-          <Card className="text-sm text-cellar-text/60">
-            You haven&rsquo;t registered a bottle yet.
-          </Card>
+          <EmptyState
+            title="No bottles yet"
+            message="You haven't registered a bottle for this tasting yet."
+          />
         ) : (
-          state.myBottles.map((bottle) => (
-            <Card
-              key={bottle.id}
-              className="flex items-center justify-between gap-3"
-            >
-              <div>
-                <p className="font-medium text-cellar-maroon-dark">
-                  {bottleLabel(bottle.bottleNumber)}
-                </p>
-                <p className="text-xs text-cellar-text/60">Details saved</p>
-              </div>
-              <div className="flex gap-2">
-                <Link href={`/register/${params.publicId}/${bottle.id}`}>
-                  <Button type="button" variant="secondary">
-                    Edit
-                  </Button>
-                </Link>
-                <Button
-                  type="button"
-                  variant="danger"
-                  onClick={() => {
-                    setDeleteError(null);
-                    setDeleteTarget(bottle);
-                  }}
+          <Card className="p-0">
+            <ol className="divide-y divide-cellar-border">
+              {state.myBottles.map((bottle) => (
+                <li
+                  key={bottle.id}
+                  className="flex items-center justify-between gap-3 px-5 py-4"
                 >
-                  Delete
-                </Button>
-              </div>
-            </Card>
-          ))
+                  <div>
+                    <p className="font-display text-lg font-semibold text-cellar-maroon-dark">
+                      {bottleLabel(bottle.bottleNumber)}
+                    </p>
+                    <p className="text-xs text-cellar-muted">Details saved</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Link href={`/register/${params.publicId}/${bottle.id}`}>
+                      <Button type="button" variant="secondary">
+                        Edit
+                      </Button>
+                    </Link>
+                    <Button
+                      type="button"
+                      variant="danger"
+                      onClick={() => {
+                        setDeleteError(null);
+                        setDeleteTarget(bottle);
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </Card>
         )}
       </div>
 
       <Link href={`/register/${params.publicId}/new`}>
         <Button fullWidth>
-          {state.myBottles.length === 0 ? "Add my bottle" : "Add another bottle"}
+          {state.myBottles.length === 0 ? "Register a bottle" : "Add another bottle"}
         </Button>
       </Link>
 
@@ -226,7 +222,7 @@ export default function RegistrationHomePage() {
         >
           <p>This bottle number will not be reused.</p>
           {deleteError && (
-            <p role="alert" className="mt-2 text-sm text-red-700">
+            <p role="alert" className="mt-2 text-sm text-cellar-danger">
               {deleteError}
             </p>
           )}
@@ -243,31 +239,6 @@ export default function RegistrationHomePage() {
             </Button>
           </div>
         </Modal>
-      )}
-    </main>
-  );
-}
-
-function UnavailableScreen({
-  title,
-  message,
-  actionHref,
-  actionLabel,
-}: {
-  title: string;
-  message: string;
-  actionHref?: string;
-  actionLabel?: string;
-}) {
-  return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-      <HomeLink />
-      <h1 className="text-xl font-semibold text-cellar-maroon-dark">{title}</h1>
-      <p className="text-sm text-cellar-text/70">{message}</p>
-      {actionHref && actionLabel && (
-        <a href={actionHref}>
-          <Button>{actionLabel}</Button>
-        </a>
       )}
     </main>
   );

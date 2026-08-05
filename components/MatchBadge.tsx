@@ -8,8 +8,8 @@ export function MatchBadge({ correct }: MatchBadgeProps) {
     <span
       className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
         correct
-          ? "bg-green-100 text-green-800"
-          : "bg-red-50 text-red-700"
+          ? "bg-cellar-success/10 text-cellar-success"
+          : "bg-cellar-danger/10 text-cellar-danger"
       }`}
     >
       <span aria-hidden="true">{correct ? "✓" : "✕"}</span>

@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import { Button } from "@/components/Button";
+import { PageHeader } from "@/components/PageHeader";
+import { StatusChip } from "@/components/StatusChip";
 import { LocalDemoNote } from "@/components/LocalDemoNote";
+import { HomeLink } from "@/components/navigation/HomeLink";
 import { TastingReportView } from "@/components/report/TastingReportView";
 import { buildDemoTasting } from "@/lib/demoData";
 import { buildTastingReport } from "@/lib/results";
@@ -19,15 +22,15 @@ export default function DemoPage() {
   }, []);
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 px-6 py-10">
-      <div>
-        <h1 className="text-2xl font-semibold text-cellar-maroon-dark">
-          {session.title}
-        </h1>
-        <p className="mt-1 text-sm text-cellar-text/70">
-          Demo report — {submissions.length} tasters, {session.wines.length} wines
-        </p>
-      </div>
+    <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-8 px-6 py-10">
+      <HomeLink />
+
+      <PageHeader
+        eyebrow="The tasting report"
+        title={session.title}
+        supporting={`${submissions.length} tasters · ${session.wines.length} wines`}
+        action={<StatusChip tone="warning">Sample report</StatusChip>}
+      />
 
       <LocalDemoNote />
 

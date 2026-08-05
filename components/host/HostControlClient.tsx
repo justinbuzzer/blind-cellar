@@ -7,9 +7,14 @@ import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { Modal } from "@/components/Modal";
 import { QRCodeCard } from "@/components/QRCodeCard";
+import { SectionEyebrow } from "@/components/SectionEyebrow";
+import { StatusChip } from "@/components/StatusChip";
+import { ImageBand } from "@/components/ImageBand";
 import { TastingOrderList } from "@/components/host/TastingOrderList";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { hostControlImage } from "@/lib/appImages";
+import { WINE_STYLE_LABELS } from "@/types/tasting";
 import {
   friendlyRpcError,
   HostActiveBottleDTO,
@@ -375,33 +380,37 @@ export function HostControlClient({
     }
   }
 
+  const statusTone = status === "revealed" ? "success" : status === "collecting" ? "active" : "neutral";
+
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 px-6 py-10">
       <HomeLink />
+
+      <ImageBand image={hostControlImage} className="hidden h-36 rounded-sm sm:block" />
+
       <div>
-        <h1 className="text-2xl font-semibold text-cellar-maroon-dark">
+        <SectionEyebrow>Host control</SectionEyebrow>
+        <h1 className="mt-1.5 font-display text-3xl font-semibold text-cellar-maroon-dark">
           {session.title}
         </h1>
-        <p className="mt-1 text-sm text-cellar-text/70">
-          {new Date(session.tastingDate).toLocaleDateString(undefined, {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-          })}
-        </p>
-        <p className="mt-2 text-sm">
-          <span className="font-medium text-cellar-maroon">
-            {TASTING_MODE_LABELS[tastingMode]}
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-cellar-muted">
+          <span>
+            {new Date(session.tastingDate).toLocaleDateString(undefined, {
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+            })}
           </span>
-          <span className="text-cellar-text/60">
-            {" — "}
-            {TASTING_MODE_DESCRIPTIONS[tastingMode]}
-          </span>
-        </p>
+          <span aria-hidden="true">·</span>
+          <span>{TASTING_MODE_LABELS[tastingMode]}</span>
+          <span aria-hidden="true">·</span>
+          <StatusChip tone={statusTone}>{STATUS_LABELS[status]}</StatusChip>
+        </div>
+        <p className="mt-2 text-sm text-cellar-muted">{TASTING_MODE_DESCRIPTIONS[tastingMode]}</p>
       </div>
 
       {!realtimeOk && (
-        <p className="flex items-center justify-between gap-2 rounded-lg border border-cellar-gold/40 bg-cellar-gold/10 px-3 py-2 text-sm text-cellar-text/80">
+        <p className="flex items-center justify-between gap-2 rounded-sm border border-cellar-gold/40 bg-cellar-gold/10 px-3 py-2 text-sm text-cellar-text/80">
           Live updates aren&rsquo;t connected right now.
           <Button variant="ghost" onClick={() => router.refresh()}>
             Refresh
@@ -410,39 +419,33 @@ export function HostControlClient({
       )}
 
       <Card className="flex flex-col gap-4">
-        <div className="grid grid-cols-3 gap-3 text-center">
+        <div className="grid grid-cols-2 gap-3 text-center">
           <Stat label="Bottles" value={wines.length} />
           <Stat
             label="Submissions"
             value={status === "registration" ? "—" : `${completedCount} / ${guests.length}`}
           />
-          <Stat label="Status" value={STATUS_LABELS[status]} />
         </div>
       </Card>
 
       {status !== "revealed" && (
-        <Card>
+        <Card className="flex flex-col gap-3">
+          <SectionEyebrow>Invite the table</SectionEyebrow>
           <QRCodeCard url={joinUrl} joinCode={session.joinCode} />
         </Card>
       )}
 
       {status === "registration" && (
         <>
-          <Card className="flex flex-col gap-2">
-            <h2 className="text-sm font-semibold text-cellar-text">
-              Registered bottles ({wines.length})
-            </h2>
-            {wines.length === 0 ? (
-              <p className="text-sm text-cellar-text/60">
+          <div className="flex flex-col gap-2">
+            <SectionEyebrow>The table ({wines.length})</SectionEyebrow>
+            {wines.length === 0 && (
+              <Card className="text-sm text-cellar-muted">
                 No bottles registered yet. Everyone, including you, can
                 register a bottle below.
-              </p>
-            ) : (
-              <p className="text-sm text-cellar-text/70">
-                {wines.map((w) => w.anonymousCode).join(", ")}
-              </p>
+              </Card>
             )}
-          </Card>
+          </div>
 
           {wines.length > 0 && (
             <TastingOrderList
@@ -454,11 +457,9 @@ export function HostControlClient({
           )}
 
           <Card className="flex flex-col gap-2">
-            <h2 className="text-sm font-semibold text-cellar-text">
-              Participants joined ({guests.length})
-            </h2>
+            <SectionEyebrow>Participants joined ({guests.length})</SectionEyebrow>
             {guests.length === 0 ? (
-              <p className="text-sm text-cellar-text/60">
+              <p className="text-sm text-cellar-muted">
                 No one else has joined yet. Share the link, QR code, or join
                 code above.
               </p>
@@ -474,41 +475,57 @@ export function HostControlClient({
             )}
           </Card>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Link href={`/register/${publicId}`}>
-              <Button variant="secondary" fullWidth>
-                Register my bottle
+          <div className="flex flex-col gap-3 border-t border-cellar-border pt-5">
+            <SectionEyebrow>Host actions</SectionEyebrow>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Link href={`/register/${publicId}`}>
+                <Button variant="secondary" fullWidth>
+                  Register my bottle
+                </Button>
+              </Link>
+              <Button
+                fullWidth
+                disabled={wines.length === 0}
+                onClick={() => setShowStartConfirm(true)}
+              >
+                Start tasting
               </Button>
-            </Link>
-            <Button
-              fullWidth
-              disabled={wines.length === 0}
-              onClick={() => setShowStartConfirm(true)}
-            >
-              Start tasting
-            </Button>
+            </div>
           </div>
         </>
       )}
 
       {status === "collecting" && (
         <>
-          <Card className="flex flex-col gap-2">
-            <h2 className="text-sm font-semibold text-cellar-text">
-              Bottles ({wines.length})
-            </h2>
-            <p className="text-sm text-cellar-text/70">
-              {wines.map((w) => w.anonymousCode).join(", ")} — registration is
-              closed and bottle numbers are final.
+          <div className="flex flex-col gap-2">
+            <SectionEyebrow>The table ({wines.length})</SectionEyebrow>
+            <Card className="p-0">
+              <ol className="divide-y divide-cellar-border">
+                {wines.map((wine) => (
+                  <li key={wine.id} className="flex items-center gap-3 px-4 py-3">
+                    <span
+                      aria-hidden="true"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cellar-maroon/10 text-sm font-semibold text-cellar-maroon"
+                    >
+                      {wine.tastingOrder}
+                    </span>
+                    <span className="text-sm font-medium text-cellar-text">{wine.anonymousCode}</span>
+                    <span className="ml-auto rounded-full border border-cellar-border px-2 py-0.5 text-xs text-cellar-muted">
+                      {WINE_STYLE_LABELS[wine.wineStyle]}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </Card>
+            <p className="text-xs text-cellar-muted">
+              Registration is closed and bottle numbers are final.
             </p>
-          </Card>
+          </div>
 
           <Card className="flex flex-col gap-2">
-            <h2 className="text-sm font-semibold text-cellar-text">
-              Participants ({guests.length})
-            </h2>
+            <SectionEyebrow>Participants ({guests.length})</SectionEyebrow>
             {guests.length === 0 ? (
-              <p className="text-sm text-cellar-text/60">No one has joined yet.</p>
+              <p className="text-sm text-cellar-muted">No one has joined yet.</p>
             ) : (
               <ul className="flex flex-col gap-1">
                 {guests.map((guest) => (
@@ -539,18 +556,21 @@ export function HostControlClient({
 
           {tastingMode === "full_blind" && (
             <>
-              <Card className="text-sm text-cellar-text/70">
+              <Card className="text-sm text-cellar-muted">
                 All bottles remain hidden until the final reveal.
               </Card>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Link href={`/tasting/${publicId}`}>
-                  <Button variant="secondary" fullWidth>
-                    Enter my guesses
+              <div className="flex flex-col gap-3 border-t border-cellar-border pt-5">
+                <SectionEyebrow>Host actions</SectionEyebrow>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Link href={`/tasting/${publicId}`}>
+                    <Button variant="secondary" fullWidth>
+                      Enter my guesses
+                    </Button>
+                  </Link>
+                  <Button fullWidth onClick={() => setShowRevealConfirm(true)}>
+                    Reveal results
                   </Button>
-                </Link>
-                <Button fullWidth onClick={() => setShowRevealConfirm(true)}>
-                  Reveal results
-                </Button>
+                </div>
               </div>
             </>
           )}
@@ -560,46 +580,51 @@ export function HostControlClient({
               {activeBottle ? (
                 <Card className="flex flex-col gap-3">
                   <div>
-                    <h2 className="text-sm font-semibold text-cellar-text">
-                      Active bottle
-                    </h2>
-                    <p className="mt-1 text-lg font-semibold text-cellar-maroon-dark">
+                    <SectionEyebrow>Active bottle</SectionEyebrow>
+                    <p className="mt-1 font-display text-xl font-semibold text-cellar-maroon-dark">
                       {activeBottle.anonymousCode}
                     </p>
-                    <p className="text-sm text-cellar-text/60">
+                    <p className="text-sm text-cellar-muted">
                       Position {activeBottle.position} of {activeBottle.totalBottles}
                     </p>
                   </div>
-                  <p className="text-sm text-cellar-text/70">
+                  <p className="text-sm text-cellar-muted">
                     {activeBottle.submittedCount} of {activeBottle.totalParticipants}{" "}
                     participants submitted
                   </p>
-                  <Button fullWidth onClick={() => setShowRevealBottleConfirm(true)}>
-                    Reveal {activeBottle.anonymousCode}
-                  </Button>
                 </Card>
               ) : (
-                <Card className="text-sm text-cellar-text/70">
+                <Card className="text-sm text-cellar-muted">
                   Every bottle has been revealed.
                 </Card>
               )}
-              <Link href={`/session/${publicId}/active`}>
-                <Button variant="secondary" fullWidth>
-                  Enter my guesses
-                </Button>
-              </Link>
+              <div className="flex flex-col gap-3 border-t border-cellar-border pt-5">
+                <SectionEyebrow>Host actions</SectionEyebrow>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Link href={`/session/${publicId}/active`}>
+                    <Button variant="secondary" fullWidth>
+                      Enter my guesses
+                    </Button>
+                  </Link>
+                  {activeBottle && (
+                    <Button fullWidth onClick={() => setShowRevealBottleConfirm(true)}>
+                      Reveal {activeBottle.anonymousCode}
+                    </Button>
+                  )}
+                </div>
+              </div>
             </>
           )}
 
           {tastingMode === "seen" && (
             <>
               <Card className="flex flex-col gap-2">
-                <p className="text-sm text-cellar-text/70">
+                <p className="text-sm text-cellar-muted">
                   All bottles are visible. Guests can revise their ratings
                   until you end the tasting.
                 </p>
                 {seenProgress && (
-                  <div className="grid grid-cols-2 gap-3 rounded-lg bg-cellar-bg p-3 text-center">
+                  <div className="grid grid-cols-2 gap-3 rounded-sm bg-cellar-bg p-3 text-center">
                     <Stat
                       label="Participants rated ≥1 bottle"
                       value={`${seenProgress.ratersCount} of ${seenProgress.totalParticipants}`}
@@ -611,15 +636,18 @@ export function HostControlClient({
                   </div>
                 )}
               </Card>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Link href={`/session/${publicId}/seen`}>
-                  <Button variant="secondary" fullWidth>
-                    Rate my bottles
+              <div className="flex flex-col gap-3 border-t border-cellar-border pt-5">
+                <SectionEyebrow>Host actions</SectionEyebrow>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Link href={`/session/${publicId}/seen`}>
+                    <Button variant="secondary" fullWidth>
+                      Rate my bottles
+                    </Button>
+                  </Link>
+                  <Button fullWidth onClick={() => setShowEndSeenConfirm(true)}>
+                    End tasting and reveal ratings
                   </Button>
-                </Link>
-                <Button fullWidth onClick={() => setShowEndSeenConfirm(true)}>
-                  End tasting and reveal ratings
-                </Button>
+                </div>
               </div>
             </>
           )}
@@ -628,7 +656,7 @@ export function HostControlClient({
 
       {status === "revealed" && (
         <Card className="flex flex-col items-center gap-3 text-center">
-          <p className="text-sm text-cellar-text/70">
+          <p className="text-sm text-cellar-muted">
             Results are revealed. Everyone can now see the answer key and the
             full report.
           </p>
@@ -639,7 +667,7 @@ export function HostControlClient({
       )}
 
       {actionError && (
-        <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p role="alert" className="rounded-sm border border-cellar-danger/30 bg-cellar-danger/5 px-3 py-2 text-sm text-cellar-danger">
           {actionError}
         </p>
       )}
@@ -748,8 +776,8 @@ export function HostControlClient({
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
     <div>
-      <p className="text-lg font-semibold text-cellar-maroon-dark">{value}</p>
-      <p className="text-xs text-cellar-text/60">{label}</p>
+      <p className="font-display text-xl font-semibold text-cellar-maroon-dark">{value}</p>
+      <p className="text-xs text-cellar-muted">{label}</p>
     </div>
   );
 }

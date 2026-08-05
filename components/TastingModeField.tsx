@@ -39,13 +39,19 @@ export function TastingModeField({ value, onChange, error }: TastingModeFieldPro
               role="radio"
               aria-checked={selected}
               onClick={() => onChange(mode)}
-              className={`flex flex-col gap-1 rounded-lg border-2 px-4 py-3 text-left transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-cellar-gold ${
+              className={`relative flex flex-col gap-1.5 rounded-sm border px-4 py-4 text-left transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-cellar-gold ${
                 selected
-                  ? "border-cellar-maroon bg-cellar-maroon/5"
+                  ? "border-cellar-maroon bg-cellar-bg"
                   : "border-cellar-border bg-white hover:border-cellar-maroon/40"
               }`}
             >
-              <span className="flex items-center gap-2 text-sm font-semibold text-cellar-maroon-dark">
+              {selected && (
+                <span
+                  aria-hidden="true"
+                  className="absolute inset-y-3 left-0 w-0.5 bg-cellar-gold"
+                />
+              )}
+              <span className="flex items-center gap-2 font-display text-lg font-semibold text-cellar-maroon-dark">
                 <span
                   aria-hidden="true"
                   className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${
@@ -58,7 +64,7 @@ export function TastingModeField({ value, onChange, error }: TastingModeFieldPro
                 </span>
                 {TASTING_MODE_LABELS[mode]}
               </span>
-              <span className="pl-6 text-sm text-cellar-text/70">
+              <span className="pl-6 text-sm leading-relaxed text-cellar-muted">
                 {TASTING_MODE_DESCRIPTIONS[mode]}
               </span>
             </button>
@@ -66,7 +72,7 @@ export function TastingModeField({ value, onChange, error }: TastingModeFieldPro
         })}
       </div>
       {error && (
-        <p id={errorId} role="alert" className="mt-1 text-xs font-medium text-red-600">
+        <p id={errorId} role="alert" className="mt-1 text-xs font-medium text-cellar-danger">
           {error}
         </p>
       )}

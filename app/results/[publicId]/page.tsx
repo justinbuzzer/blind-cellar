@@ -3,9 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Button } from "@/components/Button";
+import { PageHeader } from "@/components/PageHeader";
+import { LoadingState } from "@/components/LoadingState";
+import { UnavailableScreen } from "@/components/UnavailableScreen";
+import { HomeLink } from "@/components/navigation/HomeLink";
 import { TastingReportView } from "@/components/report/TastingReportView";
 import { SeenTastingReportView } from "@/components/report/SeenTastingReportView";
-import { HomeLink } from "@/components/navigation/HomeLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   buildCourseRevealSubmissions,
@@ -15,7 +18,12 @@ import {
 import { buildSeenTastingReport, SeenRatingRow } from "@/lib/seenResults";
 import { SessionRow } from "@/lib/supabase/types";
 import { buildTastingReport } from "@/lib/results";
-import { SeenTastingReport, TastingReport, TastingSession } from "@/types/tasting";
+import {
+  SeenTastingReport,
+  TASTING_MODE_LABELS,
+  TastingReport,
+  TastingSession,
+} from "@/types/tasting";
 
 type LoadState = "loading" | "no-config" | "not-found" | "waiting" | "ready";
 
@@ -156,11 +164,7 @@ export default function ResultsPage() {
   }, [loadState, sessionRow, params.publicId, loadReport]);
 
   if (loadState === "loading") {
-    return (
-      <main className="mx-auto flex min-h-dvh max-w-md items-center justify-center px-6">
-        <p className="text-sm text-cellar-text/60">Loading results…</p>
-      </main>
-    );
+    return <LoadingState message="Gathering the evening's notes…" />;
   }
 
   if (loadState === "no-config") {
@@ -185,14 +189,16 @@ export default function ResultsPage() {
     return (
       <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
         <HomeLink />
-        <h1 className="text-xl font-semibold text-cellar-maroon-dark">
-          Not revealed yet
-        </h1>
-        <p className="text-sm text-cellar-text/70">
-          {sessionRow?.title ? `"${sessionRow.title}" is` : "This tasting is"}{" "}
-          still collecting guesses. This page will update automatically once
-          the host reveals the results.
-        </p>
+        <div className="w-full border-t border-cellar-gold/40 pt-5">
+          <h1 className="font-display text-2xl font-semibold text-cellar-maroon-dark">
+            Not revealed yet
+          </h1>
+          <p className="mt-2 text-sm text-cellar-muted">
+            {sessionRow?.title ? `"${sessionRow.title}" is` : "This tasting is"}{" "}
+            still collecting guesses. This page will update automatically once
+            the host reveals the results.
+          </p>
+        </div>
         <Button variant="secondary" onClick={() => window.location.reload()}>
           Refresh
         </Button>
@@ -202,30 +208,30 @@ export default function ResultsPage() {
 
   if (!report && !seenReport) return null;
 
+  const modeLabel = sessionRow ? TASTING_MODE_LABELS[sessionRow.tasting_mode] : "";
+  const dateLabel = sessionRow?.tasting_date
+    ? new Date(sessionRow.tasting_date).toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      })
+    : "";
+
   return (
-    <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 px-6 py-10">
+    <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-8 px-6 py-10">
       <HomeLink />
-      <div>
-        <h1 className="text-2xl font-semibold text-cellar-maroon-dark">
-          {sessionRow?.title}
-        </h1>
-        <p className="mt-1 text-sm text-cellar-text/70">Results revealed</p>
-      </div>
+
+      <PageHeader
+        eyebrow="The tasting report"
+        title={sessionRow?.title ?? ""}
+        supporting={[dateLabel, modeLabel].filter(Boolean).join(" · ")}
+      />
+
       {seenReport ? (
         <SeenTastingReportView report={seenReport} />
       ) : (
         report && <TastingReportView report={report} />
       )}
-    </main>
-  );
-}
-
-function UnavailableScreen({ title, message }: { title: string; message: string }) {
-  return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-      <HomeLink />
-      <h1 className="text-xl font-semibold text-cellar-maroon-dark">{title}</h1>
-      <p className="text-sm text-cellar-text/70">{message}</p>
     </main>
   );
 }

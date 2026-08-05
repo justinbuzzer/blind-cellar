@@ -15,7 +15,7 @@ const VARIANT_CLASSES: Record<Variant, string> = {
   ghost:
     "bg-transparent text-cellar-text hover:bg-cellar-text/5 disabled:opacity-50",
   danger:
-    "bg-transparent text-red-700 border border-red-700 hover:bg-red-50 disabled:opacity-50",
+    "bg-transparent text-cellar-danger border border-cellar-danger hover:bg-cellar-danger/5 disabled:opacity-50",
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
@@ -23,7 +23,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     return (
       <button
         ref={ref}
-        className={`inline-flex items-center justify-center rounded-lg px-4 py-3 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed ${
+        className={`inline-flex min-h-[44px] items-center justify-center rounded-sm px-5 py-3 text-sm font-medium transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-cellar-gold disabled:cursor-not-allowed ${
           VARIANT_CLASSES[variant]
         } ${fullWidth ? "w-full" : ""} ${className}`}
         {...props}

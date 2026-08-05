@@ -1,10 +1,20 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Cormorant_Garamond, Inter } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
+});
+
+// Editorial display serif, used only by the redesigned home page
+// (components/landing/*) for its large headings. Loaded here (once, at the
+// root) purely so the CSS variable is available — every other page keeps
+// rendering in Inter (`font-sans`, the body's default) exactly as before.
+const cormorantGaramond = Cormorant_Garamond({
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  variable: "--font-display",
 });
 
 export const metadata: Metadata = {
@@ -19,7 +29,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} font-sans antialiased bg-cellar-bg text-cellar-text`}>
+      <body
+        className={`${inter.variable} ${cormorantGaramond.variable} font-sans antialiased bg-cellar-bg text-cellar-text`}
+      >
         {children}
       </body>
     </html>

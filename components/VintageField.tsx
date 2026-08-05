@@ -57,7 +57,7 @@ export function VintageField({ value, onChange, error }: VintageFieldProps) {
           error={error}
         />
       ) : (
-        error && <p className="text-xs font-medium text-red-600">{error}</p>
+        error && <p className="text-xs font-medium text-cellar-danger">{error}</p>
       )}
     </div>
   );

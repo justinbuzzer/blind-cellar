@@ -44,7 +44,7 @@ export function HomeLink({
         href="/"
         onClick={handleClick}
         aria-label="Return to home"
-        className={`inline-flex min-h-[44px] items-center gap-1 self-start rounded-lg px-2 -ml-2 text-sm font-medium text-cellar-text/60 transition-colors hover:bg-cellar-maroon/5 hover:text-cellar-maroon focus:outline-none focus:ring-2 focus:ring-cellar-gold ${className}`}
+        className={`inline-flex min-h-[44px] items-center gap-1 self-start rounded-sm px-2 -ml-2 text-sm font-medium text-cellar-muted transition-colors hover:bg-cellar-maroon/5 hover:text-cellar-maroon focus:outline-none focus:ring-2 focus:ring-cellar-gold ${className}`}
       >
         Home
       </Link>

@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { BottleForm, BottleFormErrors } from "@/components/registration/BottleForm";
-import { Button } from "@/components/Button";
+import { PageHeader } from "@/components/PageHeader";
+import { LoadingState } from "@/components/LoadingState";
+import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -95,11 +97,7 @@ export default function EditBottlePage() {
   }
 
   if (loadState === "loading") {
-    return (
-      <main className="mx-auto flex min-h-dvh max-w-md items-center justify-center px-6">
-        <p className="text-sm text-cellar-text/60">Loading bottle…</p>
-      </main>
-    );
+    return <LoadingState message="Opening the cellar card…" />;
   }
 
   if (loadState === "no-config") {
@@ -151,15 +149,11 @@ export default function EditBottlePage() {
           hasUnsavedChanges={hasUnsavedChanges}
         />
       </div>
-      <div>
-        <h1 className="text-2xl font-semibold text-cellar-maroon-dark">
-          Edit {bottleLabel(bottleNumber)}
-        </h1>
-        <p className="mt-1 text-sm text-cellar-text/70">
-          Its bottle number won&rsquo;t change. Only you can see these
-          details until reveal.
-        </p>
-      </div>
+
+      <PageHeader
+        title={`Register ${bottleLabel(bottleNumber)}`}
+        supporting="Its bottle number won't change. These details remain private until reveal."
+      />
 
       <BottleForm
         value={value}
@@ -170,31 +164,6 @@ export default function EditBottlePage() {
         submitting={submitting}
         submitError={submitError}
       />
-    </main>
-  );
-}
-
-function UnavailableScreen({
-  title,
-  message,
-  actionHref,
-  actionLabel,
-}: {
-  title: string;
-  message: string;
-  actionHref?: string;
-  actionLabel?: string;
-}) {
-  return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-      <HomeLink />
-      <h1 className="text-xl font-semibold text-cellar-maroon-dark">{title}</h1>
-      <p className="text-sm text-cellar-text/70">{message}</p>
-      {actionHref && actionLabel && (
-        <a href={actionHref}>
-          <Button>{actionLabel}</Button>
-        </a>
-      )}
     </main>
   );
 }

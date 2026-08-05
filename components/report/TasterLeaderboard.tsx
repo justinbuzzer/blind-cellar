@@ -9,7 +9,7 @@ interface TasterLeaderboardProps {
 export function TasterLeaderboard({ results }: TasterLeaderboardProps) {
   if (results.length === 0) {
     return (
-      <Card className="text-center text-sm text-cellar-text/60">
+      <Card className="text-center text-sm text-cellar-muted">
         No guests submitted entries for this tasting.
       </Card>
     );
@@ -17,7 +17,7 @@ export function TasterLeaderboard({ results }: TasterLeaderboardProps) {
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-xs text-cellar-text/60">
+      <p className="text-xs text-cellar-muted">
         Country, region, grape/blend, and vintage make up the 100-point core
         score. Producer and wine/cuvée are bonus categories worth up to 20
         additional points.
@@ -26,19 +26,19 @@ export function TasterLeaderboard({ results }: TasterLeaderboardProps) {
         <Card key={taster.guestId} className="flex flex-col gap-3">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cellar-maroon text-sm font-semibold text-white">
+              <span className="w-6 shrink-0 font-display text-lg text-cellar-muted">
                 {taster.rank}
               </span>
               <p className="font-medium text-cellar-text">{taster.guestName}</p>
             </div>
             <div className="text-right">
-              <p className="text-lg font-semibold text-cellar-maroon-dark">
+              <p className="font-display text-lg font-semibold text-cellar-maroon-dark">
                 {taster.totalPoints}/{taster.totalPossible}
               </p>
-              <p className="text-xs text-cellar-text/60">Total score</p>
+              <p className="text-xs text-cellar-muted">Total score</p>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3 rounded-lg bg-cellar-bg p-3 text-center sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 rounded-sm bg-cellar-bg-deep p-3 text-center sm:grid-cols-4">
             <Stat
               label="Core score"
               value={`${taster.corePoints}/${taster.corePossible}`}
@@ -56,7 +56,7 @@ export function TasterLeaderboard({ results }: TasterLeaderboardProps) {
               value={`${taster.coreAccuracyPercent.toFixed(1)}%`}
             />
           </div>
-          <p className="text-xs text-cellar-text/60">
+          <p className="text-xs text-cellar-muted">
             {taster.exactCoreMatches} exact core calls · avg rating{" "}
             {taster.averageRatingGiven ?? "—"}
           </p>

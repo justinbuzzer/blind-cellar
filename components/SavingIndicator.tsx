@@ -11,7 +11,7 @@ const COLORS: Record<SaveState, string> = {
   idle: "",
   saving: "text-cellar-text/50",
   saved: "text-cellar-maroon",
-  error: "text-red-600",
+  error: "text-cellar-danger",
 };
 
 export function SavingIndicator({ state }: { state: SaveState }) {

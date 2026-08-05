@@ -24,10 +24,10 @@ export function QRCodeCard({ url, joinCode }: QRCodeCardProps) {
 
   return (
     <div className="flex flex-col items-center gap-4 text-center">
-      <div className="rounded-xl border border-cellar-border bg-white p-4">
-        <QRCodeSVG value={url} size={176} fgColor="#3D1420" bgColor="#FFFFFF" />
+      <div className="rounded-sm border border-cellar-border bg-white p-4">
+        <QRCodeSVG value={url} size={176} fgColor="#24151A" bgColor="#FFFFFF" />
       </div>
-      <p className="break-all text-xs text-cellar-text/60">{url}</p>
+      <p className="break-all text-xs text-cellar-muted">{url}</p>
       <div className="flex w-full flex-col gap-2 sm:flex-row">
         <Button
           type="button"

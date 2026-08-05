@@ -81,12 +81,12 @@ export function GrapeMultiSelect({
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Search grape varieties…"
           aria-label="Search grape varieties"
-          className="mt-2 w-full rounded-lg border border-cellar-border bg-white px-3 py-2 text-base text-cellar-text placeholder:text-cellar-text/40 focus:outline-none focus:ring-2 focus:ring-cellar-gold"
+          className="mt-2 w-full rounded-sm border border-cellar-border bg-white px-3 py-2 text-base text-cellar-text placeholder:text-cellar-text/40 focus:outline-none focus:ring-2 focus:ring-cellar-gold"
         />
 
         <div
-          className={`mt-2 max-h-56 overflow-y-auto rounded-lg border bg-white p-1 ${
-            error ? "border-red-500" : "border-cellar-border"
+          className={`mt-2 max-h-56 overflow-y-auto rounded-sm border bg-white p-1 ${
+            error ? "border-cellar-danger" : "border-cellar-border"
           }`}
         >
           {filtered.length === 0 ? (
@@ -99,7 +99,7 @@ export function GrapeMultiSelect({
               return (
                 <label
                   key={grape.value}
-                  className="flex min-h-[44px] cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm text-cellar-text hover:bg-cellar-bg"
+                  className="flex min-h-[44px] cursor-pointer items-center gap-3 rounded-sm px-2 py-2 text-sm text-cellar-text hover:bg-cellar-bg"
                 >
                   <input
                     type="checkbox"
@@ -121,7 +121,7 @@ export function GrapeMultiSelect({
         </p>
       )}
       {error && (
-        <p id={errorId} role="alert" className="text-xs font-medium text-red-600">
+        <p id={errorId} role="alert" className="text-xs font-medium text-cellar-danger">
           {error}
         </p>
       )}

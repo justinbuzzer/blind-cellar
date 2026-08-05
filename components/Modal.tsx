@@ -30,9 +30,9 @@ export function Modal({ title, children, onClose }: ModalProps) {
         aria-labelledby="modal-title"
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm rounded-xl border border-cellar-border bg-white p-5 focus:outline-none"
+        className="w-full max-w-sm rounded-sm border border-cellar-border bg-white p-6 focus:outline-none"
       >
-        <h2 id="modal-title" className="text-lg font-semibold text-cellar-maroon-dark">
+        <h2 id="modal-title" className="font-display text-xl font-semibold text-cellar-maroon-dark">
           {title}
         </h2>
         <div className="mt-3 text-sm text-cellar-text">{children}</div>

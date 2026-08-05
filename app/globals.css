@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 :root {
-  --background: #faf8f4;
-  --foreground: #24201d;
+  --background: #f6f1e8;
+  --foreground: #24151a;
 }
 
 body {
@@ -16,16 +16,71 @@ body {
   .text-balance {
     text-wrap: balance;
   }
+
+  /* Fine-line "cellar" divider used in place of heavy card borders/shadows
+     for editorial section breaks (see components/PageHeader.tsx and the
+     page-section patterns built on it). */
+  .rule-fine {
+    border-top-width: 1px;
+    border-color: theme("colors.cellar.border");
+  }
 }
 
 /* Range input styling for the 50-100 rating slider */
 input[type="range"].rating-slider {
-  accent-color: #5a1f2d;
+  accent-color: #541f2a;
+}
+
+/* App-wide skeleton shimmer for LoadingState (see components/LoadingState.tsx).
+   Respects reduced-motion — see the media query below, which omits this
+   animation entirely rather than just slowing it down. */
+@keyframes cellar-shimmer {
+  0% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cellar-shimmer {
+    animation: cellar-shimmer 1.8s ease-in-out infinite;
+  }
 }
 
 @layer base {
   :focus-visible {
     outline: 2px solid #b08d57;
     outline-offset: 2px;
+  }
+}
+
+/* Home-page redesign only (components/landing/*): a gentle fade-in for
+   hero/section imagery and copy, and smooth in-page anchor scrolling for the
+   header's "How it works" / "Tasting formats" links. Scoped to a dedicated
+   class and gated on prefers-reduced-motion so it never affects any other
+   page and never fights an explicit user motion preference. */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  .landing-fade-in {
+    animation: landing-fade-in 700ms ease-out both;
+  }
+}
+
+@keyframes landing-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }

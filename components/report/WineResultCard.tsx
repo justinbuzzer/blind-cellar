@@ -46,32 +46,32 @@ export function WineResultCard({ result, rank, totalWines }: WineResultCardProps
   return (
     <Card className="flex flex-col gap-4">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-cellar-gold">
+        <p className="text-xs font-medium uppercase tracking-[0.15em] text-cellar-gold">
           #{rank} · {wine.code}
         </p>
-        <h3 className="text-lg font-semibold text-cellar-maroon-dark">
+        <h3 className="mt-1 font-display text-lg font-semibold text-cellar-maroon-dark">
           {wine.producer} — {wine.wineName} {wine.vintage}
         </h3>
-        <p className="text-sm text-cellar-text/70">
+        <p className="mt-1 text-sm text-cellar-muted">
           {[wine.country, wine.region, wine.grapeBlend].filter(Boolean).join(" · ")}
         </p>
-        <p className="mt-1 text-sm text-cellar-text/70">
+        <p className="mt-1 text-sm text-cellar-muted">
           Style: {WINE_STYLE_LABELS[wine.wineStyle]} · Served {ordinal(wine.tastingOrder)}{" "}
           (tasting order {wine.tastingOrder} of {totalWines})
         </p>
         {wine.contributorName && (
-          <p className="mt-1 text-sm text-cellar-text/70">
-            Contributed by <span className="font-medium">{wine.contributorName}</span>
+          <p className="mt-1 text-sm text-cellar-muted">
+            Contributed by <span className="font-medium text-cellar-text">{wine.contributorName}</span>
           </p>
         )}
         {wine.hostNotes && (
-          <p className="mt-1 text-sm italic text-cellar-text/60">
+          <p className="mt-1 text-sm italic text-cellar-muted">
             &ldquo;{wine.hostNotes}&rdquo;
           </p>
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 rounded-lg bg-cellar-bg p-3 text-center sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 rounded-sm bg-cellar-bg-deep p-3 text-center sm:grid-cols-4">
         <Stat label="Average" value={result.averageRating ?? "—"} />
         <Stat label="Ratings" value={result.numRatings} />
         <Stat label="Lowest" value={result.lowestRating ?? "—"} />
@@ -79,7 +79,7 @@ export function WineResultCard({ result, rank, totalWines }: WineResultCardProps
       </div>
 
       {result.topTasters.length > 0 && (
-        <p className="text-sm text-cellar-text/80">
+        <p className="text-sm text-cellar-text">
           <span className="font-medium text-cellar-maroon">
             Top taster{result.topTasters.length > 1 ? "s" : ""} for this wine:
           </span>{" "}
@@ -89,7 +89,7 @@ export function WineResultCard({ result, rank, totalWines }: WineResultCardProps
       )}
 
       {result.guesses.length === 0 ? (
-        <p className="text-sm text-cellar-text/60">
+        <p className="text-sm text-cellar-muted">
           No guesses submitted for this wine.
         </p>
       ) : (
@@ -103,18 +103,18 @@ export function WineResultCard({ result, rank, totalWines }: WineResultCardProps
             return (
               <details
                 key={guess.guestId}
-                className="rounded-lg border border-cellar-border"
+                className="rounded-sm border border-cellar-border"
               >
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm font-medium text-cellar-text hover:bg-cellar-bg">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-sm px-3 py-2 text-sm font-medium text-cellar-text hover:bg-cellar-bg">
                   <span>
                     {guess.guestName}
                     {isTopTaster && (
-                      <span className="ml-2 text-cellar-gold">
-                        ★ top taster
+                      <span className="ml-2 text-xs font-medium uppercase tracking-[0.1em] text-cellar-maroon">
+                        Top taster
                       </span>
                     )}
                   </span>
-                  <span className="text-cellar-text/70">
+                  <span className="text-cellar-muted">
                     {guess.totalPoints}/{TOTAL_MAX_POINTS_PER_WINE} pts
                     {guess.rating !== null ? ` · rated ${guess.rating}` : ""}
                   </span>
@@ -128,7 +128,7 @@ export function WineResultCard({ result, rank, totalWines }: WineResultCardProps
                     heading="Bonus categories"
                     fields={bonusFields}
                   />
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 rounded-lg bg-cellar-bg px-3 py-2 text-sm font-medium text-cellar-text">
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 rounded-sm bg-cellar-bg-deep px-3 py-2 text-sm font-medium text-cellar-text">
                     <span>
                       Core: {guess.corePoints}/{CORE_MAX_POINTS}
                     </span>
@@ -159,10 +159,10 @@ function FieldScoreTable({
   if (fields.length === 0) return null;
   return (
     <div className="flex flex-col gap-1.5">
-      <p className="text-xs font-semibold uppercase tracking-wide text-cellar-text/40">
+      <p className="text-xs font-semibold uppercase tracking-wide text-cellar-muted">
         {heading}
       </p>
-      <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 text-xs font-semibold uppercase tracking-wide text-cellar-text/40">
+      <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 text-xs font-semibold uppercase tracking-wide text-cellar-muted">
         <span>Field</span>
         <span>Guess</span>
         <span>Actual</span>
@@ -173,13 +173,13 @@ function FieldScoreTable({
           key={fieldScore.field}
           className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 text-sm"
         >
-          <span className="text-cellar-text/60">
+          <span className="text-cellar-muted">
             {FIELD_LABELS[fieldScore.field]}
           </span>
           <span className="truncate text-cellar-text">
             {fieldScore.guessedValue}
           </span>
-          <span className="truncate text-cellar-text/70">
+          <span className="truncate text-cellar-muted">
             {fieldScore.answerValue}
           </span>
           <MatchBadge correct={fieldScore.correct} />

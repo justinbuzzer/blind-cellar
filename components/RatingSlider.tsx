@@ -45,7 +45,7 @@ export function RatingSlider({ value, onChange, error }: RatingSliderProps) {
         <span>{MAX}</span>
       </div>
       {error && (
-        <p id={errorId} className="text-xs font-medium text-red-600">
+        <p id={errorId} className="text-xs font-medium text-cellar-danger">
           {error}
         </p>
       )}

@@ -7,6 +7,10 @@ import { Button } from "@/components/Button";
 import { ProgressBar } from "@/components/ProgressBar";
 import { WineGuessForm } from "@/components/WineGuessForm";
 import { SavingIndicator, SaveState } from "@/components/SavingIndicator";
+import { SectionEyebrow } from "@/components/SectionEyebrow";
+import { LoadingState } from "@/components/LoadingState";
+import { UnavailableScreen } from "@/components/UnavailableScreen";
+import { ImageBand } from "@/components/ImageBand";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -20,6 +24,7 @@ import { mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
 import { emptyWineGuess } from "@/lib/guess";
 import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend } from "@/lib/validation";
 import { getGuestToken } from "@/lib/deviceStorage";
+import { waitingToRevealImage } from "@/lib/appImages";
 import { WineGuess } from "@/types/tasting";
 
 type LoadState =
@@ -238,11 +243,7 @@ export default function ActiveBottlePage() {
   }
 
   if (loadState === "loading" || loadState === "waiting-for-next") {
-    return (
-      <main className="mx-auto flex min-h-dvh max-w-md items-center justify-center px-6">
-        <p className="text-sm text-cellar-text/60">Loading tasting…</p>
-      </main>
-    );
+    return <LoadingState message="Gathering the evening's notes…" />;
   }
 
   if (loadState === "no-config") {
@@ -267,44 +268,51 @@ export default function ActiveBottlePage() {
 
   if (loadState === "revealed-waiting" && revealedBottle) {
     return (
-      <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
+      <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-6 px-6 py-6">
         <div className="flex items-center gap-2">
           <HomeLink />
           <HostControlsLink sessionPublicId={params.publicId} />
         </div>
-        <div className="text-4xl" aria-hidden="true">
-          🎉
+        <div className="relative flex flex-1 flex-col items-center justify-center gap-4 overflow-hidden rounded-sm px-6 py-16 text-center">
+          <ImageBand image={waitingToRevealImage} className="absolute inset-0" />
+          <div className="relative flex flex-col items-center gap-4">
+            <h1 className="font-display text-2xl font-semibold text-cellar-bg">
+              {revealedBottle.anonymousCode} revealed!
+            </h1>
+            <p className="text-sm text-cellar-bg/80">
+              The host has revealed this bottle. Take a look before moving on.
+            </p>
+            <Link href={`/session/${params.publicId}/bottle/${revealedBottle.id}/reveal`}>
+              <Button>View reveal</Button>
+            </Link>
+          </div>
         </div>
-        <h1 className="text-2xl font-semibold text-cellar-maroon-dark">
-          {revealedBottle.anonymousCode} revealed!
-        </h1>
-        <p className="text-sm text-cellar-text/70">
-          The host has revealed this bottle. Take a look before moving on.
-        </p>
-        <Link href={`/session/${params.publicId}/bottle/${revealedBottle.id}/reveal`}>
-          <Button>View reveal</Button>
-        </Link>
       </main>
     );
   }
 
   if (loadState === "locked") {
     return (
-      <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
+      <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-6 px-6 py-6">
         <div className="flex items-center gap-2">
           <HomeLink />
           <HostControlsLink sessionPublicId={params.publicId} />
         </div>
-        <div className="text-4xl" aria-hidden="true">
-          🔒
+        <div className="relative flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden rounded-sm px-6 py-16 text-center">
+          <ImageBand image={waitingToRevealImage} className="absolute inset-0" />
+          <div className="relative flex flex-col items-center gap-2">
+            <p className="text-xs font-medium uppercase tracking-[0.2em] text-cellar-gold">
+              {activeBottle?.anonymousCode ?? "Your bottle"}
+            </p>
+            <h1 className="font-display text-2xl font-semibold text-cellar-bg">
+              Your guess is locked
+            </h1>
+            <p className="text-sm text-cellar-bg/80">
+              The table is waiting for the next reveal. This page will update
+              automatically.
+            </p>
+          </div>
         </div>
-        <h1 className="text-2xl font-semibold text-cellar-maroon-dark">
-          Guess locked in
-        </h1>
-        <p className="text-sm text-cellar-text/70">
-          Your guess for {activeBottle?.anonymousCode} is locked. Waiting for
-          the host to reveal it. This page will update automatically.
-        </p>
       </main>
     );
   }
@@ -322,7 +330,8 @@ export default function ActiveBottlePage() {
         />
       </div>
       <div>
-        <p className="text-sm text-cellar-text/60">Tasting as {guestName}</p>
+        <SectionEyebrow>Blind tasting</SectionEyebrow>
+        <p className="mt-1 text-sm text-cellar-muted">Tasting as {guestName}</p>
       </div>
 
       <ProgressBar
@@ -342,7 +351,7 @@ export default function ActiveBottlePage() {
       <SavingIndicator state={saveState} />
 
       {lockError && (
-        <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p role="alert" className="rounded-sm border border-cellar-danger/30 bg-cellar-danger/5 px-3 py-2 text-sm text-cellar-danger">
           {lockError}
         </p>
       )}
@@ -350,31 +359,6 @@ export default function ActiveBottlePage() {
       <Button type="button" fullWidth onClick={handleLockGuess} disabled={locking}>
         {locking ? "Locking in…" : "Lock in my guess"}
       </Button>
-    </main>
-  );
-}
-
-function UnavailableScreen({
-  title,
-  message,
-  actionHref,
-  actionLabel,
-}: {
-  title: string;
-  message: string;
-  actionHref?: string;
-  actionLabel?: string;
-}) {
-  return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-      <HomeLink />
-      <h1 className="text-xl font-semibold text-cellar-maroon-dark">{title}</h1>
-      <p className="text-sm text-cellar-text/70">{message}</p>
-      {actionHref && actionLabel && (
-        <a href={actionHref}>
-          <Button>{actionLabel}</Button>
-        </a>
-      )}
     </main>
   );
 }

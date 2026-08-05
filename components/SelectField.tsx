@@ -29,8 +29,8 @@ export function SelectField({
         id={fieldId}
         aria-invalid={Boolean(error)}
         aria-describedby={error ? errorId : undefined}
-        className={`rounded-lg border bg-white px-3 py-2 text-base text-cellar-text focus:outline-none focus:ring-2 focus:ring-cellar-gold ${
-          error ? "border-red-500" : "border-cellar-border"
+        className={`rounded-sm border bg-white px-3 py-2 text-base text-cellar-text focus:outline-none focus:ring-2 focus:ring-cellar-gold ${
+          error ? "border-cellar-danger" : "border-cellar-border"
         } ${className}`}
         {...props}
       >
@@ -46,7 +46,7 @@ export function SelectField({
         ))}
       </select>
       {error && (
-        <p id={errorId} className="text-xs font-medium text-red-600">
+        <p id={errorId} className="text-xs font-medium text-cellar-danger">
           {error}
         </p>
       )}

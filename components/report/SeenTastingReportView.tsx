@@ -1,6 +1,9 @@
 import { SeenTastingReport } from "@/types/tasting";
 import { Card } from "@/components/Card";
 import { Stat } from "@/components/Stat";
+import { SectionEyebrow } from "@/components/SectionEyebrow";
+import { ImageBand } from "@/components/ImageBand";
+import { resultsImage } from "@/lib/appImages";
 import { Highlight } from "./Highlight";
 import { SeenBottleResultCard } from "./SeenBottleResultCard";
 
@@ -26,11 +29,12 @@ export function SeenTastingReportView({ report }: SeenTastingReportViewProps) {
 
   return (
     <div className="flex flex-col gap-8">
+      <ImageBand image={resultsImage} className="hidden h-40 rounded-sm sm:block" />
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {wineOfTheNight.length > 0 && wineOfTheNight[0].averageRating !== null && (
           <Highlight
             label="Wine of the Night"
-            icon="🏆"
             title={joinNames(wineOfTheNight.map((w) => w.wine.code))}
             detail={`Avg rating ${wineOfTheNight[0].averageRating}`}
             tie={wineOfTheNight.length > 1}
@@ -39,7 +43,6 @@ export function SeenTastingReportView({ report }: SeenTastingReportViewProps) {
         {mostDivisiveWine.length > 0 && mostDivisiveWine[0].ratingSpread ? (
           <Highlight
             label="Most Divisive Wine"
-            icon="⚡"
             title={joinNames(mostDivisiveWine.map((w) => w.wine.code))}
             detail={`Spread of ${mostDivisiveWine[0].ratingSpread} points`}
             tie={mostDivisiveWine.length > 1}
@@ -54,7 +57,7 @@ export function SeenTastingReportView({ report }: SeenTastingReportViewProps) {
       </Card>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-xl font-semibold text-cellar-maroon-dark">Wine ranking</h2>
+        <SectionEyebrow>Wine ranking</SectionEyebrow>
         <div className="flex flex-col gap-4">
           {bottleResults.map((result) => (
             <SeenBottleResultCard

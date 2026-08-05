@@ -28,18 +28,18 @@ export function TextField({
         id={fieldId}
         aria-invalid={Boolean(error)}
         aria-describedby={error ? errorId : hint ? hintId : undefined}
-        className={`rounded-lg border bg-white px-3 py-2 text-base text-cellar-text placeholder:text-cellar-text/40 focus:outline-none focus:ring-2 focus:ring-cellar-gold ${
-          error ? "border-red-500" : "border-cellar-border"
+        className={`rounded-sm border bg-white px-3 py-2 text-base text-cellar-text placeholder:text-cellar-text/40 focus:outline-none focus:ring-2 focus:ring-cellar-gold ${
+          error ? "border-cellar-danger" : "border-cellar-border"
         } ${className}`}
         {...props}
       />
       {hint && !error && (
-        <p id={hintId} className="text-xs text-cellar-text/60">
+        <p id={hintId} className="text-xs text-cellar-muted">
           {hint}
         </p>
       )}
       {error && (
-        <p id={errorId} className="text-xs font-medium text-red-600">
+        <p id={errorId} className="text-xs font-medium text-cellar-danger">
           {error}
         </p>
       )}

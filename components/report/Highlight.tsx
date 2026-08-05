@@ -2,24 +2,27 @@ import { ReactNode } from "react";
 
 interface HighlightProps {
   label: string;
-  icon: string;
   title: string;
   detail?: ReactNode;
   tie?: boolean;
 }
 
-/** A prominent spotlight card for a report headline, e.g. "Wine of the Night". */
-export function Highlight({ label, icon, title, detail, tie }: HighlightProps) {
+/**
+ * A featured report headline, e.g. "Wine of the Night" — styled as a fine
+ * label-like card (hairline border, serif title) rather than a trophy or
+ * medal graphic.
+ */
+export function Highlight({ label, title, detail, tie }: HighlightProps) {
   return (
-    <div className="rounded-xl border border-cellar-gold/50 bg-cellar-gold/10 p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-cellar-gold">
-        {icon} {label}
+    <div className="rounded-sm border border-cellar-gold/40 p-5 text-center">
+      <p className="text-xs font-medium uppercase tracking-[0.2em] text-cellar-maroon">
+        {label}
         {tie ? " (tie)" : ""}
       </p>
-      <p className="mt-1 text-lg font-semibold text-cellar-maroon-dark">
+      <p className="mt-2 font-display text-2xl font-semibold text-cellar-maroon-dark">
         {title}
       </p>
-      {detail && <p className="mt-0.5 text-sm text-cellar-text/70">{detail}</p>}
+      {detail && <p className="mt-1 text-sm text-cellar-muted">{detail}</p>}
     </div>
   );
 }

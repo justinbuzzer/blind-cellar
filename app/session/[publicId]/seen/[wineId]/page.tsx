@@ -5,9 +5,12 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
+import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { RatingSlider } from "@/components/RatingSlider";
 import { ConfidencePicker } from "@/components/ConfidencePicker";
 import { TextAreaField } from "@/components/TextAreaField";
+import { LoadingState } from "@/components/LoadingState";
+import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -119,11 +122,7 @@ export default function SeenBottleRatingPage() {
   }
 
   if (loadState === "loading") {
-    return (
-      <main className="mx-auto flex min-h-dvh max-w-md items-center justify-center px-6">
-        <p className="text-sm text-cellar-text/60">Loading bottle…</p>
-      </main>
-    );
+    return <LoadingState message="Opening the tasting book…" />;
   }
 
   if (loadState === "no-config") {
@@ -164,25 +163,27 @@ export default function SeenBottleRatingPage() {
         <HostControlsLink sessionPublicId={params.publicId} />
       </div>
 
-      <Card className="flex flex-col gap-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-cellar-gold">
+      <Card className="flex flex-col gap-5">
+        <div className="border-b border-cellar-border pb-4">
+          <SectionEyebrow>
             {bottle.anonymousCode} · {bottle.position} of {bottle.totalBottles}
-          </p>
-          <h1 className="text-lg font-semibold text-cellar-maroon-dark">
+          </SectionEyebrow>
+          <h1 className="mt-1.5 font-display text-xl font-semibold text-cellar-maroon-dark">
             {bottle.producer} — {bottle.wineCuvee} {bottle.vintage}
           </h1>
-          <p className="text-sm text-cellar-text/70">
+          <p className="mt-1 text-sm text-cellar-muted">
             {[bottle.country, bottle.region, bottle.grapeBlend].filter(Boolean).join(" · ")}
           </p>
-          <p className="mt-1 text-sm text-cellar-text/70">
+          <p className="mt-1 text-sm text-cellar-muted">
             Style: {WINE_STYLE_LABELS[bottle.wineStyle]}
+            {bottle.contributorName && (
+              <>
+                {" "}
+                · Contributed by{" "}
+                <span className="font-medium text-cellar-text">{bottle.contributorName}</span>
+              </>
+            )}
           </p>
-          {bottle.contributorName && (
-            <p className="mt-1 text-sm text-cellar-text/70">
-              Contributed by <span className="font-medium">{bottle.contributorName}</span>
-            </p>
-          )}
         </div>
 
         <RatingSlider
@@ -195,37 +196,39 @@ export default function SeenBottleRatingPage() {
           error={ratingError ?? undefined}
         />
 
-        <ConfidencePicker
-          value={confidence}
-          onChange={(next) => {
-            setConfidence(next);
-            setSavedJustNow(false);
-          }}
-        />
+        <div className="flex flex-col gap-4 border-t border-cellar-border pt-4">
+          <ConfidencePicker
+            value={confidence}
+            onChange={(next) => {
+              setConfidence(next);
+              setSavedJustNow(false);
+            }}
+          />
 
-        <TextAreaField
-          label="Tasting note (optional)"
-          value={note}
-          onChange={(e) => {
-            setNote(e.target.value);
-            setSavedJustNow(false);
-          }}
-          placeholder="Nose, palate, anything that stood out"
-        />
+          <TextAreaField
+            label="Tasting note (optional)"
+            value={note}
+            onChange={(e) => {
+              setNote(e.target.value);
+              setSavedJustNow(false);
+            }}
+            placeholder="Nose, palate, anything that stood out"
+          />
+        </div>
 
-        <p className="text-xs text-cellar-text/60">
-          You can update this rating until the host ends the tasting.
+        <p className="border-t border-cellar-border pt-3 text-xs text-cellar-muted">
+          You may revise this rating until the host ends the tasting.
         </p>
       </Card>
 
       {savedJustNow && (
         <p role="status" aria-live="polite" className="text-sm font-medium text-cellar-maroon">
-          Rating saved. You can change it until the tasting ends.
+          Rating saved. You may revise it until the host ends the tasting.
         </p>
       )}
 
       {saveError && (
-        <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p role="alert" className="rounded-sm border border-cellar-danger/30 bg-cellar-danger/5 px-3 py-2 text-sm text-cellar-danger">
           {saveError}
         </p>
       )}
@@ -242,31 +245,6 @@ export default function SeenBottleRatingPage() {
           </Button>
         </div>
       </div>
-    </main>
-  );
-}
-
-function UnavailableScreen({
-  title,
-  message,
-  actionHref,
-  actionLabel,
-}: {
-  title: string;
-  message: string;
-  actionHref?: string;
-  actionLabel?: string;
-}) {
-  return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-      <HomeLink />
-      <h1 className="text-xl font-semibold text-cellar-maroon-dark">{title}</h1>
-      <p className="text-sm text-cellar-text/70">{message}</p>
-      {actionHref && actionLabel && (
-        <a href={actionHref}>
-          <Button>{actionLabel}</Button>
-        </a>
-      )}
     </main>
   );
 }

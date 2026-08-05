@@ -5,6 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { TextField } from "@/components/TextField";
+import { SectionEyebrow } from "@/components/SectionEyebrow";
+import { LoadingState } from "@/components/LoadingState";
+import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { joinSession } from "@/lib/supabase/guestActions";
@@ -112,11 +115,7 @@ export default function JoinSessionPage() {
   }
 
   if (loadState === "loading") {
-    return (
-      <main className="mx-auto flex min-h-dvh max-w-md items-center justify-center px-6">
-        <p className="text-sm text-cellar-text/60">Loading tasting…</p>
-      </main>
-    );
+    return <LoadingState message="Opening the invitation…" />;
   }
 
   if (loadState === "no-config") {
@@ -131,7 +130,7 @@ export default function JoinSessionPage() {
   if (loadState === "not-found") {
     return (
       <UnavailableScreen
-        title="Tasting not found"
+        title="This tasting room is unavailable."
         message="This join link doesn't match a tasting. Double-check the link or QR code from your host."
       />
     );
@@ -154,10 +153,11 @@ export default function JoinSessionPage() {
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-6 px-6 py-12">
       <HomeLink />
       <div>
-        <h1 className="text-2xl font-semibold text-cellar-maroon-dark">
+        <SectionEyebrow>You&rsquo;re invited</SectionEyebrow>
+        <h1 className="mt-1.5 font-display text-3xl font-semibold text-cellar-maroon-dark">
           {session.title}
         </h1>
-        <p className="mt-1 text-sm text-cellar-text/70">
+        <p className="mt-2 text-sm text-cellar-muted">
           {new Date(session.tasting_date).toLocaleDateString(undefined, {
             year: "numeric",
             month: "long",
@@ -167,7 +167,7 @@ export default function JoinSessionPage() {
       </div>
 
       {session.status === "registration" && (
-        <Card className="text-sm text-cellar-text/70">
+        <Card className="text-sm text-cellar-muted">
           Bottle registration is open. Once you join, you can register your
           own bottle before tasting starts.
         </Card>
@@ -178,7 +178,7 @@ export default function JoinSessionPage() {
           <p className="text-sm font-medium text-cellar-text">
             {wines.length} bottles, tasted blind:
           </p>
-          <p className="text-sm text-cellar-text/70">
+          <p className="text-sm text-cellar-muted">
             {wines.map((w) => w.anonymous_code).join(", ")}
           </p>
         </Card>
@@ -199,31 +199,6 @@ export default function JoinSessionPage() {
           </Button>
         </form>
       </Card>
-    </main>
-  );
-}
-
-function UnavailableScreen({
-  title,
-  message,
-  actionHref,
-  actionLabel,
-}: {
-  title: string;
-  message: string;
-  actionHref?: string;
-  actionLabel?: string;
-}) {
-  return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-      <HomeLink />
-      <h1 className="text-xl font-semibold text-cellar-maroon-dark">{title}</h1>
-      <p className="text-sm text-cellar-text/70">{message}</p>
-      {actionHref && actionLabel && (
-        <a href={actionHref}>
-          <Button>{actionLabel}</Button>
-        </a>
-      )}
     </main>
   );
 }

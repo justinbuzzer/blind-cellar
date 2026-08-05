@@ -26,13 +26,13 @@ export function TextAreaField({
         aria-invalid={Boolean(error)}
         aria-describedby={error ? errorId : undefined}
         rows={3}
-        className={`rounded-lg border bg-white px-3 py-2 text-base text-cellar-text placeholder:text-cellar-text/40 focus:outline-none focus:ring-2 focus:ring-cellar-gold ${
-          error ? "border-red-500" : "border-cellar-border"
+        className={`rounded-sm border bg-white px-3 py-2 text-base text-cellar-text placeholder:text-cellar-text/40 focus:outline-none focus:ring-2 focus:ring-cellar-gold ${
+          error ? "border-cellar-danger" : "border-cellar-border"
         } ${className}`}
         {...props}
       />
       {error && (
-        <p id={errorId} className="text-xs font-medium text-red-600">
+        <p id={errorId} className="text-xs font-medium text-cellar-danger">
           {error}
         </p>
       )}

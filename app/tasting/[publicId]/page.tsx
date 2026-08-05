@@ -6,6 +6,9 @@ import { Button } from "@/components/Button";
 import { ProgressBar } from "@/components/ProgressBar";
 import { WineGuessForm } from "@/components/WineGuessForm";
 import { SavingIndicator, SaveState } from "@/components/SavingIndicator";
+import { SectionEyebrow } from "@/components/SectionEyebrow";
+import { LoadingState } from "@/components/LoadingState";
+import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -213,11 +216,7 @@ export default function GuestTastingPage() {
   }
 
   if (loadState === "loading") {
-    return (
-      <main className="mx-auto flex min-h-dvh max-w-md items-center justify-center px-6">
-        <p className="text-sm text-cellar-text/60">Loading tasting…</p>
-      </main>
-    );
+    return <LoadingState message="Preparing the table…" />;
   }
 
   if (loadState === "no-config") {
@@ -247,17 +246,16 @@ export default function GuestTastingPage() {
           <HomeLink />
           <HostControlsLink sessionPublicId={params.publicId} />
         </div>
-        <div className="text-4xl" aria-hidden="true">
-          🔒
+        <div className="w-full border-t border-cellar-gold/40 pt-5">
+          <h1 className="font-display text-2xl font-semibold text-cellar-maroon-dark">
+            Your guesses are locked
+          </h1>
+          <p className="mt-2 text-sm text-cellar-muted">
+            {guestName ? `Thanks, ${guestName}! ` : ""}
+            Waiting for the host to reveal the wines. This page will update
+            automatically.
+          </p>
         </div>
-        <h1 className="text-2xl font-semibold text-cellar-maroon-dark">
-          Your guesses are locked
-        </h1>
-        <p className="text-sm text-cellar-text/70">
-          {guestName ? `Thanks, ${guestName}! ` : ""}
-          Waiting for the host to reveal the wines. This page will update
-          automatically.
-        </p>
       </main>
     );
   }
@@ -278,7 +276,8 @@ export default function GuestTastingPage() {
         />
       </div>
       <div>
-        <p className="text-sm text-cellar-text/60">Tasting as {guestName}</p>
+        <SectionEyebrow>Blind tasting</SectionEyebrow>
+        <p className="mt-1 text-sm text-cellar-muted">Tasting as {guestName}</p>
       </div>
 
       <ProgressBar
@@ -300,7 +299,7 @@ export default function GuestTastingPage() {
       <SavingIndicator state={saveState} />
 
       {submitError && (
-        <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p role="alert" className="rounded-sm border border-cellar-danger/30 bg-cellar-danger/5 px-3 py-2 text-sm text-cellar-danger">
           {submitError}
         </p>
       )}
@@ -329,31 +328,6 @@ export default function GuestTastingPage() {
           </Button>
         )}
       </div>
-    </main>
-  );
-}
-
-function UnavailableScreen({
-  title,
-  message,
-  actionHref,
-  actionLabel,
-}: {
-  title: string;
-  message: string;
-  actionHref?: string;
-  actionLabel?: string;
-}) {
-  return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-      <HomeLink />
-      <h1 className="text-xl font-semibold text-cellar-maroon-dark">{title}</h1>
-      <p className="text-sm text-cellar-text/70">{message}</p>
-      {actionHref && actionLabel && (
-        <a href={actionHref}>
-          <Button>{actionLabel}</Button>
-        </a>
-      )}
     </main>
   );
 }

@@ -33,27 +33,27 @@ export function SeenBottleResultCard({ result, totalWines }: SeenBottleResultCar
   return (
     <Card className="flex flex-col gap-4">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-cellar-gold">
+        <p className="text-xs font-medium uppercase tracking-[0.15em] text-cellar-gold">
           #{result.rank} · {wine.code}
         </p>
-        <h3 className="text-lg font-semibold text-cellar-maroon-dark">
+        <h3 className="mt-1 font-display text-lg font-semibold text-cellar-maroon-dark">
           {wine.producer} — {wine.wineName} {wine.vintage}
         </h3>
-        <p className="text-sm text-cellar-text/70">
+        <p className="mt-1 text-sm text-cellar-muted">
           {[wine.country, wine.region, wine.grapeBlend].filter(Boolean).join(" · ")}
         </p>
-        <p className="mt-1 text-sm text-cellar-text/70">
+        <p className="mt-1 text-sm text-cellar-muted">
           Style: {WINE_STYLE_LABELS[wine.wineStyle]} · Served {ordinal(wine.tastingOrder)}{" "}
           (tasting order {wine.tastingOrder} of {totalWines})
         </p>
         {wine.contributorName && (
-          <p className="mt-1 text-sm text-cellar-text/70">
-            Contributed by <span className="font-medium">{wine.contributorName}</span>
+          <p className="mt-1 text-sm text-cellar-muted">
+            Contributed by <span className="font-medium text-cellar-text">{wine.contributorName}</span>
           </p>
         )}
       </div>
 
-      <div className="grid grid-cols-3 gap-3 rounded-lg bg-cellar-bg p-3 text-center sm:grid-cols-5">
+      <div className="grid grid-cols-3 gap-3 rounded-sm bg-cellar-bg-deep p-3 text-center sm:grid-cols-5">
         <Stat label="Average" value={result.averageRating ?? "—"} />
         <Stat label="Ratings" value={result.numRatings} />
         <Stat label="Lowest" value={result.lowestRating ?? "—"} />
@@ -61,8 +61,8 @@ export function SeenBottleResultCard({ result, totalWines }: SeenBottleResultCar
         <Stat label="Spread" value={result.ratingSpread ?? "—"} />
       </div>
 
-      <details className="rounded-lg border border-cellar-border">
-        <summary className="cursor-pointer list-none rounded-lg px-3 py-2 text-sm font-medium text-cellar-text hover:bg-cellar-bg">
+      <details className="rounded-sm border border-cellar-border">
+        <summary className="cursor-pointer list-none rounded-sm px-3 py-2 text-sm font-medium text-cellar-text hover:bg-cellar-bg">
           Everyone&rsquo;s ratings
         </summary>
         <ul className="flex flex-col border-t border-cellar-border px-3 py-1">
@@ -77,14 +77,14 @@ export function SeenBottleResultCard({ result, totalWines }: SeenBottleResultCar
                   className={
                     p.rating !== null
                       ? "font-medium text-cellar-maroon"
-                      : "text-cellar-text/50"
+                      : "text-cellar-muted"
                   }
                 >
                   {p.rating !== null ? p.rating : "No rating"}
                 </span>
               </div>
               {p.note && (
-                <p className="text-xs italic text-cellar-text/60">&ldquo;{p.note}&rdquo;</p>
+                <p className="text-xs italic text-cellar-muted">&ldquo;{p.note}&rdquo;</p>
               )}
             </li>
           ))}
