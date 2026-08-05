@@ -382,6 +382,17 @@ alter table wines add column if not exists revealed_at timestamptz;
 alter table wine_guesses add column if not exists locked_at timestamptz;
 create index if not exists wines_session_revealed_order_idx on wines(session_id, revealed_at, tasting_order);
 
+-- 11. Seen tasting mode (see README "Tasting modes"): widen the tasting_mode
+-- check constraint to also allow 'seen'. No new columns — a Seen rating is
+-- just a wine_guesses row that only ever sets rating/confidence/tasting_note
+-- (see upsert_seen_rating below), relying on the identification-guess
+-- columns' existing blank defaults ('' / null) rather than inventing new
+-- ones. Existing full_blind/course_reveal sessions and rows are completely
+-- untouched by this step.
+alter table tasting_sessions drop constraint if exists tasting_sessions_tasting_mode_check;
+alter table tasting_sessions add constraint tasting_sessions_tasting_mode_check
+  check (tasting_mode in ('full_blind', 'course_reveal', 'seen'));
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security (enabled everywhere; anon gets no default table grants,
 -- see the GRANT section below — RLS is defense-in-depth on top of that).
@@ -568,7 +579,7 @@ begin
   if length(v_host_name) > 60 then
     raise exception 'display_name_too_long';
   end if;
-  if p_tasting_mode not in ('full_blind', 'course_reveal') then
+  if p_tasting_mode not in ('full_blind', 'course_reveal', 'seen') then
     raise exception 'invalid_tasting_mode';
   end if;
 
@@ -605,6 +616,7 @@ declare
   v_session tasting_sessions%rowtype;
   v_active_wine wines%rowtype;
   v_active_bottle jsonb := null;
+  v_seen_progress jsonb := null;
   v_result jsonb;
 begin
   select * into v_session from tasting_sessions where public_id = p_public_id;
@@ -613,6 +625,31 @@ begin
   end if;
   if v_session.host_token_hash <> encode(digest(p_host_token, 'sha256'), 'hex') then
     raise exception 'invalid_host_token';
+  end if;
+
+  -- seen only: aggregate rating progress for the host — how many
+  -- participants have rated at least one bottle, and how many ratings exist
+  -- out of every possible (bottle, participant) pair. Never an individual
+  -- participant's rating value (see get_seen_tasting_state, the only path to
+  -- that, and only ever scoped to the caller's own rating).
+  if v_session.tasting_mode = 'seen' and v_session.status = 'collecting' then
+    select jsonb_build_object(
+      'ratersCount', (
+        select count(distinct wg.guest_id) from wine_guesses wg
+        join wines w on w.id = wg.wine_id
+        where w.session_id = v_session.id and wg.rating is not null
+      ),
+      'totalParticipants', (select count(*) from guests where session_id = v_session.id),
+      'ratingsSubmitted', (
+        select count(*) from wine_guesses wg
+        join wines w on w.id = wg.wine_id
+        where w.session_id = v_session.id and wg.rating is not null
+      ),
+      'totalPossibleRatings', (
+        (select count(*) from wines where session_id = v_session.id)
+        * (select count(*) from guests where session_id = v_session.id)
+      )
+    ) into v_seen_progress;
   end if;
 
   -- course_reveal only: the host's active-bottle card needs the current
@@ -676,7 +713,8 @@ begin
       ) order by g.created_at)
       from guests g where g.session_id = v_session.id
     ), '[]'::jsonb),
-    'activeBottle', v_active_bottle
+    'activeBottle', v_active_bottle,
+    'seenProgress', v_seen_progress
   ) into v_result;
 
   return v_result;
@@ -724,9 +762,11 @@ $$;
 -- Host: flip status to revealed. Idempotent — revealing an already-revealed
 -- session is a no-op success, not an error. course_reveal sessions must
 -- reach 'revealed' only by revealing their final bottle through
--- reveal_bottle below (which also stamps that bottle's revealed_at) — this
--- one-shot final reveal stays exclusively a full_blind operation so a host
--- can't skip the whole bottle-by-bottle pacing in one call.
+-- reveal_bottle below (which also stamps that bottle's revealed_at), and
+-- seen sessions only through end_seen_tasting below (which enforces the
+-- host must not reopen a revealed session) — this one-shot reveal stays
+-- exclusively a full_blind operation so a host can't skip the whole
+-- bottle-by-bottle pacing, or a seen tasting's collecting stage, in one call.
 create or replace function reveal_tasting_session(
   p_public_id uuid,
   p_host_token text
@@ -745,7 +785,7 @@ begin
   if v_session.host_token_hash <> encode(digest(p_host_token, 'sha256'), 'hex') then
     raise exception 'invalid_host_token';
   end if;
-  if v_session.tasting_mode = 'course_reveal' then
+  if v_session.tasting_mode <> 'full_blind' then
     raise exception 'invalid_tasting_mode';
   end if;
 
@@ -1619,6 +1659,178 @@ begin
 end;
 $$;
 
+-- ---------------------------------------------------------------------------
+-- Seen tasting mode (see README "Tasting modes"): every registered bottle
+-- becomes fully visible to every participant the moment the host starts
+-- tasting — there is no per-bottle blind guess, no identification scoring,
+-- just an own-pace, freely-revisitable rating per bottle until the host ends
+-- the tasting. A "seen rating" is stored in the existing wine_guesses table
+-- (see upsert_seen_rating below) but only ever sets rating/confidence/
+-- tasting_note — the identification-guess columns simply keep their existing
+-- table defaults ('' / null), exactly as an untouched draft guess already
+-- does in full_blind/course_reveal, so nothing fake is fabricated to satisfy
+-- old constraints. full_blind and course_reveal are entirely unaffected:
+-- none of the three functions below can run for those modes.
+-- ---------------------------------------------------------------------------
+
+-- Guest: fetch every bottle's full details (visible to everyone in a seen
+-- session once collecting/revealed starts) plus the caller's own rating
+-- status for each — never another participant's rating. Rejects during
+-- 'registration' so a participant can't peek at bottle identities before the
+-- host starts tasting (seen mode's registration stage keeps the same
+-- contributor-only secrecy as every other mode).
+create or replace function get_seen_tasting_state(
+  p_guest_token text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_guest guests%rowtype;
+  v_session tasting_sessions%rowtype;
+  v_result jsonb;
+begin
+  select * into v_guest from guests where guest_token = p_guest_token;
+  if not found then
+    raise exception 'invalid_guest_token';
+  end if;
+  select * into v_session from tasting_sessions where id = v_guest.session_id;
+  if v_session.tasting_mode <> 'seen' then
+    raise exception 'invalid_tasting_mode';
+  end if;
+  if v_session.status = 'registration' then
+    raise exception 'registration_closed';
+  end if;
+
+  select jsonb_build_object(
+    'session', jsonb_build_object(
+      'publicId', v_session.public_id,
+      'title', v_session.title,
+      'tastingDate', v_session.tasting_date,
+      'status', v_session.status,
+      'tastingMode', v_session.tasting_mode
+    ),
+    'guestName', v_guest.display_name,
+    'bottles', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', w.id,
+        'bottleNumber', w.bottle_number,
+        'anonymousCode', w.anonymous_code,
+        'position', w.tasting_order,
+        'totalBottles', (select count(*) from wines where session_id = v_session.id),
+        'wineStyle', w.wine_style,
+        'country', w.country,
+        'region', w.region,
+        'grapeBlendMode', w.grape_blend_mode,
+        'grapeBlend', w.grape_style,
+        'producer', w.producer,
+        'wineCuvee', w.wine_cuvee,
+        'vintage', w.vintage,
+        'contributorName', (select display_name from guests where id = w.contributor_guest_id),
+        'myRating', (select rating from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
+        'myConfidence', (select confidence from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
+        'myNote', (select tasting_note from wine_guesses where wine_id = w.id and guest_id = v_guest.id)
+      ) order by w.tasting_order)
+      from wines w where w.session_id = v_session.id
+    ), '[]'::jsonb)
+  ) into v_result;
+
+  return v_result;
+end;
+$$;
+
+-- Guest: save (create or update) the caller's own rating for one bottle in a
+-- seen session. Deliberately narrow — no identification-guess parameters at
+-- all, unlike upsert_wine_guess — so there is no way to accidentally write
+-- blind-guess content through this path. A rating is required (unlike
+-- full_blind/course_reveal's autosave-friendly draft-without-a-rating), and
+-- the existing `rating between 50 and 100` column check enforces the range.
+-- Never restricts which bottle/tasting-order position may be rated, and
+-- never locks a rating after saving — both are the defining differences from
+-- course_reveal's lock_wine_guess.
+create or replace function upsert_seen_rating(
+  p_guest_token text,
+  p_wine_id uuid,
+  p_rating int,
+  p_confidence text,
+  p_tasting_note text
+) returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_guest guests%rowtype;
+  v_session tasting_sessions%rowtype;
+begin
+  select * into v_guest from guests where guest_token = p_guest_token;
+  if not found then
+    raise exception 'invalid_guest_token';
+  end if;
+  select * into v_session from tasting_sessions where id = v_guest.session_id;
+  if v_session.tasting_mode <> 'seen' then
+    raise exception 'invalid_tasting_mode';
+  end if;
+  if v_session.status <> 'collecting' then
+    raise exception 'session_not_collecting';
+  end if;
+  if p_rating is null then
+    raise exception 'rating_required';
+  end if;
+
+  if not exists (select 1 from wines where id = p_wine_id and session_id = v_session.id) then
+    raise exception 'wine_not_in_session';
+  end if;
+
+  insert into wine_guesses (session_id, wine_id, guest_id, rating, confidence, tasting_note, submitted_at)
+  values (
+    v_session.id, p_wine_id, v_guest.id, p_rating,
+    coalesce(nullif(p_confidence, ''), 'medium'), nullif(p_tasting_note, ''), now()
+  )
+  on conflict (guest_id, wine_id) do update set
+    rating = excluded.rating,
+    confidence = excluded.confidence,
+    tasting_note = excluded.tasting_note,
+    submitted_at = now();
+end;
+$$;
+
+-- Host: end a seen tasting — locks every rating and reveals the group
+-- results in one step (seen mode has no per-bottle reveal, and no one-shot
+-- "reveal_tasting_session" full-blind-style call either — see the comment on
+-- that function). Strict about status (unlike reveal_tasting_session's
+-- idempotent success) so a host can never re-trigger this on an
+-- already-revealed session.
+create or replace function end_seen_tasting(
+  p_public_id uuid,
+  p_host_token text
+) returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_session tasting_sessions%rowtype;
+begin
+  select * into v_session from tasting_sessions where public_id = p_public_id for update;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+  if v_session.host_token_hash <> encode(digest(p_host_token, 'sha256'), 'hex') then
+    raise exception 'invalid_host_token';
+  end if;
+  if v_session.tasting_mode <> 'seen' then
+    raise exception 'invalid_tasting_mode';
+  end if;
+  if v_session.status <> 'collecting' then
+    raise exception 'session_not_collecting';
+  end if;
+
+  update tasting_sessions set status = 'revealed' where id = v_session.id;
+end;
+$$;
+
 -- Guest: final submit. Requires every wine in the session to have a rating.
 -- No special-casing for the host or for a guest's own contributed bottle —
 -- everyone is scored identically.
@@ -1706,6 +1918,10 @@ grant execute on function upsert_wine_guess(text, uuid, text, text, text, text, 
 grant execute on function get_active_bottle_state(text) to anon;
 grant execute on function lock_wine_guess(text, uuid) to anon;
 grant execute on function get_revealed_bottle(text, uuid) to anon;
+
+grant execute on function get_seen_tasting_state(text) to anon;
+grant execute on function upsert_seen_rating(text, uuid, int, text, text) to anon;
+grant execute on function end_seen_tasting(uuid, text) to anon;
 
 grant execute on function complete_guest_submission(text) to anon;
 

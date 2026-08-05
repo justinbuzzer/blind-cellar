@@ -21,9 +21,11 @@ function average(values: number[]): number | null {
 /**
  * Assigns standard competition rank from a descending multi-key sort (ties
  * share a rank; the next distinct rank skips accordingly). Keys are compared
- * in array order, most significant first.
+ * in array order, most significant first. Exported for reuse by
+ * lib/seenResults.ts, which needs the same tie-break-sharing rank shape for
+ * its own (unrelated) rating-only bottle ranking.
  */
-function rankByDescendingKeys<T>(items: T[], keyFn: (item: T) => number[]): number[] {
+export function rankByDescendingKeys<T>(items: T[], keyFn: (item: T) => number[]): number[] {
   const ranks: number[] = new Array(items.length);
   const order = items
     .map((item, index) => ({ index, key: keyFn(item) }))
@@ -179,7 +181,8 @@ export function calculateTasterResults(
     .sort((a, b) => a.rank - b.rank);
 }
 
-function maxBy<T>(items: T[], keyFn: (item: T) => number | null): T[] {
+/** Exported for reuse by lib/seenResults.ts's Wine of the Night / Most Divisive Wine equivalents. */
+export function maxBy<T>(items: T[], keyFn: (item: T) => number | null): T[] {
   const withKeys = items
     .map((item) => ({ item, key: keyFn(item) }))
     .filter((x): x is { item: T; key: number } => x.key !== null);
@@ -188,7 +191,8 @@ function maxBy<T>(items: T[], keyFn: (item: T) => number | null): T[] {
   return withKeys.filter((x) => x.key === max).map((x) => x.item);
 }
 
-function minBy<T>(items: T[], keyFn: (item: T) => number | null): T[] {
+/** Exported for reuse by lib/seenResults.ts's Wine of the Night tie-break. */
+export function minBy<T>(items: T[], keyFn: (item: T) => number | null): T[] {
   const withKeys = items
     .map((item) => ({ item, key: keyFn(item) }))
     .filter((x): x is { item: T; key: number } => x.key !== null);

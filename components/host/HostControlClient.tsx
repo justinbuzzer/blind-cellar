@@ -15,6 +15,7 @@ import {
   HostActiveBottleDTO,
   HostBottleDTO,
   HostGuestDTO,
+  HostSeenProgressDTO,
   HostSessionResponse,
 } from "@/lib/supabase/types";
 import {
@@ -43,6 +44,10 @@ const STATUS_LABELS: Record<SessionStatus, string> = {
 // (ratings, country/region guesses) to other participants in real time.
 const ACTIVE_BOTTLE_POLL_MS = 5000;
 
+// Same reasoning as ACTIVE_BOTTLE_POLL_MS above, for seen mode's aggregate
+// rating-progress count.
+const SEEN_PROGRESS_POLL_MS = 5000;
+
 export function HostControlClient({
   publicId,
   hostToken,
@@ -55,11 +60,16 @@ export function HostControlClient({
   const [activeBottle, setActiveBottle] = useState<HostActiveBottleDTO | null>(
     initialData.activeBottle
   );
+  const [seenProgress, setSeenProgress] = useState<HostSeenProgressDTO | null>(
+    initialData.seenProgress
+  );
   const [showRevealConfirm, setShowRevealConfirm] = useState(false);
   const [showStartConfirm, setShowStartConfirm] = useState(false);
   const [showRevealBottleConfirm, setShowRevealBottleConfirm] = useState(false);
+  const [showEndSeenConfirm, setShowEndSeenConfirm] = useState(false);
   const [revealing, setRevealing] = useState(false);
   const [revealingBottle, setRevealingBottle] = useState(false);
+  const [endingSeen, setEndingSeen] = useState(false);
   const [starting, setStarting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [realtimeOk, setRealtimeOk] = useState(true);
@@ -113,6 +123,7 @@ export function HostControlClient({
         const data: HostSessionResponse = await response.json();
         setWines(data.wines);
         setActiveBottle(data.activeBottle);
+        setSeenProgress(data.seenProgress);
       } catch {
         // Realtime will retry on the next change; a transient fetch failure
         // here isn't worth surfacing as an error banner.
@@ -195,6 +206,37 @@ export function HostControlClient({
     };
   }, [publicId, hostToken, tastingMode, status]);
 
+  // Polling fallback for seen mode's aggregate rating progress — same
+  // reasoning as the course_reveal poll above: wine_guesses changes aren't
+  // realtime-broadcast at all, and the `wines` table (which the realtime
+  // effect above does listen to) never changes during a seen tasting's
+  // collecting stage, since registration is already locked by then.
+  useEffect(() => {
+    if (tastingMode !== "seen" || status !== "collecting") return;
+
+    let cancelled = false;
+    async function poll() {
+      try {
+        const response = await fetch("/api/host/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ publicId, hostToken }),
+        });
+        if (!response.ok || cancelled) return;
+        const data: HostSessionResponse = await response.json();
+        if (!cancelled) setSeenProgress(data.seenProgress);
+      } catch {
+        // Next poll will retry.
+      }
+    }
+
+    const intervalId = setInterval(poll, SEEN_PROGRESS_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [publicId, hostToken, tastingMode, status]);
+
   async function handleStartTasting() {
     setStarting(true);
     setActionError(null);
@@ -233,6 +275,19 @@ export function HostControlClient({
         } catch {
           // The poll/realtime refetch will pick this up shortly after.
         }
+      }
+
+      // Same "collecting" transition point for seen mode's progress card — no
+      // refetch needed here, unlike course_reveal above, since a
+      // just-started tasting's progress is trivially "0 of everything" and
+      // computable locally from state already on hand.
+      if (tastingMode === "seen") {
+        setSeenProgress({
+          ratersCount: 0,
+          totalParticipants: guests.length,
+          ratingsSubmitted: 0,
+          totalPossibleRatings: wines.length * guests.length,
+        });
       }
     } catch {
       setActionError(friendlyRpcError(null));
@@ -293,6 +348,30 @@ export function HostControlClient({
     } catch {
       setActionError(friendlyRpcError(null));
       setRevealingBottle(false);
+    }
+  }
+
+  async function handleEndSeenTasting() {
+    setEndingSeen(true);
+    setActionError(null);
+    try {
+      const response = await fetch("/api/host/end-seen-tasting", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicId, hostToken }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setActionError(data.error ?? "Couldn't end the tasting.");
+        setEndingSeen(false);
+        return;
+      }
+      setStatus("revealed");
+      setShowEndSeenConfirm(false);
+      setEndingSeen(false);
+    } catch {
+      setActionError(friendlyRpcError(null));
+      setEndingSeen(false);
     }
   }
 
@@ -441,22 +520,24 @@ export function HostControlClient({
                       {guest.displayName}
                       {guest.id === session.hostGuestId ? " (you)" : ""}
                     </span>
-                    <span
-                      className={
-                        guest.completedAt
-                          ? "font-medium text-cellar-maroon"
-                          : "text-cellar-text/50"
-                      }
-                    >
-                      {guest.completedAt ? "Submitted" : "In progress"}
-                    </span>
+                    {tastingMode !== "seen" && (
+                      <span
+                        className={
+                          guest.completedAt
+                            ? "font-medium text-cellar-maroon"
+                            : "text-cellar-text/50"
+                        }
+                      >
+                        {guest.completedAt ? "Submitted" : "In progress"}
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>
             )}
           </Card>
 
-          {tastingMode === "full_blind" ? (
+          {tastingMode === "full_blind" && (
             <>
               <Card className="text-sm text-cellar-text/70">
                 All bottles remain hidden until the final reveal.
@@ -472,7 +553,9 @@ export function HostControlClient({
                 </Button>
               </div>
             </>
-          ) : (
+          )}
+
+          {tastingMode === "course_reveal" && (
             <>
               {activeBottle ? (
                 <Card className="flex flex-col gap-3">
@@ -505,6 +588,39 @@ export function HostControlClient({
                   Enter my guesses
                 </Button>
               </Link>
+            </>
+          )}
+
+          {tastingMode === "seen" && (
+            <>
+              <Card className="flex flex-col gap-2">
+                <p className="text-sm text-cellar-text/70">
+                  All bottles are visible. Guests can revise their ratings
+                  until you end the tasting.
+                </p>
+                {seenProgress && (
+                  <div className="grid grid-cols-2 gap-3 rounded-lg bg-cellar-bg p-3 text-center">
+                    <Stat
+                      label="Participants rated ≥1 bottle"
+                      value={`${seenProgress.ratersCount} of ${seenProgress.totalParticipants}`}
+                    />
+                    <Stat
+                      label="Ratings submitted"
+                      value={`${seenProgress.ratingsSubmitted} of ${seenProgress.totalPossibleRatings}`}
+                    />
+                  </div>
+                )}
+              </Card>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Link href={`/session/${publicId}/seen`}>
+                  <Button variant="secondary" fullWidth>
+                    Rate my bottles
+                  </Button>
+                </Link>
+                <Button fullWidth onClick={() => setShowEndSeenConfirm(true)}>
+                  End tasting and reveal ratings
+                </Button>
+              </div>
             </>
           )}
         </>
@@ -597,6 +713,30 @@ export function HostControlClient({
             </Button>
             <Button onClick={handleRevealBottle} disabled={revealingBottle}>
               {revealingBottle ? "Revealing…" : "Reveal bottle"}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {showEndSeenConfirm && (
+        <Modal
+          title="End seen tasting?"
+          onClose={() => !endingSeen && setShowEndSeenConfirm(false)}
+        >
+          <p>
+            This will lock all ratings and reveal the group results.
+            Participants will no longer be able to change their ratings.
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setShowEndSeenConfirm(false)}
+              disabled={endingSeen}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleEndSeenTasting} disabled={endingSeen}>
+              {endingSeen ? "Ending…" : "End tasting and reveal results"}
             </Button>
           </div>
         </Modal>

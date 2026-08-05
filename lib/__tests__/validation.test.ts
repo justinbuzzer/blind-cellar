@@ -11,9 +11,10 @@ import { BottleFormInput } from "@/lib/supabase/guestActions";
 import { WineGuess } from "@/types/tasting";
 
 describe("isValidTastingMode", () => {
-  it("accepts both supported modes", () => {
+  it("accepts all three supported modes", () => {
     expect(isValidTastingMode("full_blind")).toBe(true);
     expect(isValidTastingMode("course_reveal")).toBe(true);
+    expect(isValidTastingMode("seen")).toBe(true);
   });
 
   it("rejects anything else, including blank/unset", () => {

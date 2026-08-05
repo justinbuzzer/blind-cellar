@@ -104,9 +104,14 @@ export default function GuestTastingPage() {
         return;
       }
       // This route is full_blind-only — course_reveal sessions taste one
-      // bottle at a time via a dedicated flow. See README "Tasting modes".
+      // bottle at a time via a dedicated flow, and seen sessions see every
+      // bottle at once via their own flow. See README "Tasting modes".
       if (data.session.tastingMode === "course_reveal") {
         router.replace(`/session/${params.publicId}/active`);
+        return;
+      }
+      if (data.session.tastingMode === "seen") {
+        router.replace(`/session/${params.publicId}/seen`);
         return;
       }
 

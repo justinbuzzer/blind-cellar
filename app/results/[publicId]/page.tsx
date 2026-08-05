@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Button } from "@/components/Button";
 import { TastingReportView } from "@/components/report/TastingReportView";
+import { SeenTastingReportView } from "@/components/report/SeenTastingReportView";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
@@ -11,9 +12,10 @@ import {
   buildRevealedSubmissions,
   mapRevealedWineRowToAnswerKey,
 } from "@/lib/supabase/mappers";
+import { buildSeenTastingReport, SeenRatingRow } from "@/lib/seenResults";
 import { SessionRow } from "@/lib/supabase/types";
 import { buildTastingReport } from "@/lib/results";
-import { TastingReport, TastingSession } from "@/types/tasting";
+import { SeenTastingReport, TastingReport, TastingSession } from "@/types/tasting";
 
 type LoadState = "loading" | "no-config" | "not-found" | "waiting" | "ready";
 
@@ -22,6 +24,7 @@ export default function ResultsPage() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [sessionRow, setSessionRow] = useState<SessionRow | null>(null);
   const [report, setReport] = useState<TastingReport | null>(null);
+  const [seenReport, setSeenReport] = useState<SeenTastingReport | null>(null);
 
   const loadReport = useCallback(async (session: SessionRow) => {
     const supabase = getSupabaseBrowserClient();
@@ -42,6 +45,30 @@ export default function ResultsPage() {
 
     const guestNameById = new Map((guestRows ?? []).map((g) => [g.id, g.display_name]));
 
+    const wines = (wineRows ?? []).map((row) => ({
+      ...mapRevealedWineRowToAnswerKey(row),
+      contributorName: row.contributor_guest_id
+        ? guestNameById.get(row.contributor_guest_id)
+        : undefined,
+    }));
+
+    // Seen tasting has no identification guesses or scoring at all — its
+    // report is built by an entirely separate, rating-only pipeline (see
+    // lib/seenResults.ts) rather than forced through buildTastingReport,
+    // which full_blind/course_reveal below are untouched by.
+    if (session.tasting_mode === "seen") {
+      const ratingRows: SeenRatingRow[] = (guessRows ?? []).map((row) => ({
+        wineId: row.wine_id,
+        guestId: row.guest_id,
+        rating: row.rating,
+        note: row.tasting_note ?? undefined,
+      }));
+      const guests = (guestRows ?? []).map((g) => ({ id: g.id, displayName: g.display_name }));
+      setSeenReport(buildSeenTastingReport(wines, guests, ratingRows));
+      setLoadState("ready");
+      return;
+    }
+
     const domainSession: TastingSession = {
       id: session.id,
       code: session.join_code,
@@ -49,12 +76,7 @@ export default function ResultsPage() {
       date: session.tasting_date,
       status: session.status,
       createdAt: session.created_at,
-      wines: (wineRows ?? []).map((row) => ({
-        ...mapRevealedWineRowToAnswerKey(row),
-        contributorName: row.contributor_guest_id
-          ? guestNameById.get(row.contributor_guest_id)
-          : undefined,
-      })),
+      wines,
     };
 
     const submissions =
@@ -178,7 +200,7 @@ export default function ResultsPage() {
     );
   }
 
-  if (!report) return null;
+  if (!report && !seenReport) return null;
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 px-6 py-10">
@@ -189,7 +211,11 @@ export default function ResultsPage() {
         </h1>
         <p className="mt-1 text-sm text-cellar-text/70">Results revealed</p>
       </div>
-      <TastingReportView report={report} />
+      {seenReport ? (
+        <SeenTastingReportView report={seenReport} />
+      ) : (
+        report && <TastingReportView report={report} />
+      )}
     </main>
   );
 }

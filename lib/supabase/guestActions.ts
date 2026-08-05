@@ -1,5 +1,5 @@
 import { SupabaseClient } from "@supabase/supabase-js";
-import { GrapeBlendMode, WineGuess, WineStyle } from "@/types/tasting";
+import { Confidence, GrapeBlendMode, WineGuess, WineStyle } from "@/types/tasting";
 import { reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
 import {
   ActiveBottleStateResponse,
@@ -9,6 +9,7 @@ import {
   RegisterBottleResponse,
   RegistrationStateResponse,
   RevealedBottleResponse,
+  SeenTastingStateResponse,
 } from "./types";
 
 export async function joinSession(
@@ -113,6 +114,35 @@ export async function getRevealedBottle(
     p_wine_id: wineId,
   });
   return { data: data as RevealedBottleResponse | null, error };
+}
+
+// --- seen only ---
+
+export async function getSeenTastingState(
+  supabase: SupabaseClient,
+  guestToken: string
+) {
+  const { data, error } = await supabase.rpc("get_seen_tasting_state", {
+    p_guest_token: guestToken,
+  });
+  return { data: data as SeenTastingStateResponse | null, error };
+}
+
+export async function upsertSeenRating(
+  supabase: SupabaseClient,
+  guestToken: string,
+  wineId: string,
+  rating: number,
+  confidence: Confidence,
+  note: string
+) {
+  return supabase.rpc("upsert_seen_rating", {
+    p_guest_token: guestToken,
+    p_wine_id: wineId,
+    p_rating: rating,
+    p_confidence: confidence,
+    p_tasting_note: note || null,
+  });
 }
 
 export interface BottleFormInput {

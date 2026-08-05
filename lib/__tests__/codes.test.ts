@@ -43,13 +43,18 @@ describe("WINE_STYLES", () => {
 });
 
 describe("TASTING_MODES", () => {
-  it("lists full_blind before course_reveal", () => {
-    expect(TASTING_MODES).toEqual(["full_blind", "course_reveal"]);
+  it("lists full_blind, then course_reveal, then seen", () => {
+    expect(TASTING_MODES).toEqual(["full_blind", "course_reveal", "seen"]);
+  });
+
+  it("defaults to full_blind as the first (host-preselected) option", () => {
+    expect(TASTING_MODES[0]).toBe("full_blind");
   });
 
   it("has the exact required user-facing labels", () => {
     expect(TASTING_MODE_LABELS.full_blind).toBe("Full blind tasting");
     expect(TASTING_MODE_LABELS.course_reveal).toBe("Course-by-course reveal");
+    expect(TASTING_MODE_LABELS.seen).toBe("Seen tasting");
   });
 
   it("has the exact required descriptions", () => {
@@ -58,6 +63,9 @@ describe("TASTING_MODES", () => {
     );
     expect(TASTING_MODE_DESCRIPTIONS.course_reveal).toBe(
       "Each bottle is tasted blind, then revealed before moving to the next. Best for casual dinners and relaxed tasting discussions."
+    );
+    expect(TASTING_MODE_DESCRIPTIONS.seen).toBe(
+      "All bottles are visible from the start. Best for relaxed tastings where guests want to compare wines openly and rate them at their own pace."
     );
   });
 });

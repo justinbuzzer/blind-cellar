@@ -100,6 +100,14 @@ export interface HostActiveBottleDTO {
   totalParticipants: number;
 }
 
+/** seen only: aggregate rating progress — never an individual participant's rating. */
+export interface HostSeenProgressDTO {
+  ratersCount: number;
+  totalParticipants: number;
+  ratingsSubmitted: number;
+  totalPossibleRatings: number;
+}
+
 export interface HostSessionResponse {
   session: {
     id: string;
@@ -116,6 +124,8 @@ export interface HostSessionResponse {
   guests: HostGuestDTO[];
   /** Non-null only when tastingMode is course_reveal and status is collecting. */
   activeBottle: HostActiveBottleDTO | null;
+  /** Non-null only when tastingMode is seen and status is collecting. */
+  seenProgress: HostSeenProgressDTO | null;
 }
 
 export interface CreateSessionRpcResult {
@@ -269,6 +279,46 @@ export interface RevealedBottleResponse {
   guesses: RevealedBottleGuessDTO[];
 }
 
+// --- seen-only shapes (see get_seen_tasting_state / upsert_seen_rating) ---
+
+/**
+ * A bottle's full details (visible to every participant once a seen tasting
+ * starts) plus the caller's own rating status only — never another
+ * participant's rating.
+ */
+export interface SeenBottleDTO {
+  id: string;
+  bottleNumber: number;
+  anonymousCode: string;
+  /** 1-based tasting-order position, e.g. "3 of 7". */
+  position: number;
+  totalBottles: number;
+  wineStyle: WineStyle;
+  country: string;
+  region: string;
+  grapeBlendMode: GrapeBlendMode | null;
+  grapeBlend: string;
+  producer: string;
+  wineCuvee: string;
+  vintage: string;
+  contributorName: string | null;
+  myRating: number | null;
+  myConfidence: Confidence | null;
+  myNote: string | null;
+}
+
+export interface SeenTastingStateResponse {
+  session: {
+    publicId: string;
+    title: string;
+    tastingDate: string;
+    status: SessionStatus;
+    tastingMode: TastingMode;
+  };
+  guestName: string;
+  bottles: SeenBottleDTO[];
+}
+
 /** Machine-readable error tags raised by the RPC functions (see schema.sql). */
 export const RPC_ERROR_MESSAGES: Record<string, string> = {
   title_required: "A tasting title is required.",
@@ -300,6 +350,7 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   bottle_not_active: "That bottle isn't the current active bottle yet.",
   guess_already_locked: "Your guess for this bottle is already locked in.",
   bottle_not_revealed: "That bottle hasn't been revealed yet.",
+  rating_required: "A rating is required.",
 };
 
 /** Turns a Supabase/Postgres error into a friendly, pre-written message when we recognize it. */

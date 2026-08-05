@@ -42,7 +42,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 **On a brand-new project**, this creates everything in its final shape in one pass:
 - 4 tables: `tasting_sessions`, `wines`, `guests`, `wine_guesses`
 - 2 views: `guest_visible_wines`, `revealed_wine_guesses`
-- 17 RPC functions — session/host (`create_tasting_session`, `get_host_session`, `start_tasting_session`, `reveal_tasting_session`, `reorder_wines`, `reveal_bottle`), participant identity (`join_tasting_session`), bottle registration (`get_registration_state`, `register_bottle`, `update_bottle`, `delete_bottle`), and tasting (`get_guest_session_state`, `upsert_wine_guess`, `complete_guest_submission`, `get_active_bottle_state`, `lock_wine_guess`, `get_revealed_bottle`)
+- 20 RPC functions — session/host (`create_tasting_session`, `get_host_session`, `start_tasting_session`, `reveal_tasting_session`, `reorder_wines`, `reveal_bottle`, `end_seen_tasting`), participant identity (`join_tasting_session`), bottle registration (`get_registration_state`, `register_bottle`, `update_bottle`, `delete_bottle`), and tasting (`get_guest_session_state`, `upsert_wine_guess`, `complete_guest_submission`, `get_active_bottle_state`, `lock_wine_guess`, `get_revealed_bottle`, `get_seen_tasting_state`, `upsert_seen_rating`)
 - Row Level Security enabled on all 4 tables, with narrow column-level grants for the `anon` role
 - Realtime enabled on `tasting_sessions`, `guests`, and `wines`
 
@@ -147,6 +147,25 @@ Re-running `supabase/schema.sql` also brings an existing project up to date for 
 ### Why there's no free-text "Other region" input
 
 The spec allowed adding a labelled, separately-persisted "Other region" free-text field if a plain `Other / Unknown` region option proved insufficient. This update does not add one: `Other / Unknown` is offered as a normal selectable region for every country (and is the *only* region for the `Other / Unknown` country), which keeps every new bottle and guess in the fully controlled vocabulary the rest of this feature relies on, with no extra scoring-comparison path to maintain. If this turns out to be too coarse in practice (e.g. a host wants to note *which* obscure region), a dedicated free-text add-on remains straightforward to layer on later.
+
+## Migrating for seen tasting mode
+
+Re-running `supabase/schema.sql` also brings an existing project up to date for the third tasting mode, **seen tasting** (see README "Tasting modes"). Safe to re-run on a project that's already current, and this migration adds **no new columns at all** — a seen rating reuses the existing `wine_guesses` table exactly as it already is. In order, the new statements:
+
+1. Widen the `tasting_sessions_tasting_mode_check` constraint (drop and recreate, same pattern used for every other check-constraint widening in this file) to also allow `'seen'`. Existing `full_blind`/`course_reveal` rows are untouched.
+2. `create_tasting_session`'s mode validation now also accepts `'seen'`.
+3. `reveal_tasting_session` (the full_blind-only one-shot reveal) now rejects *any* mode other than `full_blind` — previously it only excluded `course_reveal`. A `seen` session can only reach `revealed` through the new `end_seen_tasting` below, mirroring how `course_reveal` can only get there through `reveal_bottle`.
+4. New `get_seen_tasting_state(p_guest_token)` — participant-facing. Returns every bottle's full details (visible to everyone once `seen` reaches `collecting`) plus the caller's own rating/confidence/note for each — never another participant's. Rejects during `registration` (`registration_closed`), so a participant can't peek at bottle identities before the host starts tasting.
+5. New `upsert_seen_rating(p_guest_token, p_wine_id, p_rating, p_confidence, p_tasting_note)` — participant-facing. Deliberately narrow: no identification-guess parameters at all, so there's no way to write blind-guess content through this path. Requires a non-null rating (`rating_required`) and `collecting` status (`session_not_collecting` otherwise, covering both "not started yet" and "already ended"); never restricts which bottle or how many times it can be called, unlike `course_reveal`'s `lock_wine_guess`.
+6. New `end_seen_tasting(p_public_id, p_host_token)` — host-only. Validates the host token, that the session is `seen` and `collecting`, then flips it to `revealed`. Strict about status (unlike `reveal_tasting_session`'s idempotent success) — calling it again on an already-revealed session is rejected, not silently accepted.
+7. `get_host_session` now also returns a `seenProgress` object (only when `seen` and `collecting`): `ratersCount`/`totalParticipants` and `ratingsSubmitted`/`totalPossibleRatings`. Never an individual participant's rating.
+8. `tasting_sessions.tasting_mode`'s existing anon column grant (added for course-reveal mode) already covers `seen` — no grant changes needed there. Three new `grant execute` statements for the functions in steps 4-6.
+
+**`guest_visible_wines` and `revealed_wine_guesses` need no changes at all** — both already unmask purely based on `tasting_sessions.status = 'revealed'`, with no mode-specific logic, so seen tasting's post-reveal results page reads through them exactly as full_blind's already does.
+
+### Why seen ratings reuse `wine_guesses` instead of a new `wine_ratings` table
+
+A seen rating and a blind guess are both, structurally, "one row per `(guest, wine)`, with a rating" — `wine_guesses` already has the `rating`/`confidence`/`tasting_note` columns a seen rating needs, the unique `(guest_id, wine_id)` constraint, and the indexes for looking rows up by guest/wine/session. A separate table would have meant re-declaring all of that, plus extra joins anywhere a query needed both kinds of rows together, for no real isolation benefit — `upsert_seen_rating` and `get_seen_tasting_state` are already strictly mode-gated (`raise exception 'invalid_tasting_mode'` for anything but `seen`) and never read or write a single identification-guess column. The one thing this approach requires — never fabricating blank identification values to satisfy old constraints — is already true today: those columns either have a table-level default (`''`) or are nullable, exactly the same "untouched draft" state a guess row already has before a full_blind/course_reveal participant fills anything in.
 
 ## Bottle numbering and concurrency
 

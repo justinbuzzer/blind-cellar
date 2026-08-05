@@ -66,13 +66,14 @@ export const SESSION_STATUSES: SessionStatus[] = [
  * "Tasting modes"). Every session created before this feature existed
  * safely defaults/backfills to "full_blind" — today's only behaviour.
  */
-export type TastingMode = "full_blind" | "course_reveal";
+export type TastingMode = "full_blind" | "course_reveal" | "seen";
 
-export const TASTING_MODES: TastingMode[] = ["full_blind", "course_reveal"];
+export const TASTING_MODES: TastingMode[] = ["full_blind", "course_reveal", "seen"];
 
 export const TASTING_MODE_LABELS: Record<TastingMode, string> = {
   full_blind: "Full blind tasting",
   course_reveal: "Course-by-course reveal",
+  seen: "Seen tasting",
 };
 
 export const TASTING_MODE_DESCRIPTIONS: Record<TastingMode, string> = {
@@ -80,6 +81,8 @@ export const TASTING_MODE_DESCRIPTIONS: Record<TastingMode, string> = {
     "All bottles are tasted blind before any wines are revealed. Best for comparative tastings where complete objectivity matters.",
   course_reveal:
     "Each bottle is tasted blind, then revealed before moving to the next. Best for casual dinners and relaxed tasting discussions.",
+  seen:
+    "All bottles are visible from the start. Best for relaxed tastings where guests want to compare wines openly and rate them at their own pace.",
 };
 
 export interface TastingSession {
@@ -243,4 +246,46 @@ export interface TastingReport {
   bestTaster: TasterResult[];
   /** Wine(s) with the largest rating spread; more than one entry means a tie. */
   mostDivisiveWine: WineResult[];
+}
+
+/**
+ * Seen tasting (see README "Tasting modes") is a rating-only format — no
+ * identification guessing, no scoring, no Best Taster. These types are
+ * deliberately separate from WineResult/ScoredGuess/TastingReport above
+ * (which are all guess-scoring shapes) so lib/seenResults.ts never needs to
+ * fabricate fake scoring data, and full_blind/course_reveal's report types
+ * are never touched by this mode.
+ */
+export interface SeenParticipantRating {
+  guestId: string;
+  guestName: string;
+  /** Null means this participant never rated this bottle — never fabricated as 0. */
+  rating: number | null;
+  note?: string;
+}
+
+export interface SeenBottleResult {
+  wine: WineAnswerKey;
+  /** 1-based rank by average rating (ties share a rank), same convention as TasterResult.rank. */
+  rank: number;
+  averageRating: number | null;
+  numRatings: number;
+  lowestRating: number | null;
+  highestRating: number | null;
+  ratingSpread: number | null;
+  /** Every participant in the session, in join order — including those with rating: null. */
+  participantRatings: SeenParticipantRating[];
+}
+
+export interface SeenTastingReport {
+  /** Ranked highest average rating first — see calculateSeenBottleResults for the full tie-break order. */
+  bottleResults: SeenBottleResult[];
+  /** Highest average rating; spread breaks ties; more than one entry means a shared tie. */
+  wineOfTheNight: SeenBottleResult[];
+  /** Largest rating spread; more than one entry means a tie. */
+  mostDivisiveWine: SeenBottleResult[];
+  totalRatings: number;
+  /** Distinct guests who rated at least one bottle. */
+  totalRaters: number;
+  totalBottles: number;
 }
