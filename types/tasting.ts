@@ -61,6 +61,27 @@ export const SESSION_STATUSES: SessionStatus[] = [
   "revealed",
 ];
 
+/**
+ * Chosen once at session creation and never editable afterwards (see README
+ * "Tasting modes"). Every session created before this feature existed
+ * safely defaults/backfills to "full_blind" — today's only behaviour.
+ */
+export type TastingMode = "full_blind" | "course_reveal";
+
+export const TASTING_MODES: TastingMode[] = ["full_blind", "course_reveal"];
+
+export const TASTING_MODE_LABELS: Record<TastingMode, string> = {
+  full_blind: "Full blind tasting",
+  course_reveal: "Course-by-course reveal",
+};
+
+export const TASTING_MODE_DESCRIPTIONS: Record<TastingMode, string> = {
+  full_blind:
+    "All bottles are tasted blind before any wines are revealed. Best for comparative tastings where complete objectivity matters.",
+  course_reveal:
+    "Each bottle is tasted blind, then revealed before moving to the next. Best for casual dinners and relaxed tasting discussions.",
+};
+
 export interface TastingSession {
   id: string;
   /** Short human-readable join code, e.g. "MAROON-42". */

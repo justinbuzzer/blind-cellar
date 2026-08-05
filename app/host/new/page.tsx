@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { TextField } from "@/components/TextField";
+import { TastingModeField } from "@/components/TastingModeField";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { setGuestToken, setHostToken } from "@/lib/deviceStorage";
+import { TastingMode } from "@/types/tasting";
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -15,6 +17,7 @@ function today(): string {
 interface FormErrors {
   title?: string;
   hostDisplayName?: string;
+  tastingMode?: string;
 }
 
 export default function HostSetupPage() {
@@ -22,6 +25,7 @@ export default function HostSetupPage() {
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(today());
   const [hostDisplayName, setHostDisplayName] = useState("");
+  const [tastingMode, setTastingMode] = useState<TastingMode | "">("full_blind");
   const [errors, setErrors] = useState<FormErrors | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -35,10 +39,11 @@ export default function HostSetupPage() {
       hostDisplayName: hostDisplayName.trim()
         ? undefined
         : "Enter a display name to host with.",
+      tastingMode: tastingMode ? undefined : "Choose a tasting format.",
     };
     setErrors(validation);
     setSubmitError(null);
-    if (validation.title || validation.hostDisplayName) return;
+    if (validation.title || validation.hostDisplayName || validation.tastingMode) return;
 
     setSubmitting(true);
     try {
@@ -49,6 +54,7 @@ export default function HostSetupPage() {
           title: title.trim(),
           date,
           hostDisplayName: hostDisplayName.trim(),
+          tastingMode,
         }),
       });
 
@@ -111,6 +117,12 @@ export default function HostSetupPage() {
             onChange={(e) => setHostDisplayName(e.target.value)}
             placeholder="e.g. Alice"
             maxLength={60}
+          />
+
+          <TastingModeField
+            value={tastingMode}
+            onChange={setTastingMode}
+            error={errors?.tastingMode}
           />
 
           {submitError && (

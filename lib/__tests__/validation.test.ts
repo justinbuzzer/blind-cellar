@@ -3,11 +3,25 @@ import {
   BLEND_MIN_GRAPES_MESSAGE,
   hasBottleFormErrors,
   hasIncompleteBlend,
+  isValidTastingMode,
   isValidVintage,
   validateBottleForm,
 } from "@/lib/validation";
 import { BottleFormInput } from "@/lib/supabase/guestActions";
 import { WineGuess } from "@/types/tasting";
+
+describe("isValidTastingMode", () => {
+  it("accepts both supported modes", () => {
+    expect(isValidTastingMode("full_blind")).toBe(true);
+    expect(isValidTastingMode("course_reveal")).toBe(true);
+  });
+
+  it("rejects anything else, including blank/unset", () => {
+    expect(isValidTastingMode("")).toBe(false);
+    expect(isValidTastingMode("blind")).toBe(false);
+    expect(isValidTastingMode("Full Blind")).toBe(false);
+  });
+});
 
 describe("isValidVintage", () => {
   it("accepts a plausible four-digit year", () => {

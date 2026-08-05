@@ -10,8 +10,18 @@ import { QRCodeCard } from "@/components/QRCodeCard";
 import { TastingOrderList } from "@/components/host/TastingOrderList";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { friendlyRpcError, HostBottleDTO, HostGuestDTO, HostSessionResponse } from "@/lib/supabase/types";
-import { SessionStatus } from "@/types/tasting";
+import {
+  friendlyRpcError,
+  HostActiveBottleDTO,
+  HostBottleDTO,
+  HostGuestDTO,
+  HostSessionResponse,
+} from "@/lib/supabase/types";
+import {
+  SessionStatus,
+  TASTING_MODE_DESCRIPTIONS,
+  TASTING_MODE_LABELS,
+} from "@/types/tasting";
 
 interface HostControlClientProps {
   publicId: string;
@@ -25,6 +35,14 @@ const STATUS_LABELS: Record<SessionStatus, string> = {
   revealed: "Revealed",
 };
 
+// While a course_reveal bottle awaits reveal, the host's "N of M submitted"
+// count is refreshed by polling rather than realtime — see README "Tasting
+// modes": wine_guesses deliberately has no realtime publication or anon
+// grant, since Supabase Realtime broadcasts full rows per RLS regardless of
+// column grants, and a permissive policy there would leak guess content
+// (ratings, country/region guesses) to other participants in real time.
+const ACTIVE_BOTTLE_POLL_MS = 5000;
+
 export function HostControlClient({
   publicId,
   hostToken,
@@ -34,15 +52,21 @@ export function HostControlClient({
   const [status, setStatus] = useState<SessionStatus>(initialData.session.status);
   const [guests, setGuests] = useState<HostGuestDTO[]>(initialData.guests);
   const [wines, setWines] = useState<HostBottleDTO[]>(initialData.wines);
+  const [activeBottle, setActiveBottle] = useState<HostActiveBottleDTO | null>(
+    initialData.activeBottle
+  );
   const [showRevealConfirm, setShowRevealConfirm] = useState(false);
   const [showStartConfirm, setShowStartConfirm] = useState(false);
+  const [showRevealBottleConfirm, setShowRevealBottleConfirm] = useState(false);
   const [revealing, setRevealing] = useState(false);
+  const [revealingBottle, setRevealingBottle] = useState(false);
   const [starting, setStarting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [realtimeOk, setRealtimeOk] = useState(true);
   const [joinUrl, setJoinUrl] = useState("");
 
   const { session } = initialData;
+  const tastingMode = session.tastingMode;
   const completedCount = useMemo(
     () => guests.filter((g) => g.completedAt !== null).length,
     [guests]
@@ -88,6 +112,7 @@ export function HostControlClient({
         if (!response.ok) return;
         const data: HostSessionResponse = await response.json();
         setWines(data.wines);
+        setActiveBottle(data.activeBottle);
       } catch {
         // Realtime will retry on the next change; a transient fetch failure
         // here isn't worth surfacing as an error banner.
@@ -142,6 +167,34 @@ export function HostControlClient({
     };
   }, [publicId, session.id, hostToken]);
 
+  // Polling fallback for the active bottle's submitted count — see the
+  // ACTIVE_BOTTLE_POLL_MS comment above for why this isn't realtime-driven.
+  useEffect(() => {
+    if (tastingMode !== "course_reveal" || status !== "collecting") return;
+
+    let cancelled = false;
+    async function poll() {
+      try {
+        const response = await fetch("/api/host/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ publicId, hostToken }),
+        });
+        if (!response.ok || cancelled) return;
+        const data: HostSessionResponse = await response.json();
+        if (!cancelled) setActiveBottle(data.activeBottle);
+      } catch {
+        // Next poll will retry.
+      }
+    }
+
+    const intervalId = setInterval(poll, ACTIVE_BOTTLE_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [publicId, hostToken, tastingMode, status]);
+
   async function handleStartTasting() {
     setStarting(true);
     setActionError(null);
@@ -160,6 +213,27 @@ export function HostControlClient({
       setStatus("collecting");
       setShowStartConfirm(false);
       setStarting(false);
+
+      // The session flips to "collecting" here, which is when course-reveal
+      // sessions first have an active bottle — refetch immediately instead of
+      // waiting for the next poll/realtime tick, so the host doesn't briefly
+      // see the "every bottle revealed" fallback for an untouched session.
+      if (tastingMode === "course_reveal") {
+        try {
+          const sessionResponse = await fetch("/api/host/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ publicId, hostToken }),
+          });
+          if (sessionResponse.ok) {
+            const sessionData: HostSessionResponse = await sessionResponse.json();
+            setWines(sessionData.wines);
+            setActiveBottle(sessionData.activeBottle);
+          }
+        } catch {
+          // The poll/realtime refetch will pick this up shortly after.
+        }
+      }
     } catch {
       setActionError(friendlyRpcError(null));
       setStarting(false);
@@ -190,6 +264,38 @@ export function HostControlClient({
     }
   }
 
+  async function handleRevealBottle() {
+    if (!activeBottle) return;
+    setRevealingBottle(true);
+    setActionError(null);
+    try {
+      const response = await fetch("/api/host/reveal-bottle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicId, hostToken, wineId: activeBottle.id }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setActionError(data.error ?? "Couldn't reveal that bottle.");
+        setRevealingBottle(false);
+        return;
+      }
+      if (data.sessionRevealed) {
+        setStatus("revealed");
+        setActiveBottle(null);
+      } else {
+        // The next active bottle will arrive via the realtime-triggered
+        // refetch (the wines UPDATE this just caused) or the poll above.
+        setActiveBottle(null);
+      }
+      setShowRevealBottleConfirm(false);
+      setRevealingBottle(false);
+    } catch {
+      setActionError(friendlyRpcError(null));
+      setRevealingBottle(false);
+    }
+  }
+
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 px-6 py-10">
       <HomeLink />
@@ -203,6 +309,15 @@ export function HostControlClient({
             month: "long",
             day: "numeric",
           })}
+        </p>
+        <p className="mt-2 text-sm">
+          <span className="font-medium text-cellar-maroon">
+            {TASTING_MODE_LABELS[tastingMode]}
+          </span>
+          <span className="text-cellar-text/60">
+            {" — "}
+            {TASTING_MODE_DESCRIPTIONS[tastingMode]}
+          </span>
         </p>
       </div>
 
@@ -341,16 +456,57 @@ export function HostControlClient({
             )}
           </Card>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Link href={`/tasting/${publicId}`}>
-              <Button variant="secondary" fullWidth>
-                Enter my guesses
-              </Button>
-            </Link>
-            <Button fullWidth onClick={() => setShowRevealConfirm(true)}>
-              Reveal results
-            </Button>
-          </div>
+          {tastingMode === "full_blind" ? (
+            <>
+              <Card className="text-sm text-cellar-text/70">
+                All bottles remain hidden until the final reveal.
+              </Card>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Link href={`/tasting/${publicId}`}>
+                  <Button variant="secondary" fullWidth>
+                    Enter my guesses
+                  </Button>
+                </Link>
+                <Button fullWidth onClick={() => setShowRevealConfirm(true)}>
+                  Reveal results
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              {activeBottle ? (
+                <Card className="flex flex-col gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-cellar-text">
+                      Active bottle
+                    </h2>
+                    <p className="mt-1 text-lg font-semibold text-cellar-maroon-dark">
+                      {activeBottle.anonymousCode}
+                    </p>
+                    <p className="text-sm text-cellar-text/60">
+                      Position {activeBottle.position} of {activeBottle.totalBottles}
+                    </p>
+                  </div>
+                  <p className="text-sm text-cellar-text/70">
+                    {activeBottle.submittedCount} of {activeBottle.totalParticipants}{" "}
+                    participants submitted
+                  </p>
+                  <Button fullWidth onClick={() => setShowRevealBottleConfirm(true)}>
+                    Reveal {activeBottle.anonymousCode}
+                  </Button>
+                </Card>
+              ) : (
+                <Card className="text-sm text-cellar-text/70">
+                  Every bottle has been revealed.
+                </Card>
+              )}
+              <Link href={`/session/${publicId}/active`}>
+                <Button variant="secondary" fullWidth>
+                  Enter my guesses
+                </Button>
+              </Link>
+            </>
+          )}
         </>
       )}
 
@@ -416,6 +572,31 @@ export function HostControlClient({
             </Button>
             <Button onClick={handleReveal} disabled={revealing}>
               {revealing ? "Revealing…" : "Reveal"}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {showRevealBottleConfirm && activeBottle && (
+        <Modal
+          title={`Reveal ${activeBottle.anonymousCode}?`}
+          onClose={() => !revealingBottle && setShowRevealBottleConfirm(false)}
+        >
+          <p>
+            This will reveal the wine, contributor, scores, and group ratings
+            for this bottle. Participants who have not submitted will not
+            receive a score for it. You cannot undo this action.
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setShowRevealBottleConfirm(false)}
+              disabled={revealingBottle}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleRevealBottle} disabled={revealingBottle}>
+              {revealingBottle ? "Revealing…" : "Reveal bottle"}
             </Button>
           </div>
         </Modal>

@@ -7,6 +7,7 @@ import { TastingReportView } from "@/components/report/TastingReportView";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
+  buildCourseRevealSubmissions,
   buildRevealedSubmissions,
   mapRevealedWineRowToAnswerKey,
 } from "@/lib/supabase/mappers";
@@ -56,11 +57,18 @@ export default function ResultsPage() {
       })),
     };
 
-    const completedGuests = (guestRows ?? [])
-      .filter((g) => g.completed_at !== null)
-      .map((g) => ({ id: g.id, displayName: g.display_name }));
-
-    const submissions = buildRevealedSubmissions(guessRows ?? [], completedGuests);
+    const submissions =
+      session.tasting_mode === "course_reveal"
+        ? buildCourseRevealSubmissions(
+            guessRows ?? [],
+            (guestRows ?? []).map((g) => ({ id: g.id, displayName: g.display_name }))
+          )
+        : buildRevealedSubmissions(
+            guessRows ?? [],
+            (guestRows ?? [])
+              .filter((g) => g.completed_at !== null)
+              .map((g) => ({ id: g.id, displayName: g.display_name }))
+          );
 
     setReport(buildTastingReport(domainSession, submissions));
     setLoadState("ready");
@@ -76,7 +84,9 @@ export default function ResultsPage() {
     (async () => {
       const { data } = await supabase
         .from("tasting_sessions")
-        .select("id, public_id, join_code, title, tasting_date, status, created_at, updated_at")
+        .select(
+          "id, public_id, join_code, title, tasting_date, status, created_at, updated_at, tasting_mode"
+        )
         .eq("public_id", params.publicId)
         .maybeSingle();
 

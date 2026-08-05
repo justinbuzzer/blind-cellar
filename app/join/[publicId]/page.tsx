@@ -41,7 +41,9 @@ export default function JoinSessionPage() {
     (async () => {
       const { data: sessionRow } = await supabase
         .from("tasting_sessions")
-        .select("id, public_id, join_code, title, tasting_date, status, created_at, updated_at")
+        .select(
+          "id, public_id, join_code, title, tasting_date, status, created_at, updated_at, tasting_mode"
+        )
         .eq("public_id", params.publicId)
         .maybeSingle();
 

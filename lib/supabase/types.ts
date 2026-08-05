@@ -1,4 +1,4 @@
-import { Confidence, GrapeBlendMode, SessionStatus, WineStyle } from "@/types/tasting";
+import { Confidence, GrapeBlendMode, SessionStatus, TastingMode, WineStyle } from "@/types/tasting";
 
 // Raw shapes returned by direct table/view reads (snake_case, PostgREST).
 
@@ -11,6 +11,7 @@ export interface SessionRow {
   status: SessionStatus;
   created_at: string;
   updated_at: string;
+  tasting_mode: TastingMode;
 }
 
 export interface GuestRow {
@@ -66,6 +67,7 @@ export interface RevealedWineGuessRow {
   confidence: Confidence;
   tasting_note: string | null;
   submitted_at: string;
+  locked_at: string | null;
 }
 
 // Shapes returned by the RPC functions (camelCase jsonb, see supabase/schema.sql).
@@ -77,12 +79,25 @@ export interface HostBottleDTO {
   anonymousCode: string;
   wineStyle: WineStyle;
   tastingOrder: number;
+  /** course_reveal only — always null for full_blind bottles. */
+  revealedAt: string | null;
 }
 
 export interface HostGuestDTO {
   id: string;
   displayName: string;
   completedAt: string | null;
+}
+
+/** course_reveal only: the current active bottle's anonymous summary + aggregate progress. */
+export interface HostActiveBottleDTO {
+  id: string;
+  bottleNumber: number;
+  anonymousCode: string;
+  position: number;
+  totalBottles: number;
+  submittedCount: number;
+  totalParticipants: number;
 }
 
 export interface HostSessionResponse {
@@ -95,9 +110,12 @@ export interface HostSessionResponse {
     joinCode: string;
     createdAt: string;
     hostGuestId: string | null;
+    tastingMode: TastingMode;
   };
   wines: HostBottleDTO[];
   guests: HostGuestDTO[];
+  /** Non-null only when tastingMode is course_reveal and status is collecting. */
+  activeBottle: HostActiveBottleDTO | null;
 }
 
 export interface CreateSessionRpcResult {
@@ -139,6 +157,7 @@ export interface GuestSessionStateResponse {
     title: string;
     tastingDate: string;
     status: SessionStatus;
+    tastingMode: TastingMode;
   };
   wines: GuestSessionWineDTO[];
   guesses: GuestGuessDTO[];
@@ -186,6 +205,70 @@ export interface RegisterBottleResponse {
   bottleNumber: number;
 }
 
+// --- course_reveal-only shapes (see get_active_bottle_state / get_revealed_bottle) ---
+
+export interface ActiveBottleDTO {
+  id: string;
+  bottleNumber: number;
+  anonymousCode: string;
+  /** 1-based position in tasting order, e.g. "Bottle 2 of 6". */
+  position: number;
+  totalBottles: number;
+}
+
+export interface ActiveBottleStateResponse {
+  session: {
+    publicId: string;
+    title: string;
+    tastingDate: string;
+    status: SessionStatus;
+    tastingMode: TastingMode;
+  };
+  guestName: string;
+  /** Null once every bottle has been revealed (session will already be 'revealed'). */
+  activeBottle: ActiveBottleDTO | null;
+  myGuess: GuestGuessDTO | null;
+  locked: boolean;
+}
+
+/** One participant's locked guess for a just-revealed bottle — never includes an unlocked/draft guess. */
+export interface RevealedBottleGuessDTO {
+  guestId: string;
+  guestName: string;
+  countryGuess: string;
+  regionGuess: string;
+  grapeBlendMode: GrapeBlendMode | null;
+  grapeBlendGuess: string;
+  producerGuess: string;
+  wineCuveeGuess: string;
+  vintageGuess: string;
+  rating: number | null;
+  confidence: Confidence;
+}
+
+export interface RevealedBottleWineDTO {
+  id: string;
+  bottleNumber: number;
+  anonymousCode: string;
+  position: number;
+  totalBottles: number;
+  country: string;
+  region: string;
+  grapeBlendMode: GrapeBlendMode | null;
+  grapeBlend: string;
+  producer: string;
+  wineCuvee: string;
+  vintage: string;
+  wineStyle: WineStyle;
+  contributorName: string | null;
+}
+
+export interface RevealedBottleResponse {
+  session: { publicId: string; status: SessionStatus };
+  wine: RevealedBottleWineDTO;
+  guesses: RevealedBottleGuessDTO[];
+}
+
 /** Machine-readable error tags raised by the RPC functions (see schema.sql). */
 export const RPC_ERROR_MESSAGES: Record<string, string> = {
   title_required: "A tasting title is required.",
@@ -211,6 +294,12 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   invalid_reorder_payload: "That tasting order couldn't be saved — please refresh and try again.",
   no_bottles_registered: "At least one bottle must be registered before starting the tasting.",
   bottle_not_found: "That bottle couldn't be found, or isn't yours to edit.",
+  invalid_tasting_mode: "That action isn't available for this tasting's format.",
+  session_not_collecting: "This tasting isn't currently collecting guesses.",
+  bottle_already_revealed: "That bottle has already been revealed.",
+  bottle_not_active: "That bottle isn't the current active bottle yet.",
+  guess_already_locked: "Your guess for this bottle is already locked in.",
+  bottle_not_revealed: "That bottle hasn't been revealed yet.",
 };
 
 /** Turns a Supabase/Postgres error into a friendly, pre-written message when we recognize it. */

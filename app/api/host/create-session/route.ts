@@ -3,11 +3,13 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { CreateSessionRpcResult, friendlyRpcError } from "@/lib/supabase/types";
 import { generateSessionCode } from "@/lib/codes";
 import { generateSecureToken, hashToken } from "@/lib/tokens";
+import { isValidTastingMode } from "@/lib/validation";
 
 interface CreateSessionBody {
   title: string;
   date: string;
   hostDisplayName: string;
+  tastingMode: string;
 }
 
 const MAX_JOIN_CODE_ATTEMPTS = 8;
@@ -35,6 +37,7 @@ export async function POST(request: NextRequest) {
   const date = typeof body.date === "string" ? body.date : "";
   const hostDisplayName =
     typeof body.hostDisplayName === "string" ? body.hostDisplayName.trim() : "";
+  const tastingModeRaw = typeof body.tastingMode === "string" ? body.tastingMode : "";
 
   if (!title) {
     return NextResponse.json({ error: "A tasting title is required." }, { status: 400 });
@@ -51,6 +54,10 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
+  if (!isValidTastingMode(tastingModeRaw)) {
+    return NextResponse.json({ error: "Choose a tasting format." }, { status: 400 });
+  }
+  const tastingMode = tastingModeRaw;
 
   const hostToken = generateSecureToken();
   const hostTokenHash = hashToken(hostToken);
@@ -66,6 +73,7 @@ export async function POST(request: NextRequest) {
       p_join_code: joinCode,
       p_host_token_hash: hostTokenHash,
       p_host_display_name: hostDisplayName,
+      p_tasting_mode: tastingMode,
     });
 
     if (!error && data) {

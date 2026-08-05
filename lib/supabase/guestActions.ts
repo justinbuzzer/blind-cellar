@@ -2,11 +2,13 @@ import { SupabaseClient } from "@supabase/supabase-js";
 import { GrapeBlendMode, WineGuess, WineStyle } from "@/types/tasting";
 import { reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
 import {
+  ActiveBottleStateResponse,
   GuestSessionStateResponse,
   JoinSessionResponse,
   MyBottleDTO,
   RegisterBottleResponse,
   RegistrationStateResponse,
+  RevealedBottleResponse,
 } from "./types";
 
 export async function joinSession(
@@ -76,6 +78,41 @@ export async function getRegistrationState(
     p_guest_token: guestToken,
   });
   return { data: data as RegistrationStateResponse | null, error };
+}
+
+// --- course_reveal only ---
+
+export async function getActiveBottleState(
+  supabase: SupabaseClient,
+  guestToken: string
+) {
+  const { data, error } = await supabase.rpc("get_active_bottle_state", {
+    p_guest_token: guestToken,
+  });
+  return { data: data as ActiveBottleStateResponse | null, error };
+}
+
+export async function lockWineGuess(
+  supabase: SupabaseClient,
+  guestToken: string,
+  wineId: string
+) {
+  return supabase.rpc("lock_wine_guess", {
+    p_guest_token: guestToken,
+    p_wine_id: wineId,
+  });
+}
+
+export async function getRevealedBottle(
+  supabase: SupabaseClient,
+  guestToken: string,
+  wineId: string
+) {
+  const { data, error } = await supabase.rpc("get_revealed_bottle", {
+    p_guest_token: guestToken,
+    p_wine_id: wineId,
+  });
+  return { data: data as RevealedBottleResponse | null, error };
 }
 
 export interface BottleFormInput {

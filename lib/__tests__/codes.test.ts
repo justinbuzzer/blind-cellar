@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { bottleLabel, generateSessionCode } from "@/lib/codes";
-import { SESSION_STATUSES, WINE_STYLE_LABELS, WINE_STYLES } from "@/types/tasting";
+import {
+  SESSION_STATUSES,
+  TASTING_MODE_DESCRIPTIONS,
+  TASTING_MODE_LABELS,
+  TASTING_MODES,
+  WINE_STYLE_LABELS,
+  WINE_STYLES,
+} from "@/types/tasting";
 
 describe("bottleLabel", () => {
   it("formats sequential bottle numbers as 'Bottle N'", () => {
@@ -32,5 +39,25 @@ describe("WINE_STYLES", () => {
     for (const style of WINE_STYLES) {
       expect(WINE_STYLE_LABELS[style]).toBeTruthy();
     }
+  });
+});
+
+describe("TASTING_MODES", () => {
+  it("lists full_blind before course_reveal", () => {
+    expect(TASTING_MODES).toEqual(["full_blind", "course_reveal"]);
+  });
+
+  it("has the exact required user-facing labels", () => {
+    expect(TASTING_MODE_LABELS.full_blind).toBe("Full blind tasting");
+    expect(TASTING_MODE_LABELS.course_reveal).toBe("Course-by-course reveal");
+  });
+
+  it("has the exact required descriptions", () => {
+    expect(TASTING_MODE_DESCRIPTIONS.full_blind).toBe(
+      "All bottles are tasted blind before any wines are revealed. Best for comparative tastings where complete objectivity matters."
+    );
+    expect(TASTING_MODE_DESCRIPTIONS.course_reveal).toBe(
+      "Each bottle is tasted blind, then revealed before moving to the next. Best for casual dinners and relaxed tasting discussions."
+    );
   });
 });

@@ -1,6 +1,13 @@
-import { GuestSubmission, WineAnswerKey, WineGuess } from "@/types/tasting";
+import { GuestSubmission, TastingSession, WineAnswerKey, WineGuess, WineResult } from "@/types/tasting";
 import { reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
-import { GuestGuessDTO, GuestVisibleWineRow, RevealedWineGuessRow } from "./types";
+import { calculateWineResults } from "@/lib/results";
+import {
+  GuestGuessDTO,
+  GuestVisibleWineRow,
+  RevealedBottleGuessDTO,
+  RevealedBottleResponse,
+  RevealedWineGuessRow,
+} from "./types";
 
 /**
  * Maps a post-reveal `guest_visible_wines` row (fully unmasked) to the
@@ -125,4 +132,100 @@ export function buildRevealedSubmissions(
     locked: true,
     guesses: (byGuest.get(guest.id) ?? []).map(mapRevealedGuessRowToWineGuess),
   }));
+}
+
+/**
+ * Course-reveal equivalent of `buildRevealedSubmissions`. Course-reveal
+ * guests never set `guests.completed_at` (that's a full_blind-only,
+ * session-wide lock) — each bottle is finalized individually via
+ * `wine_guesses.locked_at` instead (see `lock_wine_guess` in
+ * supabase/schema.sql). So "did this guest participate" is judged per-guess
+ * here, not per-guest: a guest is included if they have at least one locked
+ * guess, and only their locked guesses count — one skipped bottle doesn't
+ * drop their guesses for the bottles they did submit.
+ */
+export function buildCourseRevealSubmissions(
+  guesses: RevealedWineGuessRow[],
+  guests: { id: string; displayName: string }[]
+): GuestSubmission[] {
+  const nameById = new Map(guests.map((g) => [g.id, g.displayName]));
+  const byGuest = new Map<string, RevealedWineGuessRow[]>();
+  for (const row of guesses) {
+    if (row.locked_at === null) continue;
+    const existing = byGuest.get(row.guest_id) ?? [];
+    existing.push(row);
+    byGuest.set(row.guest_id, existing);
+  }
+
+  return Array.from(byGuest.entries()).map(([guestId, guestGuesses]) => ({
+    id: guestId,
+    guestId,
+    guestName: nameById.get(guestId) ?? "Guest",
+    sessionCode: "",
+    locked: true,
+    guesses: guestGuesses.map(mapRevealedGuessRowToWineGuess),
+  }));
+}
+
+function mapRevealedBottleGuessToWineGuess(wineId: string, dto: RevealedBottleGuessDTO): WineGuess {
+  return {
+    wineId,
+    country: dto.countryGuess,
+    region: dto.regionGuess,
+    grapeBlendMode: dto.grapeBlendMode ?? "",
+    grapeBlend: dto.grapeBlendGuess,
+    selectedGrapes: [],
+    otherGrapesText: "",
+    producer: dto.producerGuess,
+    wineName: dto.wineCuveeGuess,
+    vintage: dto.vintageGuess,
+    rating: dto.rating,
+    confidence: dto.confidence,
+  };
+}
+
+/**
+ * Builds the single-bottle `WineResult` for a just-revealed course_reveal
+ * bottle, by reusing the exact same `calculateWineResults` the full final
+ * report uses — feeding it a synthetic one-wine session containing only
+ * this bottle and only the (already server-filtered-to-locked) guesses
+ * `get_revealed_bottle` returned. No scoring logic is duplicated: this is
+ * the same function, just called with a narrower session.
+ */
+export function buildRevealedBottleResult(response: RevealedBottleResponse): WineResult {
+  const answerKey: WineAnswerKey = {
+    id: response.wine.id,
+    code: response.wine.anonymousCode,
+    country: response.wine.country,
+    region: response.wine.region,
+    grapeBlendMode: response.wine.grapeBlendMode ?? "",
+    grapeBlend: response.wine.grapeBlend,
+    producer: response.wine.producer,
+    wineName: response.wine.wineCuvee,
+    vintage: response.wine.vintage,
+    wineStyle: response.wine.wineStyle,
+    tastingOrder: response.wine.position,
+    contributorName: response.wine.contributorName ?? undefined,
+  };
+
+  const session: TastingSession = {
+    id: response.session.publicId,
+    code: "",
+    title: "",
+    date: "",
+    wines: [answerKey],
+    status: response.session.status,
+    createdAt: "",
+  };
+
+  const submissions: GuestSubmission[] = response.guesses.map((guess) => ({
+    id: guess.guestId,
+    guestId: guess.guestId,
+    guestName: guess.guestName,
+    sessionCode: "",
+    locked: true,
+    guesses: [mapRevealedBottleGuessToWineGuess(response.wine.id, guess)],
+  }));
+
+  return calculateWineResults(session, submissions)[0];
 }

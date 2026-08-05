@@ -1,7 +1,12 @@
 import { BottleFormErrors } from "@/components/registration/BottleForm";
 import { BottleFormInput } from "@/lib/supabase/guestActions";
 import { combineBlendComponents, isKnownCountry, isValidRegionForCountry } from "@/lib/wineReferenceData";
-import { WineGuess } from "@/types/tasting";
+import { TASTING_MODES, TastingMode, WineGuess } from "@/types/tasting";
+
+/** Type guard for the `tastingMode` field submitted from session creation. */
+export function isValidTastingMode(value: string): value is TastingMode {
+  return (TASTING_MODES as string[]).includes(value);
+}
 
 const FOUR_DIGIT_YEAR = /^\d{4}$/;
 

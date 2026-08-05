@@ -28,12 +28,36 @@ npx tsc --noEmit  # type-check
 
 A tasting session moves through three stages: **registration** → **collecting** → **revealed**.
 
-- **Host setup**: the host enters just a title, date, and their own display name (no wines up front). This creates the session and a normal participant record for the host — the host is a participant like anyone else, and appears exactly once in the leaderboard.
+- **Host setup**: the host enters a title, date, their own display name, and a required **tasting format** (see "Tasting modes" below) — no wines up front. This creates the session and a normal participant record for the host — the host is a participant like anyone else, and appears exactly once in the leaderboard.
 - **Registration**: the host gets a management link (`/host/[publicId]?token=...`) with a QR code, join link/code, live bottle count, and a "Start tasting" action. Every participant — including the host, via "Register my bottle" — can privately register any number of bottles using controlled dropdowns for country and region (region filtered by country), a grape/blend selector for single variety **or a structured multi-select blend picker** (see "Structured grape/blend" below), a year picker or NV toggle for vintage, a required **wine style** (Bubbles/White/Red/Sweet/Other), and free-text producer/wine-cuvée (with guidance to add the specific wine name, vineyard, cru, or appellation where relevant)/optional private note. Each bottle gets a permanent, sequential anonymous number (`Bottle 1`, `Bottle 2`, …) the moment it's registered; numbers are never reused, even after a delete. The host can also arrange a separate **tasting order** for the bottles (see "Bottle number vs. tasting order" below) from a "Tasting order" panel on the host page, using Move up/down controls; this locks the moment tasting starts. Participants can edit or delete only their own bottles, and only during registration. No one — including the host — can see another contributor's bottle details or identity at this stage; the host sees only each bottle's anonymous number, wine style, and tasting-order position, never country/region/producer/vintage/notes or who contributed it.
-- **Collecting**: the host starts tasting once at least one bottle is registered; this locks bottle registration, numbering, and the tasting order. Every participant (including the host and a bottle's own contributor) guesses every bottle **in the host's tasting order** (progress shown as e.g. `Bottle 4 — 1 of 5`), one at a time (Previous/Next, autosaved as they go), using the same controlled country/region/vintage/grape-blend inputs as registration, rates it 50–100, and sets a confidence level. Wine style stays hidden from other participants until reveal. Guesses lock permanently on final submission.
-- **Revealed**: the host reveals via a confirmation modal (irreversible), which unlocks the shared report for everyone in real time. The report shows each bottle's full answer key, its **wine style** and **served position** (e.g. "Style: Red · Served 1st"), **and its contributor's name**, alongside Wine of the Night, Best Taster, Most Divisive Wine (with tie handling), per-bottle guess breakdowns (core vs. bonus categories), and the taster leaderboard.
+- **Collecting**: the host starts tasting once at least one bottle is registered; this locks bottle registration, numbering, and the tasting order. What happens next depends on the session's **tasting mode** — see "Tasting modes" below.
+- **Revealed**: whether reached via full blind's one-shot reveal or course-by-course's final bottle, the shared report unlocks for everyone in real time. The report shows each bottle's full answer key, its **wine style** and **served position** (e.g. "Style: Red · Served 1st"), **and its contributor's name**, alongside Wine of the Night, Best Taster, Most Divisive Wine (with tie handling), per-bottle guess breakdowns (core vs. bonus categories), and the taster leaderboard.
 - **Scoring** is a 120-point-per-wine model: a 100-point **core** score (country 20, region 30, grape/blend 30, vintage 20 — exact, case/whitespace/accent-lenient matching) plus a 20-point **bonus** score (producer 10, wine/cuvée 10, exact normalised match). Price band is never scored, and no points are awarded or deducted for contributing a bottle. The leaderboard ranks by total points, then core points, then exact core-category matches, with ties sharing a rank. See "Scoring model" below for full details.
 - A **"See a demo report"** link on the home page (`/demo`) renders a canned 3-bottle, 3-taster report (including contributor names) entirely client-side, for a quick look without creating a real tasting. It's explicitly labeled as a local-only demo and isn't saved anywhere.
+
+## Tasting modes
+
+Chosen once by the host when creating a session (`tasting_sessions.tasting_mode`) and **never editable afterwards**. Every session created before this feature existed safely reads as `full_blind` — today's only behaviour.
+
+### Full blind tasting (default)
+
+> All bottles are tasted blind before any wines are revealed. Best for comparative tastings where complete objectivity matters.
+
+The existing, original flow: every participant (including the host and a bottle's own contributor) guesses every bottle **in the host's tasting order** (progress shown as e.g. `Bottle 4 — 1 of 5`) at their own pace via Previous/Next, autosaved as they go. No bottle's answer key, contributor identity, other guesses, or score is visible to anyone until the host performs one final reveal — there is no per-bottle reveal control in this mode. The host control page shows "All bottles remain hidden until the final reveal." during collecting.
+
+### Course-by-course reveal
+
+> Each bottle is tasted blind, then revealed before moving to the next. Best for casual dinners and relaxed tasting discussions.
+
+Only one **active bottle** is open at a time — the earliest bottle by tasting order that the host hasn't yet revealed:
+
+- Participants can only see and guess the active bottle (`/session/[publicId]/active`) — never an upcoming one's identity, guesses, or scores.
+- A participant finalises their guess by tapping **Lock in my guess** (requires a rating, same as full blind's final-submission bar); the form then shows *"Your guess for Bottle [number] is locked. Waiting for the host to reveal it."* Unlike full blind, this locks per-bottle, not the whole session.
+- The host doesn't need everyone to submit — **Reveal Bottle [number]** is available at any time, with a confirmation warning that anyone who hasn't submitted gets no score for that bottle (no guess is fabricated on their behalf). The host also sees a live aggregate `N of M participants submitted` count for the active bottle only, never individual guesses.
+- Revealing shows a focused per-bottle screen (`/session/[publicId]/bottle/[wineId]/reveal`): full answer key, contributor, group rating stats, and every participant's guess/score breakdown for *that bottle only* — reusing the exact same scoring functions the final report uses, just scoped to one wine. There is deliberately no running leaderboard here, to keep a mid-tasting screen simple.
+- A participant chooses **Continue to next bottle** whenever they're ready (never force-navigated away from a reveal they're still reading); reloading or returning later routes them to whatever's now current — the next active bottle, or final results if the session finished revealing while they were away.
+- The host cannot skip a bottle, reveal out of order, reveal the same bottle twice, or reveal the whole session in one step — only the current active bottle, one at a time. Revealing the last bottle transitions the session straight to `revealed` and the normal final report.
+- Bottle numbers and tasting order are never touched by any of this — only a new `wines.revealed_at` timestamp (null = not yet revealed) and a new `wine_guesses.locked_at` timestamp (null = still an editable draft) change.
 
 ## Scoring model
 
@@ -105,6 +129,11 @@ Sessions live in Supabase Postgres. See [SUPABASE_SETUP.md](SUPABASE_SETUP.md) f
 - `grape_blend_components` is a convenience for re-editing a blend faithfully (which parts were curated picks vs. free text); it is never the source of truth for scoring or display — the flattened `grape_style` text is, exactly as it already was before this feature.
 - Guess entry blocks a blend guess with *exactly one* grape at final submission (not before, so autosave never nags mid-draft), matching how a missing rating is already handled; a completely blank blend guess is left alone since it already legitimately scores zero.
 - Wine/cuvée guidance is shown as persistent helper text under the field on every device size, rather than a tooltip/info icon, since the app's existing `TextField` already had a `hint` slot wired up for exactly this (accessible via `aria-describedby`) and the copy is short enough not to meaningfully add to page density.
+- Tasting mode is locked at creation with no edit path, as specified — changing formats mid-session would leave `revealed_at`/`locked_at` state in an ambiguous position, so this was intentionally out of scope rather than a partial implementation.
+- A course_reveal guess is only ever counted as "submitted" for host-progress and reveal purposes once explicitly locked (a new per-guess `wine_guesses.locked_at`) — a rating saved by autosave but never locked in still shows as "no submission" if the host reveals first, matching the requirement that no guess/score is fabricated.
+- `guest_visible_wines` and `revealed_wine_guesses` (the views full blind's results page already relies on) are completely unchanged by this feature. Course-by-course reveal reads exclusively through new, narrowly-scoped RPCs (`get_active_bottle_state`, `get_revealed_bottle`) that check `wines.revealed_at` themselves — this was chosen over adding `OR revealed_at is not null` conditions to the shared views, to avoid touching code every other results/registration path depends on.
+- The host's "N of M participants submitted" count for the active bottle is refreshed by short polling (every 5s) rather than Supabase Realtime. Realtime's `postgres_changes` broadcasts a full row per RLS policy, independent of column-level grants — so a permissive RLS policy on `wine_guesses` (needed for any realtime signal to reach anon at all) would broadcast guess *content* (ratings, country/region guesses) to every participant in real time, not just a completion count. `wine_guesses` therefore still has no anon grant and no realtime publication membership, exactly as before this feature; only `wines`/`tasting_sessions` changes (already realtime-enabled, never read for their payload content — only used as a "something changed, refetch through a secure RPC" signal) drive live updates.
+- A revealed bottle's reveal screen intentionally omits a running leaderboard/ranking (the spec explicitly calls this unnecessary complexity for a mid-tasting screen) — it shows only that bottle's own group stats and per-guest breakdown, reusing `calculateWineResults` scoped to one wine.
 
 ## Recommended next features
 
@@ -184,6 +213,23 @@ Run this against a real Supabase project (see `SUPABASE_SETUP.md`) using multipl
 51. **The helper text is programmatically associated with the field** (inspect `aria-describedby` on the input pointing at the hint's `id`), not just visually nearby.
 52. **Wine/cuvée bonus scoring is unchanged** — still worth 10 points, still an exact normalised-text match, unaffected by the new helper text.
 
+### Tasting modes
+
+53. **Creating a session defaults to Full blind tasting** and shows both mode cards with their exact descriptions before creating.
+54. **Choosing Course-by-course reveal** persists that mode; reopening the host page afterwards shows the mode label + description and no way to change it.
+55. **A full blind session behaves exactly as before**: no per-bottle reveal control anywhere, all bottles hidden during collecting, one final reveal shows the complete report.
+56. **A course_reveal session only shows one active bottle** to participants at a time — attempting to reach a future bottle's guess form (e.g. by guessing at a wine id from the tasting order) is rejected server-side.
+57. **The host can reveal the active bottle before every participant has submitted** — the confirmation modal names the bottle and warns non-submitters get no score; after reveal, a participant who never locked a guess shows no score for that bottle, not a fabricated one.
+58. **The host cannot reveal a bottle out of order** — attempting to reveal a later bottle while an earlier one is still unrevealed is rejected server-side (`bottle_not_active`), and revealing an already-revealed bottle is rejected (`bottle_already_revealed`).
+59. **A non-host cannot reveal any bottle** — calling the reveal endpoint with a guest token (or no token) fails.
+60. **Revealing a non-final bottle** keeps the session `collecting`, makes the next unrevealed bottle active, and shows the per-bottle reveal screen (answer key, contributor, group stats, every locked guess's score breakdown) — while the *next* bottle's identity/guesses remain completely invisible.
+61. **Choosing "Continue to next bottle"** loads the new active bottle's empty guess form; reloading the reveal screen later still works, and reloading the active-bottle route routes to whatever's current (next active bottle, or final results if the session finished while away).
+62. **Revealing the final bottle** transitions the session to `revealed` and shows the same comprehensive final report (Wine of the Night, Best Taster, Most Divisive Wine, full leaderboard, every bottle) as full blind.
+63. **The host can submit their own guess** for the active bottle in course_reveal, same as any participant.
+64. **Bottle numbers and tasting order never change** across any of the above — only `revealed_at`/`locked_at` timestamps move.
+65. **Two devices see live updates**: a second participant's screen transitions from "locked, waiting" to the reveal prompt shortly after the host reveals, without needing a manual refresh (allow a few seconds — see the polling/realtime note in "Assumptions and design choices").
+66. **A pre-existing session from before this feature** still loads and behaves as `full_blind` with no visible change.
+
 ## Automated tests
 
 `npm run test` runs Vitest unit tests covering:
@@ -199,5 +245,7 @@ Run this against a real Supabase project (see `SUPABASE_SETUP.md`) using multipl
 - Blend scoring through the structured picker's derived flattened text — order-independence, alias equivalence, partial-overlap rejection — confirming the existing scoring pipeline needed no changes for this feature (`lib/scoring.ts`)
 - The tasting-order move-up/move-down helper — swapping with a neighbour, no-op at either end, no mutation of the input array (`lib/reorder.ts`)
 - The wine style constants — the five supported styles and that every one has a display label (`types/tasting.ts`)
+- The tasting-mode type guard and the exact required labels/descriptions for both modes (`lib/validation.ts`, `types/tasting.ts`)
+- Building a single revealed bottle's group stats and per-guess score breakdown from the course-reveal RPC's response shape, confirmed to go through the exact same `calculateWineResults` the final report uses (`lib/supabase/mappers.ts`)
 
 These don't require a Supabase project — they test the pure scoring/ranking/validation logic in isolation. Bottle-numbering concurrency, RLS enforcement, and the registration/collecting/revealed lifecycle transitions are database-level guarantees exercised by the manual test checklist above against a live project, not by this unit-test suite.
