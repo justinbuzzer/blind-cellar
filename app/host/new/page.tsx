@@ -72,7 +72,11 @@ export default function HostSetupPage() {
       // participant token in the same slot a regular guest would use, so
       // /register and /tasting need no host-specific branching.
       setGuestToken(data.publicId, data.hostGuestToken);
-      router.push(`/host/${data.publicId}?token=${encodeURIComponent(data.hostToken)}`);
+
+      const linkFailedParam = data.accountLinkStatus === "failed" ? "&accountLinkFailed=1" : "";
+      router.push(
+        `/host/${data.publicId}?token=${encodeURIComponent(data.hostToken)}${linkFailedParam}`
+      );
     } catch {
       setSubmitError(
         "Couldn't reach the tasting server. Check your connection and try again."

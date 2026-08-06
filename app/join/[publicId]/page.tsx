@@ -13,6 +13,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { joinSession } from "@/lib/supabase/guestActions";
 import { friendlyRpcError, GuestVisibleWineRow, SessionRow } from "@/lib/supabase/types";
 import { getGuestToken, setGuestToken } from "@/lib/deviceStorage";
+import { claimAccountTastingRecord } from "@/lib/supabase/claim";
 import { SessionStatus } from "@/types/tasting";
 
 type LoadState = "loading" | "no-config" | "not-found" | "revealed" | "ready";
@@ -111,6 +112,25 @@ export default function JoinSessionPage() {
     }
 
     setGuestToken(params.publicId, data.guest_token);
+
+    // Best-effort automatic account linking (see README "Account-linked
+    // tasting records") — never awaited before navigating, and any failure
+    // (including simply not being signed in) is silently ignored. `keepalive`
+    // lets the request survive the page navigation that follows immediately.
+    void (async () => {
+      const { data: userData } = await supabase.auth.getUser();
+      if (!userData.user) return;
+      await claimAccountTastingRecord(
+        {
+          publicId: params.publicId,
+          role: "participant",
+          token: data.guest_token,
+          claimSource: "automatic",
+        },
+        { keepalive: true }
+      );
+    })();
+
     router.push(destinationForStatus(session.status, params.publicId));
   }
 

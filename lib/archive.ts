@@ -1,5 +1,9 @@
-import { TastingMode, WineAnswerKey } from "@/types/tasting";
-import { GuestSessionStateResponse, HostSessionResponse } from "@/lib/supabase/types";
+import { SessionStatus, TastingMode, WineAnswerKey } from "@/types/tasting";
+import {
+  AccountTastingRecordRow,
+  GuestSessionStateResponse,
+  HostSessionResponse,
+} from "@/lib/supabase/types";
 import { ReportData } from "@/lib/supabase/reportData";
 import { round1 } from "./math";
 
@@ -199,27 +203,39 @@ export async function resolveArchiveEntries(
   );
 }
 
-/**
- * Turns raw resolution results into what the archive list actually renders:
- * only "ready" items, one row per session even if both a host and a
- * participant reference resolved for it (host wins — see README "Tasting
- * archive"), ordered by tasting date descending with createdAt as the
- * tiebreak.
- */
-export function selectDisplayEntries(items: ArchiveLookupResultItem[]): ArchiveEntry[] {
+/** One row per session even if both a host and a participant entry exist for it — host wins. Shared by the browser archive and the account archive so both dedupe identically. */
+export function dedupeEntriesPreferringHost(entries: ArchiveEntry[]): ArchiveEntry[] {
   const byPublicId = new Map<string, ArchiveEntry>();
-  for (const item of items) {
-    if (item.status !== "ready" || !item.entry) continue;
-    const existing = byPublicId.get(item.entry.publicId);
-    if (!existing || (existing.role !== "host" && item.entry.role === "host")) {
-      byPublicId.set(item.entry.publicId, item.entry);
+  for (const entry of entries) {
+    const existing = byPublicId.get(entry.publicId);
+    if (!existing || (existing.role !== "host" && entry.role === "host")) {
+      byPublicId.set(entry.publicId, entry);
     }
   }
-  return Array.from(byPublicId.values()).sort((a, b) => {
+  return Array.from(byPublicId.values());
+}
+
+/** Tasting date descending, createdAt as the tiebreak — shared by the browser archive and the account archive. */
+export function sortEntriesReverseChronological(entries: ArchiveEntry[]): ArchiveEntry[] {
+  return [...entries].sort((a, b) => {
     if (a.tastingDate !== b.tastingDate) return a.tastingDate < b.tastingDate ? 1 : -1;
     if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
     return 0;
   });
+}
+
+/**
+ * Turns raw resolution results into what the browser archive list actually
+ * renders: only "ready" items, deduped and sorted the same way the account
+ * archive is (see dedupeEntriesPreferringHost / sortEntriesReverseChronological).
+ */
+export function selectDisplayEntries(items: ArchiveLookupResultItem[]): ArchiveEntry[] {
+  const ready = items
+    .filter((item): item is ArchiveLookupResultItem & { entry: ArchiveEntry } =>
+      Boolean(item.status === "ready" && item.entry)
+    )
+    .map((item) => item.entry);
+  return sortEntriesReverseChronological(dedupeEntriesPreferringHost(ready));
 }
 
 export function splitByRole(entries: ArchiveEntry[]): {
@@ -292,4 +308,119 @@ export function parseArchiveLookupRequest(body: unknown): ArchiveLookupRequestIt
     parsed.push({ publicId, role, token });
   }
   return parsed;
+}
+
+// ---------------------------------------------------------------------------
+// Account-linked tasting records (see README "Account-linked tasting
+// records"). The browser archive above proves ownership by re-validating a
+// stored token; the account archive proves it by RLS — account_tasting_records
+// only ever returns the signed-in user's own rows — so no per-item token
+// check is needed here. What both paths share: the resulting ArchiveEntry
+// shape, the dedupe rule, the sort order, and the Wine of the
+// Night/accuracy calculation via the same injected loadReport.
+// ---------------------------------------------------------------------------
+
+export type ClaimSource = "automatic" | "browser_claim";
+
+/** Everything needed to build one account-archive entry, already scoped to the signed-in user by RLS. */
+export interface AccountSessionSummary {
+  id: string;
+  publicId: string;
+  title: string;
+  tastingDate: string;
+  status: SessionStatus;
+  tastingMode: TastingMode;
+  createdAt: string;
+  bottleCount: number;
+  participantCount: number;
+}
+
+export interface AccountArchiveResolutionDeps {
+  getSessionSummary: (sessionId: string) => Promise<AccountSessionSummary | null>;
+  loadReport: (session: { id: string; tastingMode: TastingMode }) => Promise<ReportData>;
+}
+
+/**
+ * Resolves one account_tasting_records row into an ArchiveEntry, or null if
+ * the linked session no longer exists or isn't currently revealed — "Your
+ * record" never shows a not-yet-revealed session just because a link exists
+ * for it (see README). Host-role accuracy is intentionally always null here:
+ * unlike the browser archive (which learns the host's own guest id from the
+ * host-token-gated get_host_session RPC), the account path has no such
+ * token to present, and adding a host_guest_id column grant on
+ * tasting_sessions purely to recover it was judged not worth the extra
+ * grant surface for one summary figure — see README for this tradeoff.
+ * Participant-role accuracy stays fully available, since
+ * account_tasting_records.participant_id already gives the guest id
+ * directly.
+ */
+async function resolveAccountRecord(
+  record: AccountTastingRecordRow,
+  deps: AccountArchiveResolutionDeps
+): Promise<ArchiveEntry | null> {
+  const summary = await deps.getSessionSummary(record.session_id);
+  if (!summary || summary.status !== "revealed") return null;
+
+  const report = await deps.loadReport({ id: summary.id, tastingMode: summary.tastingMode });
+  const wineOfTheNight = buildWineHighlight(reportWineOfTheNight(report));
+  const accuracyPercent =
+    record.role === "participant" && record.participant_id
+      ? ownAccuracy(report, record.participant_id, summary.tastingMode)
+      : null;
+
+  return {
+    publicId: summary.publicId,
+    role: record.role,
+    title: summary.title,
+    tastingDate: summary.tastingDate,
+    createdAt: summary.createdAt,
+    tastingMode: summary.tastingMode,
+    bottleCount: summary.bottleCount,
+    participantCount: summary.participantCount,
+    wineOfTheNight,
+    accuracyPercent,
+  };
+}
+
+/** Resolves every linked record independently (one missing/unrevealed session never affects the others), then dedupes and sorts identically to the browser archive. */
+export async function resolveAccountEntries(
+  records: AccountTastingRecordRow[],
+  deps: AccountArchiveResolutionDeps
+): Promise<ArchiveEntry[]> {
+  const resolved = await Promise.all(records.map((record) => resolveAccountRecord(record, deps)));
+  const entries = resolved.filter((entry): entry is ArchiveEntry => entry !== null);
+  return sortEntriesReverseChronological(dedupeEntriesPreferringHost(entries));
+}
+
+/**
+ * publicIds already present in the account archive — used by the browser
+ * archive's "This browser" tab to hide an already-linked entry's claim
+ * action rather than showing it as a redundant duplicate (see README).
+ */
+export function accountLinkedPublicIds(accountEntries: ArchiveEntry[]): Set<string> {
+  return new Set(accountEntries.map((e) => e.publicId));
+}
+
+export interface ClaimRequestBody {
+  publicId: string;
+  role: ArchiveRole;
+  token: string;
+  claimSource: ClaimSource;
+}
+
+/**
+ * Validates and bounds the raw request body for POST /api/account/claim.
+ * Returns null on anything malformed so the route can respond with one
+ * generic 400 — same convention as parseArchiveLookupRequest.
+ */
+export function parseClaimRequest(body: unknown): ClaimRequestBody | null {
+  if (!body || typeof body !== "object") return null;
+  const { publicId, role, token, claimSource } = body as Record<string, unknown>;
+  if (typeof publicId !== "string" || publicId.length === 0 || publicId.length > 100) {
+    return null;
+  }
+  if (role !== "host" && role !== "participant") return null;
+  if (typeof token !== "string" || token.length === 0 || token.length > 500) return null;
+  if (claimSource !== "automatic" && claimSource !== "browser_claim") return null;
+  return { publicId, role, token, claimSource };
 }

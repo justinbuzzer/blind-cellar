@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 interface PageProps {
   params: { publicId: string };
-  searchParams: { token?: string };
+  searchParams: { token?: string; accountLinkFailed?: string };
 }
 
 function UnavailablePage({ title, message }: { title: string; message: string }) {
@@ -69,6 +69,7 @@ export default async function HostControlPage({ params, searchParams }: PageProp
       publicId={params.publicId}
       hostToken={token}
       initialData={data as HostSessionResponse}
+      accountLinkFailed={searchParams.accountLinkFailed === "1"}
     />
   );
 }

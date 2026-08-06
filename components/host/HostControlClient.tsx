@@ -35,6 +35,8 @@ interface HostControlClientProps {
   publicId: string;
   hostToken: string;
   initialData: HostSessionResponse;
+  /** True when this session was just created while signed in, but the automatic account link failed — see README "Account-linked tasting records". Never blocks anything; purely an FYI, shown once. */
+  accountLinkFailed?: boolean;
 }
 
 const STATUS_LABELS: Record<SessionStatus, string> = {
@@ -59,8 +61,10 @@ export function HostControlClient({
   publicId,
   hostToken,
   initialData,
+  accountLinkFailed = false,
 }: HostControlClientProps) {
   const router = useRouter();
+  const [showAccountLinkNotice, setShowAccountLinkNotice] = useState(accountLinkFailed);
   const [status, setStatus] = useState<SessionStatus>(initialData.session.status);
   const [guests, setGuests] = useState<HostGuestDTO[]>(initialData.guests);
   const [wines, setWines] = useState<HostBottleDTO[]>(initialData.wines);
@@ -92,6 +96,16 @@ export function HostControlClient({
   useEffect(() => {
     setJoinUrl(`${window.location.origin}/join/${publicId}`);
   }, [publicId]);
+
+  // Strip accountLinkFailed from the URL after reading it once, so a refresh
+  // or a shared link never repeats a one-time notice — see README
+  // "Account-linked tasting records". accountLinkFailed is only ever true on
+  // the very first render (it comes from a query param this same effect
+  // removes), so this intentionally behaves like a mount-only effect.
+  useEffect(() => {
+    if (!accountLinkFailed) return;
+    router.replace(`/host/${publicId}?token=${encodeURIComponent(hostToken)}`);
+  }, [accountLinkFailed, hostToken, publicId, router]);
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -391,6 +405,23 @@ export function HostControlClient({
         <ArchiveLink />
         <AccountNav />
       </div>
+
+      {showAccountLinkNotice && (
+        <p
+          role="status"
+          className="flex items-center justify-between gap-3 rounded-sm border border-cellar-gold/40 bg-cellar-gold/10 px-3 py-2 text-sm text-cellar-text/80"
+        >
+          <span>Your tasting was created, but it could not yet be added to your account record.</span>
+          <button
+            type="button"
+            onClick={() => setShowAccountLinkNotice(false)}
+            aria-label="Dismiss"
+            className="min-h-[44px] shrink-0 px-2 text-cellar-muted hover:text-cellar-text focus:outline-none focus-visible:ring-2 focus-visible:ring-cellar-gold"
+          >
+            Dismiss
+          </button>
+        </p>
+      )}
 
       <ImageBand image={hostControlImage} className="hidden h-36 rounded-sm sm:block" />
 

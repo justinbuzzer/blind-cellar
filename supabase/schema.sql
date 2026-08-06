@@ -2083,3 +2083,170 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- ---------------------------------------------------------------------------
+-- Account-linked tasting records — see README "Account-linked tasting
+-- records" and SUPABASE_SETUP.md "Migrating for account-linked tasting
+-- records".
+--
+-- A durable (user_id, session_id, role[, participant_id]) association,
+-- created only through the SECURITY DEFINER RPC below — never a bare client
+-- insert. This table records ONLY that a link exists; it never duplicates
+-- host/guest tokens, Auth tokens, OTP codes, or any tasting content (wines,
+-- guesses, ratings, results). It grants no new session privilege by itself —
+-- every existing host/guest-token authorization rule is completely
+-- unaffected; this table only makes a browser-linked association durable and
+-- discoverable from another device, exactly the same as the token already
+-- permitted on the browser where it was created.
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.account_tasting_records (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  session_id uuid not null references public.tasting_sessions(id) on delete cascade,
+  role text not null check (role in ('host', 'participant')),
+  -- MIGRATION-SENSITIVE DESIGN NOTE: the task's suggested schema used
+  -- `on delete set null` here, but that would let a guest-row deletion leave
+  -- a `role = 'participant'` row with a null participant_id, which the check
+  -- constraint below forbids — that combination would make the guest's
+  -- deletion itself fail inside the same transaction. `on delete cascade` is
+  -- used instead: if the specific participant record is ever gone, an
+  -- association to it is meaningless and should go with it. This app has no
+  -- guest-deletion feature today, so this is a forward-safety choice, not a
+  -- behavior change.
+  participant_id uuid references public.guests(id) on delete cascade,
+  claimed_at timestamptz not null default now(),
+  claim_source text not null check (claim_source in ('automatic', 'browser_claim')),
+  created_at timestamptz not null default now(),
+  constraint account_tasting_records_role_participant_shape check (
+    (role = 'host' and participant_id is null) or
+    (role = 'participant' and participant_id is not null)
+  )
+);
+
+-- "One host link per (user_id, session_id, role)" and "one participant link
+-- per (user_id, session_id, participant_id, role)" from the spec, expressed
+-- as partial unique indexes (role is constant within each, so it's the WHERE
+-- predicate rather than an indexed column) — these are also the exact
+-- ON CONFLICT targets the claim RPC below uses for idempotent inserts.
+create unique index if not exists account_tasting_records_host_uniq
+  on public.account_tasting_records (user_id, session_id)
+  where role = 'host';
+
+create unique index if not exists account_tasting_records_participant_uniq
+  on public.account_tasting_records (user_id, session_id, participant_id)
+  where role = 'participant';
+
+create index if not exists account_tasting_records_user_id_idx
+  on public.account_tasting_records (user_id);
+create index if not exists account_tasting_records_session_id_idx
+  on public.account_tasting_records (session_id);
+-- Archive retrieval order: tasting date lives on tasting_sessions, not here,
+-- so this index supports "this user's records, newest-created first" as the
+-- practical secondary sort the archive query itself performs after joining.
+create index if not exists account_tasting_records_user_created_idx
+  on public.account_tasting_records (user_id, created_at desc);
+
+alter table public.account_tasting_records enable row level security;
+
+drop policy if exists account_tasting_records_select_own on public.account_tasting_records;
+create policy account_tasting_records_select_own on public.account_tasting_records
+  for select using (auth.uid() = user_id);
+
+-- No insert/update/delete policy at all, on purpose: a client can read only
+-- its own rows, and can never write one directly, not even its own —
+-- writes only ever happen inside claim_account_tasting_record below, which
+-- re-validates the actual host/guest token (not just "some session id") no
+-- matter who calls it. This mirrors the profiles table's "no direct
+-- insert/delete" pattern above, extended here to also exclude update, since
+-- the spec requires every column to stay immutable once written.
+revoke all on public.account_tasting_records from anon, authenticated;
+grant select on public.account_tasting_records to authenticated;
+
+-- Links a signed-in user's account to a specific session, in a specific
+-- role, by validating the exact same host/guest credential every other RPC
+-- in this file already validates — SECURITY DEFINER only changes who can
+-- reach the base tables, never what's required to pass. Reachable directly
+-- via the anon key (like every RPC here), so it re-checks everything itself
+-- rather than trusting that some Route Handler already did — a signed-in
+-- user calling this with a session id they merely know, and no valid token
+-- for it, always fails.
+--
+-- p_claim_source distinguishes two product-level flows sharing one
+-- validation path:
+--   'automatic'     — called immediately after this same user creates or
+--                      joins a session while signed in (see README); the
+--                      session is typically still in registration/collecting
+--                      at that moment, so status is not restricted here.
+--   'browser_claim' — the explicit "Add to my tasting record" action for a
+--                      historic session; only allowed once status is
+--                      'revealed' (see README "Historic browser-linked
+--                      claims").
+-- Either way, what actually governs whether a link is later visible in
+-- "Your record" is the session's CURRENT status, re-checked at read time —
+-- so a claim_source value alone never grants early or extra visibility.
+create or replace function public.claim_account_tasting_record(
+  p_public_id uuid,
+  p_role text,
+  p_token text,
+  p_claim_source text
+) returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_session tasting_sessions%rowtype;
+  v_guest guests%rowtype;
+begin
+  if v_uid is null then
+    raise exception 'not_authenticated';
+  end if;
+  if p_role not in ('host', 'participant') then
+    raise exception 'invalid_role';
+  end if;
+  if p_claim_source not in ('automatic', 'browser_claim') then
+    raise exception 'invalid_claim_source';
+  end if;
+
+  select * into v_session from tasting_sessions where public_id = p_public_id;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+
+  if p_claim_source = 'browser_claim' and v_session.status <> 'revealed' then
+    raise exception 'session_not_revealed';
+  end if;
+
+  if p_role = 'host' then
+    if p_token is null or v_session.host_token_hash <> encode(digest(p_token, 'sha256'), 'hex') then
+      raise exception 'invalid_host_token';
+    end if;
+
+    insert into public.account_tasting_records (user_id, session_id, role, participant_id, claim_source)
+    values (v_uid, v_session.id, 'host', null, p_claim_source)
+    on conflict (user_id, session_id) where role = 'host' do nothing;
+  else
+    -- Scoped by session_id, not just guest_token: guest_token is unique
+    -- across the whole table, so without this a token that is valid for a
+    -- DIFFERENT session could otherwise resolve to a real guest row here and
+    -- (mis)link this session to that unrelated participant.
+    select * into v_guest from guests
+    where guest_token = p_token and session_id = v_session.id;
+    if not found then
+      raise exception 'invalid_guest_token';
+    end if;
+
+    insert into public.account_tasting_records (user_id, session_id, role, participant_id, claim_source)
+    values (v_uid, v_session.id, 'participant', v_guest.id, p_claim_source)
+    on conflict (user_id, session_id, participant_id) where role = 'participant' do nothing;
+  end if;
+end;
+$$;
+
+-- Authenticated-only: every other RPC in this file also accepts `anon`
+-- because guests/hosts never sign in to use them, but this one always
+-- requires auth.uid(), so granting it to anon would only ever raise
+-- not_authenticated — narrower on purpose.
+grant execute on function public.claim_account_tasting_record(uuid, text, text, text) to authenticated;

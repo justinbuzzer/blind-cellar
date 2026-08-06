@@ -204,7 +204,7 @@ In your Supabase project dashboard:
 
 ### 3. OTP vs. magic link
 
-This app implements **email OTP** (a 6-digit code, verified via `supabase.auth.verifyOtp({ email, token, type: "email" })`) as the primary and only flow, not a magic link. Reasons:
+This app implements **email OTP** (a numeric code — 6 digits by default, but the app accepts whatever length your project's Auth settings issue, up to 8 — verified via `supabase.auth.verifyOtp({ email, token, type: "email" })`) as the primary and only flow, not a magic link. Reasons:
 
 - OTP needs no callback route and no `emailRedirectTo`/Redirect URL configuration — the whole sign-in happens through two direct browser calls (`signInWithOtp`, then `verifyOtp`), which is simpler and has fewer places for a misconfigured redirect to go wrong.
 - A single page (`/account/sign-in`) can hold both steps (email, then code) with no server round trip beyond the two Supabase calls.
@@ -215,6 +215,54 @@ To add a magic-link fallback instead or in addition later:
 2. Add `/auth/callback` as a Route Handler that calls `supabase.auth.exchangeCodeForSession(code)` using a server-side Supabase client (cookie-writable — a Route Handler, not a Server Component), then redirects to a validated return path (`lib/authRedirects.ts` already has `resolveSafeReturnPath` for this).
 3. Add that exact callback URL to **Authentication → URL Configuration → Redirect URLs** in the dashboard.
 4. Keep using `resolveSafeReturnPath`/`isSafeReturnPath` for the post-sign-in destination either way — the open-redirect guard is independent of which Auth flow delivers the user back to the app.
+
+## Migrating for account-linked tasting records
+
+Builds on "Setting up Supabase Auth (accounts)" above — requires that section applied first. Re-running the full `supabase/schema.sql` brings an existing project up to date; every statement here is additive/idempotent.
+
+### 1. Run the SQL (in this order — already correct if you paste the whole file)
+
+1. **`public.account_tasting_records`** is created: `id`, `user_id` (→ `auth.users`, cascade delete), `session_id` (→ `tasting_sessions`, cascade delete), `role` (`'host'` or `'participant'`), `participant_id` (→ `guests`, cascade delete — see the note below on why this differs from the commonly-suggested `set null`), `claim_source` (`'automatic'` or `'browser_claim'`), `claimed_at`, `created_at`. A check constraint enforces the shape: a `'host'` row always has a null `participant_id`; a `'participant'` row always has a non-null one.
+2. **Two partial unique indexes** are created: `account_tasting_records_host_uniq` on `(user_id, session_id) where role = 'host'`, and `account_tasting_records_participant_uniq` on `(user_id, session_id, participant_id) where role = 'participant'` — these are what make every insert idempotent (see the RPC below). Plus plain indexes on `user_id`, `session_id`, and `(user_id, created_at desc)` for archive retrieval.
+3. **RLS is enabled**, with exactly one policy: `account_tasting_records_select_own`, `for select using (auth.uid() = user_id)`. There is no insert, update, or delete policy — see "RLS policy summary" below for why.
+4. **Grants**: `revoke all ... from anon, authenticated` followed by `grant select ... to authenticated` only. `anon` gets nothing at all on this table.
+5. **`claim_account_tasting_record(p_public_id uuid, p_role text, p_token text, p_claim_source text) returns void`** — `SECURITY DEFINER`, validates `auth.uid()` is present, validates `p_token` against the exact session (host: hash comparison against `host_token_hash`; participant: `guest_token` looked up *scoped to that session's id*, not just globally unique — this is what stops a valid token for a different session from being usable here), enforces `status = 'revealed'` only when `p_claim_source = 'browser_claim'`, then inserts with `on conflict ... do nothing` against the matching partial index.
+6. **Grant**: `grant execute on function public.claim_account_tasting_record(uuid, text, text, text) to authenticated` — deliberately **not** granted to `anon` (it always requires `auth.uid()`, so an anon call would only ever raise `not_authenticated`).
+
+### 2. Verification queries
+
+Run these in the SQL Editor after applying the migration:
+
+```sql
+-- Table and constraints exist
+select conname, contype from pg_constraint where conrelid = 'public.account_tasting_records'::regclass;
+
+-- Both partial unique indexes exist
+select indexname, indexdef from pg_indexes where tablename = 'account_tasting_records';
+
+-- RLS is on, and exactly one policy exists
+select relrowsecurity from pg_class where relname = 'account_tasting_records';
+select polname, polcmd from pg_policy where polrelid = 'public.account_tasting_records'::regclass;
+
+-- anon has no privileges at all on this table
+select grantee, privilege_type from information_schema.role_table_grants
+where table_name = 'account_tasting_records';
+```
+
+The last query should show only `authenticated` with `SELECT` (table-level) — no `anon` row, and no `INSERT`/`UPDATE`/`DELETE` for either role.
+
+### RLS policy summary
+
+| Role | Select own rows | Select others' rows | Insert | Update | Delete |
+|---|---|---|---|---|---|
+| `anon` | No (no grant at all) | No | No | No | No |
+| `authenticated` | Yes (`auth.uid() = user_id`) | No | No (no policy) | No (no policy) | No (no policy) |
+
+Writes only ever happen inside `claim_account_tasting_record`, which runs as the function owner (bypassing the missing insert policy by design) after validating the actual host/guest token — never through a direct client insert, no matter how privileged the caller's session looks. This is a deliberately narrower pattern than "authenticated users may insert their own rows," because a session id alone is public/guessable-adjacent (it's a UUID in a URL) — the token is the only thing that should ever be sufficient to create a link.
+
+### Why `participant_id` uses `on delete cascade`, not `on delete set null`
+
+A commonly-suggested version of this schema uses `on delete set null` for `participant_id`, matching how other "soft" foreign keys in this app behave. That doesn't work here: the check constraint requires every `role = 'participant'` row to have a non-null `participant_id`, so a `set null` cascade would leave a row that violates its own table's constraint — which fails the deleting transaction, effectively blocking the guest-row deletion entirely. `cascade` avoids that: if the specific participant record a claim points to is ever gone, the claim itself is meaningless and is removed with it. This app has no guest-deletion feature today, so this is a forward-safety choice, not a behavior change.
 
 ## Bottle numbering and concurrency
 
@@ -235,6 +283,7 @@ Every tasting workflow (hosting, joining, registering bottles, guessing, rating,
 - **Accounts and the `authenticated` role**: Supabase Auth (see "Setting up Supabase Auth (accounts)" above) is a wholly separate, optional identity layer — signing in never replaces a host/guest token check anywhere, and no tasting RPC gained an `auth.uid()` check. What *did* need attention: before Auth existed, no request could ever carry an `authenticated`-role JWT, so this file had only ever revoked and re-narrowed `anon`'s default privileges, never `authenticated`'s. A brand-new Supabase project grants both roles broad default privileges on every new table, so the moment real sign-in became possible, `authenticated` could have retained that untouched default access — including, in principle, `host_token_hash` and `guest_token`, which RLS's row-level `using (true)` policies do not hide (RLS filters rows, not columns; the column-level `grant select (…)` statements are what actually hide those two). The grants block now explicitly revokes-and-re-narrows `authenticated` exactly like `anon`, so a signed-in browser has exactly the same tasting-data access as an anonymous one — no more, no less. `public.profiles` (the one table an authenticated user *can* read/update) only ever holds `id`/`email`/`display_name`/timestamps — never a token, an OTP code, or any tasting data.
 - **Host-only mutations run through Next.js Route Handlers** (`app/api/host/*`), not directly from the browser — this includes tasting-order reordering (`app/api/host/reorder-bottles`) and the host page's own re-fetch of its anonymous bottle list after a realtime change (`app/api/host/session`, since `wineStyle`/`tastingOrder` aren't in the narrow anon column grant on `wines` and can only be read back through the host-token-gated `get_host_session` RPC). This keeps the raw host token out of client-side calls hitting Supabase's REST endpoint directly, though the real enforcement is still the Postgres function itself checking the token hash.
 - **The Tasting Archive (`/archive`, `app/api/archive/lookup`) introduces no new privilege at all** — it's a thin, bounded batch wrapper around `get_host_session`/`get_guest_session_state`, the same two token-validating RPCs the host control and guest tasting pages already call one at a time. It never accepts a bare session id with no token attached, never queries "every revealed session," and never returns a raw token in its response — only a minimized per-session summary (title, date, mode, counts, Wine of the Night, and the caller's own accuracy where applicable) for references the request already proved ownership of.
+- **Account-linked tasting records (`public.account_tasting_records`, `claim_account_tasting_record`) also introduce no new privilege** — see "Migrating for account-linked tasting records" above for the full schema. The short version: the only write path re-validates the exact same host/guest token every other RPC already does, `auth.uid()` (never a client-supplied user id) decides whose row gets written, and the table has no insert/update/delete policy for any role at all — a signed-in user who merely knows or guesses a session id, with no valid token for it, can never create a link. Reading is plain RLS (`auth.uid() = user_id`), so "Your record" needs no token round trip at all — ownership of the *row* is what's being checked there, not ownership of a token.
 - **Bug fixed in this revision**: the `guest_visible_wines` and `revealed_wine_guesses` views were previously declared with `security_invoker = true`. Combined with `wines`/`wine_guesses` having Row Level Security enabled but no SELECT policy for `anon`, that setting would have made these views return **zero rows for anon on a real Supabase project** — a security_invoker view evaluates RLS as the calling role, and anon was never granted any row-visibility on those tables directly. The fix is to not set `security_invoker` (the default, `false`, runs the view as its owner), so the view's own `CASE`/`WHERE` masking logic — not the caller's RLS — is what decides what anon sees. This was never caught before because the app had not yet been tested against a live Supabase project.
 
 ### Honest MVP limitations
@@ -245,8 +294,9 @@ Every tasting workflow (hosting, joining, registering bottles, guessing, rating,
 - **`display_name` uniqueness is only enforced per-session**, via a generated lower/trimmed column — it doesn't handle full Unicode normalization (accents, punctuation) the way `lib/normalize.ts`'s scoring comparisons do; "Alice" and "Álice" would currently be treated as different names.
 - **No migration framework.** `supabase/schema.sql` is a single hand-maintained file with inline "MIGRATION-SENSITIVE" comments rather than a sequence of versioned migration files. That's workable for one feature step; a project with more history would want real migrations.
 - **The Tasting Archive is pinned to one browser, with no server-side record of "this browser's archive."** It's reconstructed entirely from whichever host/guest tokens are still sitting in that browser's `localStorage`; clearing site data, switching devices, or using a different browser loses access to it, with no recovery path in this MVP (see README "Tasting archive"). There is also no rate limiting on `POST /api/archive/lookup` beyond the hard cap on how many references one request can contain — the same "no rate limiting" limitation above applies here too.
-- **Signing in does not migrate or attach any existing browser-linked tasting history to the account.** A signed-in user's `/archive` is still exactly the same browser-linked archive described above — accounts and the archive are two separate systems in this phase, only loosely connected by a status line ("Signed in as …") on the archive page. Linking them is tracked as a Phase 2 follow-up (see README "Recommended next features"), not implemented here.
-- **No delete-account flow in this phase.** `/account` offers sign-out but not account deletion. Since `profiles.id` references `auth.users(id) on delete cascade`, deleting a user from the Auth dashboard already cleanly removes their `profiles` row with no orphaned data — a self-service delete-account UI is a small, safe addition later, just out of scope for this pass; it was not omitted for any data-integrity reason.
+- **Signing in by itself still does not migrate anything.** What changed since the "Accounts" phase: a signed-in user can now explicitly add ("claim") an eligible historic browser-linked session to their account, and future sessions they host/join while signed in link automatically — see "Migrating for account-linked tasting records" above and README "Account-linked tasting records". What's still deliberately absent: nothing is migrated *silently* just because someone signs in, there's no "claim everything on this browser at once" bulk action, and a session can only ever be claimed from the exact browser that still holds its host/guest token — there is no recovery path for a browser-only session whose token is gone.
+- **No un-linking or account-merging in this phase.** Once a session is linked to an account (automatically or via claim), there's no UI to remove that association, and there's no way to merge two different signed-in identities' records together. Both are believed to be safe, additive follow-ups once there's a clear product need — see README "Recommended next features".
+- **No delete-account flow in this phase.** `/account` offers sign-out but not account deletion. Since `profiles.id` references `auth.users(id) on delete cascade`, deleting a user from the Auth dashboard already cleanly removes their `profiles` row (and, by the same cascade, their `account_tasting_records` rows) with no orphaned data — a self-service delete-account UI is a small, safe addition later, just out of scope for this pass; it was not omitted for any data-integrity reason.
 - **Account email delivery depends on Supabase's built-in email sending unless a custom SMTP provider is configured** (see "Setting up Supabase Auth (accounts)" above) — the built-in sender is rate-limited and intended for development, not production volume.
 
 If you need real accounts, audit logs, or token revocation later, that's a distinct follow-up step (see the README's "Recommended next features").

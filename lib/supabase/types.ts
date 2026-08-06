@@ -22,6 +22,15 @@ export interface GuestRow {
   completed_at: string | null;
 }
 
+/** A signed-in user's own row from account_tasting_records — RLS already scopes reads to auth.uid(), so no user_id column is needed client-side. See README "Account-linked tasting records". */
+export interface AccountTastingRecordRow {
+  session_id: string;
+  role: "host" | "participant";
+  participant_id: string | null;
+  claimed_at: string;
+  claim_source: "automatic" | "browser_claim";
+}
+
 /** Row from the anon-granted, non-sensitive columns of `wines` (used for live counts/labels). */
 export interface AnonymousWineRow {
   id: string;

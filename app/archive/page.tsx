@@ -15,13 +15,19 @@ import { useAuthUser } from "@/lib/supabase/useAuthUser";
 import { ArchiveTabs } from "@/components/archive/ArchiveTabs";
 import { ArchiveEntryRow } from "@/components/archive/ArchiveEntryRow";
 import { ArchiveSummaryBar } from "@/components/archive/ArchiveSummaryBar";
+import { ClaimPanel } from "@/components/archive/ClaimPanel";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { loadTastingReportData } from "@/lib/supabase/reportData";
 import {
+  AccountSessionSummary,
+  accountLinkedPublicIds,
   ArchiveEntry,
   ArchiveLookupRequestItem,
   ArchiveLookupResultItem,
   ArchiveTabId,
   buildArchiveSummary,
   defaultArchiveTab,
+  resolveAccountEntries,
   selectDisplayEntries,
   splitByRole,
   staleReferences,
@@ -32,23 +38,38 @@ import {
   listArchiveReferences,
   removeArchiveReference,
 } from "@/lib/deviceStorage";
+import { AccountTastingRecordRow } from "@/lib/supabase/types";
 
-type LoadState = "loading" | "unavailable" | "ready";
+type BrowserLoadState = "loading" | "unavailable" | "ready";
+type AccountLoadState = "idle" | "loading" | "unavailable" | "ready";
+type OuterTab = "account" | "browser";
 
 /**
- * The Tasting Archive (see README "Tasting archive") — a private, read-only
- * ledger of completed tastings this exact browser has a host or participant
- * token for. Nothing here is fetched from a global "all revealed sessions"
- * list; every entry comes back from POST /api/archive/lookup, which
- * re-validates each local reference's token server-side before returning
- * anything about it (see lib/archive.ts).
+ * The Tasting Archive (see README "Tasting archive" and "Account-linked
+ * tasting records"). Two independent sources feed this page:
+ *  - the browser archive (unchanged): re-validates each locally-held host/
+ *    guest token server-side via POST /api/archive/lookup.
+ *  - the account archive (new, signed-in only): reads account_tasting_records
+ *    directly — RLS already scopes it to the signed-in user, so no token
+ *    round trip is needed to prove ownership, only a revealed-status check
+ *    per linked session (see lib/archive.ts's resolveAccountEntries).
+ * Neither path can see the other's private data; the only thing that
+ * crosses between them is a publicId used to grey out an already-linked
+ * "This browser" entry's claim action.
  */
 export default function ArchivePage() {
-  const { user } = useAuthUser();
-  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const { user, loading: authLoading } = useAuthUser();
+
+  const [browserLoadState, setBrowserLoadState] = useState<BrowserLoadState>("loading");
   const [hostedEntries, setHostedEntries] = useState<ArchiveEntry[]>([]);
   const [joinedEntries, setJoinedEntries] = useState<ArchiveEntry[]>([]);
-  const [selectedTab, setSelectedTab] = useState<ArchiveTabId>("joined");
+  const [innerTab, setInnerTab] = useState<ArchiveTabId>("joined");
+
+  const [accountLoadState, setAccountLoadState] = useState<AccountLoadState>("idle");
+  const [accountEntries, setAccountEntries] = useState<ArchiveEntry[]>([]);
+
+  const [outerTab, setOuterTab] = useState<OuterTab>("account");
+  const [outerTabInitialized, setOuterTabInitialized] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -60,7 +81,7 @@ export default function ArchivePage() {
       }
 
       if (items.length === 0) {
-        setLoadState("ready");
+        setBrowserLoadState("ready");
         return;
       }
 
@@ -71,7 +92,7 @@ export default function ArchivePage() {
           body: JSON.stringify({ items }),
         });
         if (!response.ok) {
-          setLoadState("unavailable");
+          setBrowserLoadState("unavailable");
           return;
         }
 
@@ -84,19 +105,104 @@ export default function ArchivePage() {
         const { hosted, joined } = splitByRole(selectDisplayEntries(data.items));
         setHostedEntries(hosted);
         setJoinedEntries(joined);
-        setSelectedTab(defaultArchiveTab(hosted));
-        setLoadState("ready");
+        setInnerTab(defaultArchiveTab(hosted));
+        setBrowserLoadState("ready");
       } catch {
-        setLoadState("unavailable");
+        setBrowserLoadState("unavailable");
       }
     })();
   }, []);
 
-  if (loadState === "loading") {
+  useEffect(() => {
+    if (!user) {
+      setAccountLoadState("idle");
+      setAccountEntries([]);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      setAccountLoadState("loading");
+      const supabase = getSupabaseBrowserClient();
+      if (!supabase) {
+        if (!cancelled) setAccountLoadState("unavailable");
+        return;
+      }
+
+      const { data: records, error } = await supabase
+        .from("account_tasting_records")
+        .select("session_id, role, participant_id, claimed_at, claim_source");
+
+      if (error) {
+        if (!cancelled) setAccountLoadState("unavailable");
+        return;
+      }
+
+      const entries = await resolveAccountEntries((records ?? []) as AccountTastingRecordRow[], {
+        getSessionSummary: async (sessionId) => {
+          const { data: sessionRow } = await supabase
+            .from("tasting_sessions")
+            .select("id, public_id, title, tasting_date, status, tasting_mode, created_at")
+            .eq("id", sessionId)
+            .maybeSingle();
+          if (!sessionRow) return null;
+
+          const [{ count: bottleCount }, { count: participantCount }] = await Promise.all([
+            supabase
+              .from("wines")
+              .select("id", { count: "exact", head: true })
+              .eq("session_id", sessionId),
+            supabase
+              .from("guests")
+              .select("id", { count: "exact", head: true })
+              .eq("session_id", sessionId),
+          ]);
+
+          const summary: AccountSessionSummary = {
+            id: sessionRow.id,
+            publicId: sessionRow.public_id,
+            title: sessionRow.title,
+            tastingDate: sessionRow.tasting_date,
+            status: sessionRow.status,
+            tastingMode: sessionRow.tasting_mode,
+            createdAt: sessionRow.created_at,
+            bottleCount: bottleCount ?? 0,
+            participantCount: participantCount ?? 0,
+          };
+          return summary;
+        },
+        loadReport: (session) => loadTastingReportData(supabase, session),
+      });
+
+      if (!cancelled) {
+        setAccountEntries(entries);
+        setAccountLoadState("ready");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  // Lets "Back to your record" on the results page deep-link to the right
+  // outer tab — read once, after mount, matching this app's established
+  // manual-query-param pattern (avoids useSearchParams' Suspense
+  // requirement for what's otherwise a fully client-rendered page).
+  useEffect(() => {
+    if (outerTabInitialized) return;
+    const requested = new URLSearchParams(window.location.search).get("tab");
+    if (requested === "browser" || requested === "account") {
+      setOuterTab(requested);
+    }
+    setOuterTabInitialized(true);
+  }, [outerTabInitialized]);
+
+  if (browserLoadState === "loading" || authLoading) {
     return <LoadingState message="Gathering the evening's notes…" />;
   }
 
-  if (loadState === "unavailable") {
+  if (browserLoadState === "unavailable") {
     return (
       <UnavailableScreen
         title="The archive is unavailable"
@@ -105,8 +211,30 @@ export default function ArchivePage() {
     );
   }
 
-  const activeEntries = selectedTab === "hosted" ? hostedEntries : joinedEntries;
-  const summary = buildArchiveSummary(activeEntries);
+  const linkedPublicIds = accountLinkedPublicIds(accountEntries);
+  const activeInnerEntries = innerTab === "hosted" ? hostedEntries : joinedEntries;
+  const innerSummary = buildArchiveSummary(activeInnerEntries);
+  const accountSummary = buildArchiveSummary(accountEntries);
+
+  function claimActionFor(entry: ArchiveEntry) {
+    if (!user) return undefined;
+    if (linkedPublicIds.has(entry.publicId)) {
+      return <p className="text-xs text-cellar-muted">Already in your record</p>;
+    }
+    const token = entry.role === "host" ? getHostToken(entry.publicId) : getGuestToken(entry.publicId);
+    if (!token) return undefined;
+    return (
+      <div className="flex flex-col gap-2">
+        <p className="text-xs text-cellar-muted">Available on this browser only</p>
+        <ClaimPanel
+          publicId={entry.publicId}
+          role={entry.role}
+          token={token}
+          onClaimed={() => setAccountEntries((prev) => [...prev, entry])}
+        />
+      </div>
+    );
+  }
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-8 px-6 py-10">
@@ -127,63 +255,148 @@ export default function ArchivePage() {
           Your archive is available on this browser. Account-based access and
           cross-device history may be added later.
         </p>
-        {user && (
+        {user ? (
           <p className="mt-1 text-xs text-cellar-muted">
             Signed in as {user.email}. Browser-linked tasting records remain
             available on this device.
+          </p>
+        ) : (
+          <p className="mt-1 text-xs text-cellar-muted">
+            Sign in to keep future tasting records across devices.
           </p>
         )}
       </div>
 
       <ImageBand image={archiveImage} className="hidden h-36 rounded-sm sm:block" />
 
-      <ArchiveTabs
-        options={[
-          { id: "hosted", label: "Hosted by you", count: hostedEntries.length },
-          { id: "joined", label: "Joined by you", count: joinedEntries.length },
-        ]}
-        selected={selectedTab}
-        onChange={setSelectedTab}
-      />
+      {user && (
+        <ArchiveTabs
+          idPrefix="record"
+          label="Your tasting records"
+          options={[
+            { id: "account", label: "Your record" },
+            { id: "browser", label: "This browser" },
+          ]}
+          selected={outerTab}
+          onChange={setOuterTab}
+        />
+      )}
 
-      <div
-        role="tabpanel"
-        id={`archive-panel-${selectedTab}`}
-        aria-labelledby={`archive-tab-${selectedTab}`}
-        className="flex flex-col gap-6"
-      >
-        {activeEntries.length > 0 && <ArchiveSummaryBar summary={summary} />}
+      {(!user || outerTab === "browser") && (
+        <div
+          role={user ? "tabpanel" : undefined}
+          id={user ? "record-panel-browser" : undefined}
+          aria-labelledby={user ? "record-tab-browser" : undefined}
+          className="flex flex-col gap-6"
+        >
+          <ArchiveTabs
+            idPrefix="archive"
+            options={[
+              { id: "hosted", label: "Hosted by you", count: hostedEntries.length },
+              { id: "joined", label: "Joined by you", count: joinedEntries.length },
+            ]}
+            selected={innerTab}
+            onChange={setInnerTab}
+          />
 
-        {activeEntries.length === 0 ? (
-          selectedTab === "hosted" ? (
-            <EmptyState
-              title="No hosted tastings here yet."
-              message="Create a private tasting, gather your table, and the finished report will be kept here on this browser."
-              action={
-                <Link href="/host/new">
-                  <Button>Host a tasting</Button>
-                </Link>
-              }
-            />
-          ) : (
-            <EmptyState
-              title="No joined tastings here yet."
-              message="Join a tasting with your host's private code. Once the tasting is complete, its report will appear here on this browser."
-              action={
-                <Link href="/join">
-                  <Button>Join a tasting</Button>
-                </Link>
-              }
-            />
-          )
-        ) : (
-          <ul className="divide-y divide-cellar-border">
-            {activeEntries.map((entry) => (
-              <ArchiveEntryRow key={`${entry.role}-${entry.publicId}`} entry={entry} />
-            ))}
-          </ul>
-        )}
-      </div>
+          <div
+            role="tabpanel"
+            id={`archive-panel-${innerTab}`}
+            aria-labelledby={`archive-tab-${innerTab}`}
+            className="flex flex-col gap-6"
+          >
+            {activeInnerEntries.length > 0 && <ArchiveSummaryBar summary={innerSummary} />}
+
+            {activeInnerEntries.length === 0 ? (
+              innerTab === "hosted" ? (
+                <EmptyState
+                  title="No hosted tastings here yet."
+                  message="Create a private tasting, gather your table, and the finished report will be kept here on this browser."
+                  action={
+                    <Link href="/host/new">
+                      <Button>Host a tasting</Button>
+                    </Link>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  title="No joined tastings here yet."
+                  message="Join a tasting with your host's private code. Once the tasting is complete, its report will appear here on this browser."
+                  action={
+                    <Link href="/join">
+                      <Button>Join a tasting</Button>
+                    </Link>
+                  }
+                />
+              )
+            ) : (
+              <ul className="divide-y divide-cellar-border">
+                {activeInnerEntries.map((entry) => (
+                  <ArchiveEntryRow
+                    key={`${entry.role}-${entry.publicId}`}
+                    entry={entry}
+                    reportContext="archive"
+                    action={claimActionFor(entry)}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
+      {user && outerTab === "account" && (
+        <div
+          role="tabpanel"
+          id="record-panel-account"
+          aria-labelledby="record-tab-account"
+          className="flex flex-col gap-6"
+        >
+          {accountLoadState === "loading" && (
+            <p className="text-sm text-cellar-muted">Gathering your record…</p>
+          )}
+          {accountLoadState === "unavailable" && (
+            <p className="text-sm text-cellar-muted">
+              We couldn&rsquo;t reach your account record just now. Please try again shortly.
+            </p>
+          )}
+          {accountLoadState === "ready" && (
+            <>
+              {accountEntries.length > 0 && <ArchiveSummaryBar summary={accountSummary} />}
+              {accountEntries.length === 0 ? (
+                <EmptyState
+                  title="Your record is waiting."
+                  message="Future tastings you host or join while signed in will appear here. You can also add eligible completed tastings from the browser where you joined them."
+                  action={
+                    <div className="flex flex-col items-center gap-2">
+                      <Link href="/">
+                        <Button>Return home</Button>
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => setOuterTab("browser")}
+                        className="min-h-[44px] text-sm font-medium text-cellar-maroon underline-offset-4 hover:text-cellar-maroon-dark hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cellar-gold"
+                      >
+                        View this browser&rsquo;s archive
+                      </button>
+                    </div>
+                  }
+                />
+              ) : (
+                <ul className="divide-y divide-cellar-border">
+                  {accountEntries.map((entry) => (
+                    <ArchiveEntryRow
+                      key={`${entry.role}-${entry.publicId}`}
+                      entry={entry}
+                      reportContext="account"
+                    />
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </main>
   );
 }

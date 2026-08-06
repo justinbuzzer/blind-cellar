@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  AccountArchiveResolutionDeps,
+  AccountSessionSummary,
+  accountLinkedPublicIds,
   ArchiveEntry,
   ArchiveLookupResultItem,
   ArchiveResolutionDeps,
@@ -7,12 +10,18 @@ import {
   defaultArchiveTab,
   MAX_ARCHIVE_LOOKUP_ITEMS,
   parseArchiveLookupRequest,
+  parseClaimRequest,
+  resolveAccountEntries,
   resolveArchiveEntries,
   selectDisplayEntries,
   splitByRole,
   staleReferences,
 } from "@/lib/archive";
-import { GuestSessionStateResponse, HostSessionResponse } from "@/lib/supabase/types";
+import {
+  AccountTastingRecordRow,
+  GuestSessionStateResponse,
+  HostSessionResponse,
+} from "@/lib/supabase/types";
 import { ReportData } from "@/lib/supabase/reportData";
 import { TastingReport, WineAnswerKey } from "@/types/tasting";
 
@@ -454,5 +463,242 @@ describe("parseArchiveLookupRequest", () => {
 
   it("rejects a body whose items field isn't an array", () => {
     expect(parseArchiveLookupRequest({ items: "pub-1" })).toBeNull();
+  });
+});
+
+function accountRecord(
+  overrides: Partial<AccountTastingRecordRow> = {}
+): AccountTastingRecordRow {
+  return {
+    session_id: "internal-1",
+    role: "host",
+    participant_id: null,
+    claimed_at: "2026-08-14T20:10:00.000Z",
+    claim_source: "automatic",
+    ...overrides,
+  };
+}
+
+function sessionSummary(overrides: Partial<AccountSessionSummary> = {}): AccountSessionSummary {
+  return {
+    id: "internal-1",
+    publicId: "pub-1",
+    title: "Burgundy Villages at the Table",
+    tastingDate: "2026-08-14",
+    status: "revealed",
+    tastingMode: "full_blind",
+    createdAt: "2026-08-01T10:00:00.000Z",
+    bottleCount: 2,
+    participantCount: 2,
+    ...overrides,
+  };
+}
+
+function accountDepsWith(
+  overrides: Partial<AccountArchiveResolutionDeps> = {}
+): AccountArchiveResolutionDeps {
+  return {
+    getSessionSummary: async () => sessionSummary(),
+    loadReport: async () => standardReport(),
+    ...overrides,
+  };
+}
+
+describe("resolveAccountEntries", () => {
+  it("builds an entry for a revealed linked session", async () => {
+    const deps = accountDepsWith({
+      loadReport: async () =>
+        standardReport({
+          wineOfTheNight: [
+            { wine: wine(), averageRating: 94, numRatings: 3, lowestRating: 90, highestRating: 97, ratingSpread: 7, guesses: [], topTasters: [] },
+          ],
+        }),
+    });
+    const [entry] = await resolveAccountEntries([accountRecord()], deps);
+    expect(entry.role).toBe("host");
+    expect(entry.title).toBe("Burgundy Villages at the Table");
+    expect(entry.wineOfTheNight?.bottleLabel).toBe("Bottle 4");
+  });
+
+  it("excludes a linked session that no longer exists", async () => {
+    const deps = accountDepsWith({ getSessionSummary: async () => null });
+    const entries = await resolveAccountEntries([accountRecord()], deps);
+    expect(entries).toHaveLength(0);
+  });
+
+  it("excludes a linked session that is not currently revealed", async () => {
+    const deps = accountDepsWith({
+      getSessionSummary: async () => sessionSummary({ status: "collecting" }),
+    });
+    const entries = await resolveAccountEntries([accountRecord()], deps);
+    expect(entries).toHaveLength(0);
+  });
+
+  it("never computes accuracy for a host-role record", async () => {
+    const deps = accountDepsWith({
+      loadReport: async () =>
+        standardReport({
+          tasterResults: [
+            {
+              guestId: "guest-host",
+              guestName: "Alice",
+              rank: 1,
+              totalPoints: 300,
+              totalPossible: 360,
+              corePoints: 250,
+              corePossible: 300,
+              bonusPoints: 50,
+              bonusPossible: 60,
+              overallAccuracyPercent: 83.3,
+              coreAccuracyPercent: 83.3,
+              exactCoreMatches: 10,
+              averageRatingGiven: 90,
+            },
+          ],
+        }),
+    });
+    const [entry] = await resolveAccountEntries(
+      [accountRecord({ role: "host", participant_id: null })],
+      deps
+    );
+    expect(entry.accuracyPercent).toBeNull();
+  });
+
+  it("computes accuracy for a participant-role record from its own participant_id", async () => {
+    const deps = accountDepsWith({
+      loadReport: async () =>
+        standardReport({
+          tasterResults: [
+            {
+              guestId: "guest-2",
+              guestName: "Ben",
+              rank: 2,
+              totalPoints: 250,
+              totalPossible: 360,
+              corePoints: 200,
+              corePossible: 300,
+              bonusPoints: 50,
+              bonusPossible: 60,
+              overallAccuracyPercent: 69.4,
+              coreAccuracyPercent: 66.7,
+              exactCoreMatches: 7,
+              averageRatingGiven: 88,
+            },
+          ],
+        }),
+    });
+    const [entry] = await resolveAccountEntries(
+      [accountRecord({ role: "participant", participant_id: "guest-2" })],
+      deps
+    );
+    expect(entry.accuracyPercent).toBe(69.4);
+  });
+
+  it("dedupes a session linked as both host and participant, preferring host", async () => {
+    const deps = accountDepsWith();
+    const entries = await resolveAccountEntries(
+      [
+        accountRecord({ role: "participant", participant_id: "guest-2" }),
+        accountRecord({ role: "host", participant_id: null }),
+      ],
+      deps
+    );
+    expect(entries).toHaveLength(1);
+    expect(entries[0].role).toBe("host");
+  });
+
+  it("sorts by tasting date descending, falling back to createdAt", async () => {
+    const summaries: Record<string, AccountSessionSummary> = {
+      "session-a": sessionSummary({ id: "session-a", publicId: "pub-a", tastingDate: "2026-01-01", createdAt: "2026-01-01T00:00:00.000Z" }),
+      "session-b": sessionSummary({ id: "session-b", publicId: "pub-b", tastingDate: "2026-06-01", createdAt: "2026-06-01T00:00:00.000Z" }),
+    };
+    const deps = accountDepsWith({
+      getSessionSummary: async (sessionId) => summaries[sessionId] ?? null,
+    });
+    const entries = await resolveAccountEntries(
+      [
+        accountRecord({ session_id: "session-a" }),
+        accountRecord({ session_id: "session-b" }),
+      ],
+      deps
+    );
+    expect(entries.map((e) => e.publicId)).toEqual(["pub-b", "pub-a"]);
+  });
+
+  it("resolves one missing session without affecting the others", async () => {
+    const summaries: Record<string, AccountSessionSummary> = {
+      "session-good": sessionSummary({ id: "session-good", publicId: "pub-good" }),
+    };
+    const deps = accountDepsWith({
+      getSessionSummary: async (sessionId) => summaries[sessionId] ?? null,
+    });
+    const entries = await resolveAccountEntries(
+      [accountRecord({ session_id: "session-good" }), accountRecord({ session_id: "session-missing" })],
+      deps
+    );
+    expect(entries.map((e) => e.publicId)).toEqual(["pub-good"]);
+  });
+});
+
+describe("accountLinkedPublicIds", () => {
+  it("returns the set of publicIds already present in the account archive", () => {
+    const entry: ArchiveEntry = {
+      publicId: "pub-1",
+      role: "host",
+      title: "t",
+      tastingDate: "2026-01-01",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      tastingMode: "full_blind",
+      bottleCount: 1,
+      participantCount: 1,
+      wineOfTheNight: null,
+      accuracyPercent: null,
+    };
+    const linked = accountLinkedPublicIds([entry]);
+    expect(linked.has("pub-1")).toBe(true);
+    expect(linked.has("pub-2")).toBe(false);
+  });
+});
+
+describe("parseClaimRequest", () => {
+  it("accepts a well-formed claim request", () => {
+    expect(
+      parseClaimRequest({ publicId: "pub-1", role: "host", token: "abc", claimSource: "browser_claim" })
+    ).toEqual({ publicId: "pub-1", role: "host", token: "abc", claimSource: "browser_claim" });
+  });
+
+  it("accepts claimSource automatic", () => {
+    expect(
+      parseClaimRequest({ publicId: "pub-1", role: "participant", token: "abc", claimSource: "automatic" })
+    ).not.toBeNull();
+  });
+
+  it("rejects an invalid role", () => {
+    expect(
+      parseClaimRequest({ publicId: "pub-1", role: "admin", token: "abc", claimSource: "automatic" })
+    ).toBeNull();
+  });
+
+  it("rejects an invalid claimSource", () => {
+    expect(
+      parseClaimRequest({ publicId: "pub-1", role: "host", token: "abc", claimSource: "manual" })
+    ).toBeNull();
+  });
+
+  it("rejects a missing token", () => {
+    expect(
+      parseClaimRequest({ publicId: "pub-1", role: "host", claimSource: "automatic" })
+    ).toBeNull();
+  });
+
+  it("rejects a missing publicId", () => {
+    expect(
+      parseClaimRequest({ role: "host", token: "abc", claimSource: "automatic" })
+    ).toBeNull();
+  });
+
+  it("rejects a non-object body", () => {
+    expect(parseClaimRequest("nope")).toBeNull();
+    expect(parseClaimRequest(null)).toBeNull();
   });
 });

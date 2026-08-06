@@ -1,3 +1,4 @@
+import { ReactNode } from "react";
 import Link from "next/link";
 import { ArchiveEntry } from "@/lib/archive";
 import { StatusChip } from "@/components/StatusChip";
@@ -5,6 +6,10 @@ import { TASTING_MODE_LABELS } from "@/types/tasting";
 
 interface ArchiveEntryRowProps {
   entry: ArchiveEntry;
+  /** Which "Back to …" context View report should carry — see the FROM THE ARCHIVE / FROM YOUR RECORD banners on /results. */
+  reportContext?: "archive" | "account";
+  /** Optional trailing content — a claim affordance or an "Available on this browser only" label (see README "Account-linked tasting records"). */
+  action?: ReactNode;
 }
 
 function formatTastingDate(isoDate: string): string {
@@ -20,9 +25,12 @@ function formatTastingDate(isoDate: string): string {
  * archive") — plain editorial rows separated by fine dividers, not catalogue
  * cards. Wine of the Night is never fabricated: when the resolved report had
  * no eligible ratings, entry.wineOfTheNight is null and this shows the exact
- * required "No group rating recorded" copy instead.
+ * required "No group rating recorded" copy instead. Shared unchanged by both
+ * the browser archive and the account archive (see lib/archive.ts) — they
+ * produce the same ArchiveEntry shape, so this row never needs to know which
+ * one it's rendering.
  */
-export function ArchiveEntryRow({ entry }: ArchiveEntryRowProps) {
+export function ArchiveEntryRow({ entry, reportContext = "archive", action }: ArchiveEntryRowProps) {
   return (
     <li className="flex flex-col gap-3 py-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -58,11 +66,13 @@ export function ArchiveEntryRow({ entry }: ArchiveEntryRowProps) {
       </div>
 
       <Link
-        href={`/results/${entry.publicId}?from=archive`}
+        href={`/results/${entry.publicId}?from=${reportContext}`}
         className="inline-flex min-h-[44px] w-fit items-center gap-1.5 text-sm font-medium text-cellar-maroon underline-offset-4 transition-colors hover:text-cellar-maroon-dark hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cellar-gold"
       >
         View report <span aria-hidden="true">→</span>
       </Link>
+
+      {action}
     </li>
   );
 }
