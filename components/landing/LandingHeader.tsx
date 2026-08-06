@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { ArchiveLink } from "@/components/navigation/ArchiveLink";
+import { AccountNav } from "@/components/navigation/AccountNav";
 
 /**
  * Sits over HeroSection's background image (rendered as the first child
@@ -18,7 +20,7 @@ export function LandingHeader() {
         </p>
       </div>
 
-      <nav aria-label="Primary" className="flex items-center gap-6">
+      <nav aria-label="Primary" className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2">
         <a
           href="#how-it-works"
           className="hidden text-sm text-landing-parchment/85 underline-offset-4 transition-colors hover:text-landing-parchment hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-landing-gold sm:inline-block"
@@ -31,6 +33,8 @@ export function LandingHeader() {
         >
           Tasting formats
         </a>
+        <ArchiveLink tone="light" />
+        <AccountNav tone="light" />
         <Link
           href="/host/new"
           className="inline-flex min-h-[44px] items-center border border-landing-parchment/60 px-4 text-sm font-medium text-landing-parchment transition-colors hover:border-landing-parchment hover:bg-landing-parchment/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-landing-gold"

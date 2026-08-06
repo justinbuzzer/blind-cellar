@@ -9,6 +9,7 @@ import { LoadingState } from "@/components/LoadingState";
 import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
+import { ArchiveLink } from "@/components/navigation/ArchiveLink";
 import { SeenBottleCard } from "@/components/seen/SeenBottleCard";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { getSeenTastingState } from "@/lib/supabase/guestActions";
@@ -153,6 +154,7 @@ export default function SeenTastingListPage() {
       <div className="flex items-center gap-2">
         <HomeLink />
         <HostControlsLink sessionPublicId={params.publicId} />
+        <ArchiveLink />
       </div>
 
       <PageHeader

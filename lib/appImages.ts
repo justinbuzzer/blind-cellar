@@ -48,3 +48,17 @@ export const resultsImage: AppImageSlot = {
   alt: "An evening tasting table after the wines have been poured",
   placeholder: true,
 };
+
+/** Tasting archive header/empty state — a quiet cellar shelf, never a specific bottle. */
+export const archiveImage: AppImageSlot = {
+  src: null,
+  alt: "Rows of resting bottles in a quiet private cellar",
+  placeholder: true,
+};
+
+/** Sign-in page, desktop-only strip above the form — never behind the email/code inputs. */
+export const signInImage: AppImageSlot = {
+  src: null,
+  alt: "A private tasting ledger resting on a cellar table",
+  placeholder: true,
+};

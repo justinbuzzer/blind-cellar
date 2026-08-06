@@ -168,6 +168,11 @@ export interface GuestSessionStateResponse {
     tastingDate: string;
     status: SessionStatus;
     tastingMode: TastingMode;
+    /** Internal session id — needed to query the post-reveal report views (see lib/supabase/reportData.ts). */
+    id: string;
+    createdAt: string;
+    /** Total guests in the session — mirrors HostSessionResponse.guests.length without exposing the guest list itself. */
+    participantCount: number;
   };
   wines: GuestSessionWineDTO[];
   guesses: GuestGuessDTO[];

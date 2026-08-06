@@ -1275,7 +1275,15 @@ begin
       'title', v_session.title,
       'tastingDate', v_session.tasting_date,
       'status', v_session.status,
-      'tastingMode', v_session.tasting_mode
+      'tastingMode', v_session.tasting_mode,
+      -- Additive fields for the Tasting Archive (see README "Tasting
+      -- archive"): id/createdAt let the archive sort/query this session the
+      -- same way get_host_session's response already does, and
+      -- participantCount mirrors get_host_session's guests.length without
+      -- exposing the guest list itself to a participant.
+      'id', v_session.id,
+      'createdAt', v_session.created_at,
+      'participantCount', (select count(*) from guests where session_id = v_session.id)
     ),
     'wines', coalesce((
       select jsonb_agg(jsonb_build_object(
@@ -1874,56 +1882,71 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- Grants. anon gets EXECUTE on the RPC functions and SELECT on the views,
--- plus narrow column-level SELECT on three "safe" base tables (needed so
--- Realtime postgres_changes has something non-sensitive to broadcast).
--- Nothing else is granted — no anon INSERT/UPDATE/DELETE anywhere, and no
--- anon SELECT at all on `wine_guesses`, and no anon SELECT on any
+-- Grants. anon and authenticated get EXECUTE on the RPC functions and SELECT
+-- on the views, plus narrow column-level SELECT on three "safe" base tables
+-- (needed so Realtime postgres_changes has something non-sensitive to
+-- broadcast). Nothing else is granted — no INSERT/UPDATE/DELETE anywhere for
+-- either role, and no SELECT at all on `wine_guesses`, and no SELECT on any
 -- answer-key column of `wines`.
+--
+-- MIGRATION-SENSITIVE / SECURITY-SENSITIVE: `authenticated` is included in
+-- every grant below (added alongside Supabase Auth — see README "Accounts").
+-- Before Auth existed, no request could ever carry an `authenticated` role
+-- JWT, so it was never revoked here. A brand-new Supabase project grants
+-- broad default privileges to BOTH `anon` and `authenticated` on every new
+-- table — this file has always revoked and re-narrowed those for `anon`, but
+-- never had a reason to touch `authenticated` until now. The `revoke all ...
+-- from authenticated` statements below close that latent gap *before* any
+-- signed-in session can exist, so a signed-in user's browser can do exactly
+-- what an anonymous one already could here — nothing broader (e.g. it still
+-- cannot read `host_token_hash` or `guest_token`), and nothing narrower (a
+-- signed-in user must be able to join/host/guess exactly like before).
+-- Sign-in never replaces host/guest token checks — those RPCs still validate
+-- the token argument themselves regardless of which role called them.
 -- ---------------------------------------------------------------------------
 
-revoke all on tasting_sessions from anon;
-revoke all on wines from anon;
-revoke all on guests from anon;
-revoke all on wine_guesses from anon;
+revoke all on tasting_sessions from anon, authenticated;
+revoke all on wines from anon, authenticated;
+revoke all on guests from anon, authenticated;
+revoke all on wine_guesses from anon, authenticated;
 
 grant select (id, public_id, join_code, title, tasting_date, status, created_at, updated_at, tasting_mode)
-  on tasting_sessions to anon;
+  on tasting_sessions to anon, authenticated;
 
 grant select (id, session_id, display_name, created_at, completed_at)
-  on guests to anon;
+  on guests to anon, authenticated;
 
 -- Deliberately excludes contributor_guest_id and every answer-key column —
--- those only ever reach anon through guest_visible_wines (reveal-gated) or
--- the RPC functions above (ownership-checked).
+-- those only ever reach anon/authenticated through guest_visible_wines
+-- (reveal-gated) or the RPC functions above (ownership-checked).
 grant select (id, session_id, bottle_number, anonymous_code, created_at)
-  on wines to anon;
+  on wines to anon, authenticated;
 
-grant select on guest_visible_wines to anon;
-grant select on revealed_wine_guesses to anon;
+grant select on guest_visible_wines to anon, authenticated;
+grant select on revealed_wine_guesses to anon, authenticated;
 
-grant execute on function create_tasting_session(text, date, text, text, text, text) to anon;
-grant execute on function get_host_session(uuid, text) to anon;
-grant execute on function start_tasting_session(uuid, text) to anon;
-grant execute on function reveal_tasting_session(uuid, text) to anon;
-grant execute on function reveal_bottle(uuid, text, uuid) to anon;
-grant execute on function join_tasting_session(uuid, text) to anon;
-grant execute on function get_registration_state(text) to anon;
-grant execute on function register_bottle(text, text, text, text, text, text, text, text, text, text, jsonb) to anon;
-grant execute on function update_bottle(text, uuid, text, text, text, text, text, text, text, text, text, jsonb) to anon;
-grant execute on function delete_bottle(text, uuid) to anon;
-grant execute on function reorder_wines(uuid, text, uuid[]) to anon;
-grant execute on function get_guest_session_state(text) to anon;
-grant execute on function upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text, jsonb) to anon;
-grant execute on function get_active_bottle_state(text) to anon;
-grant execute on function lock_wine_guess(text, uuid) to anon;
-grant execute on function get_revealed_bottle(text, uuid) to anon;
+grant execute on function create_tasting_session(text, date, text, text, text, text) to anon, authenticated;
+grant execute on function get_host_session(uuid, text) to anon, authenticated;
+grant execute on function start_tasting_session(uuid, text) to anon, authenticated;
+grant execute on function reveal_tasting_session(uuid, text) to anon, authenticated;
+grant execute on function reveal_bottle(uuid, text, uuid) to anon, authenticated;
+grant execute on function join_tasting_session(uuid, text) to anon, authenticated;
+grant execute on function get_registration_state(text) to anon, authenticated;
+grant execute on function register_bottle(text, text, text, text, text, text, text, text, text, text, jsonb) to anon, authenticated;
+grant execute on function update_bottle(text, uuid, text, text, text, text, text, text, text, text, text, jsonb) to anon, authenticated;
+grant execute on function delete_bottle(text, uuid) to anon, authenticated;
+grant execute on function reorder_wines(uuid, text, uuid[]) to anon, authenticated;
+grant execute on function get_guest_session_state(text) to anon, authenticated;
+grant execute on function upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text, jsonb) to anon, authenticated;
+grant execute on function get_active_bottle_state(text) to anon, authenticated;
+grant execute on function lock_wine_guess(text, uuid) to anon, authenticated;
+grant execute on function get_revealed_bottle(text, uuid) to anon, authenticated;
 
-grant execute on function get_seen_tasting_state(text) to anon;
-grant execute on function upsert_seen_rating(text, uuid, int, text, text) to anon;
-grant execute on function end_seen_tasting(uuid, text) to anon;
+grant execute on function get_seen_tasting_state(text) to anon, authenticated;
+grant execute on function upsert_seen_rating(text, uuid, int, text, text) to anon, authenticated;
+grant execute on function end_seen_tasting(uuid, text) to anon, authenticated;
 
-grant execute on function complete_guest_submission(text) to anon;
+grant execute on function complete_guest_submission(text) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Realtime: broadcast changes on the three safe tables so host/participant
@@ -1954,3 +1977,109 @@ begin
     alter publication supabase_realtime add table wines;
   end if;
 end $$;
+
+-- ---------------------------------------------------------------------------
+-- Accounts (Supabase Auth) — see README "Accounts" and SUPABASE_SETUP.md
+-- "Setting up Supabase Auth (accounts)".
+--
+-- This is an OPTIONAL, wholly separate identity layer bolted alongside the
+-- existing host-token/guest-token model, not a replacement for it: nothing
+-- above this line changes, no `auth.uid()` check is added to any tasting
+-- RPC, and no `wines`/`tasting_sessions`/`guests`/`wine_guesses` row is ever
+-- linked to `auth.users`. A `profiles` row records only that someone signed
+-- in with an email — never a host token, guest token, OTP code, or any
+-- tasting data.
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  email text,
+  -- Intentionally optional and separate from the per-tasting display name a
+  -- guest types when joining a session (guests.display_name) — see README.
+  display_name text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.profiles enable row level security;
+
+drop policy if exists profiles_select_own on public.profiles;
+create policy profiles_select_own on public.profiles
+  for select using (auth.uid() = id);
+
+drop policy if exists profiles_update_own on public.profiles;
+create policy profiles_update_own on public.profiles
+  for update using (auth.uid() = id) with check (auth.uid() = id);
+
+-- No insert/delete policy at all: the only way a row is ever created is the
+-- SECURITY DEFINER trigger below, which bypasses RLS/grants by running as
+-- the function owner — a client can never insert or delete a profiles row
+-- directly, including its own.
+revoke all on public.profiles from anon, authenticated;
+grant select on public.profiles to authenticated;
+-- Column-level grant: a signed-in user may rename themselves, but never
+-- hand-edit their own email/created_at/updated_at via a raw client update.
+grant update (display_name) on public.profiles to authenticated;
+
+-- Server-side sanitation for display_name (required regardless of what the
+-- client sends, since profiles.display_name is reachable via a direct
+-- client-side `update`, not just through app code): trims whitespace and
+-- turns an empty/whitespace-only value into NULL, mirroring how
+-- `guests.display_name` is already validated elsewhere in this file. Not
+-- SECURITY DEFINER — it only transforms the row already being written by
+-- whatever role owns this UPDATE, no elevated privilege needed.
+create or replace function public.normalize_profile_display_name()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.display_name is not null then
+    new.display_name := nullif(btrim(new.display_name), '');
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists normalize_profiles_display_name on public.profiles;
+create trigger normalize_profiles_display_name
+before insert or update on public.profiles
+for each row execute function public.normalize_profile_display_name();
+
+alter table public.profiles
+  drop constraint if exists profiles_display_name_length;
+alter table public.profiles
+  add constraint profiles_display_name_length check (display_name is null or char_length(display_name) <= 60);
+
+drop trigger if exists set_profiles_updated_at on public.profiles;
+create trigger set_profiles_updated_at
+before update on public.profiles
+for each row execute function set_updated_at();
+
+-- Auto-creates a minimal profile the moment someone completes email sign-in
+-- for the first time (their first OTP verification also creates their
+-- auth.users row — see README "Accounts"). SECURITY DEFINER because the
+-- role that performs this insert (Supabase's internal auth service) has no
+-- grant on public.profiles otherwise; runs as this function's owner instead.
+-- `on conflict do nothing` makes it safe to re-run and idempotent if this
+-- trigger is ever fired more than once for the same user id. A missing or
+-- null email on the auth.users row (should not normally happen for email
+-- OTP) is stored as-is rather than raising — a non-critical metadata gap
+-- must never block sign-in.
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  insert into public.profiles (id, email)
+  values (new.id, new.email)
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();

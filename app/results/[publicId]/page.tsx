@@ -2,105 +2,55 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/Button";
 import { PageHeader } from "@/components/PageHeader";
 import { LoadingState } from "@/components/LoadingState";
 import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { HomeLink } from "@/components/navigation/HomeLink";
+import { ArchiveLink } from "@/components/navigation/ArchiveLink";
+import { AccountNav } from "@/components/navigation/AccountNav";
 import { TastingReportView } from "@/components/report/TastingReportView";
 import { SeenTastingReportView } from "@/components/report/SeenTastingReportView";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import {
-  buildCourseRevealSubmissions,
-  buildRevealedSubmissions,
-  mapRevealedWineRowToAnswerKey,
-} from "@/lib/supabase/mappers";
-import { buildSeenTastingReport, SeenRatingRow } from "@/lib/seenResults";
+import { loadTastingReportData } from "@/lib/supabase/reportData";
+import { useAuthUser } from "@/lib/supabase/useAuthUser";
 import { SessionRow } from "@/lib/supabase/types";
-import { buildTastingReport } from "@/lib/results";
-import {
-  SeenTastingReport,
-  TASTING_MODE_LABELS,
-  TastingReport,
-  TastingSession,
-} from "@/types/tasting";
+import { SeenTastingReport, TASTING_MODE_LABELS, TastingReport } from "@/types/tasting";
 
 type LoadState = "loading" | "no-config" | "not-found" | "waiting" | "ready";
 
 export default function ResultsPage() {
   const params = useParams<{ publicId: string }>();
+  const { user, loading: authLoading } = useAuthUser();
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [sessionRow, setSessionRow] = useState<SessionRow | null>(null);
   const [report, setReport] = useState<TastingReport | null>(null);
   const [seenReport, setSeenReport] = useState<SeenTastingReport | null>(null);
+  // Read once on mount (not via next/navigation's useSearchParams, which
+  // would force this already-fully-client page into a Suspense boundary for
+  // no benefit here) — purely a display marker, never used for
+  // authorization. See README "Tasting archive".
+  const [fromArchive, setFromArchive] = useState(false);
+
+  useEffect(() => {
+    setFromArchive(new URLSearchParams(window.location.search).get("from") === "archive");
+  }, []);
 
   const loadReport = useCallback(async (session: SessionRow) => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
 
-    const [{ data: wineRows }, { data: guestRows }, { data: guessRows }] = await Promise.all([
-      supabase
-        .from("guest_visible_wines")
-        .select("*")
-        .eq("session_id", session.id)
-        .order("bottle_number", { ascending: true }),
-      supabase
-        .from("guests")
-        .select("id, display_name, completed_at")
-        .eq("session_id", session.id),
-      supabase.from("revealed_wine_guesses").select("*").eq("session_id", session.id),
-    ]);
-
-    const guestNameById = new Map((guestRows ?? []).map((g) => [g.id, g.display_name]));
-
-    const wines = (wineRows ?? []).map((row) => ({
-      ...mapRevealedWineRowToAnswerKey(row),
-      contributorName: row.contributor_guest_id
-        ? guestNameById.get(row.contributor_guest_id)
-        : undefined,
-    }));
-
-    // Seen tasting has no identification guesses or scoring at all — its
-    // report is built by an entirely separate, rating-only pipeline (see
-    // lib/seenResults.ts) rather than forced through buildTastingReport,
-    // which full_blind/course_reveal below are untouched by.
-    if (session.tasting_mode === "seen") {
-      const ratingRows: SeenRatingRow[] = (guessRows ?? []).map((row) => ({
-        wineId: row.wine_id,
-        guestId: row.guest_id,
-        rating: row.rating,
-        note: row.tasting_note ?? undefined,
-      }));
-      const guests = (guestRows ?? []).map((g) => ({ id: g.id, displayName: g.display_name }));
-      setSeenReport(buildSeenTastingReport(wines, guests, ratingRows));
-      setLoadState("ready");
-      return;
-    }
-
-    const domainSession: TastingSession = {
+    const data = await loadTastingReportData(supabase, {
       id: session.id,
-      code: session.join_code,
-      title: session.title,
-      date: session.tasting_date,
-      status: session.status,
-      createdAt: session.created_at,
-      wines,
-    };
+      tastingMode: session.tasting_mode,
+    });
 
-    const submissions =
-      session.tasting_mode === "course_reveal"
-        ? buildCourseRevealSubmissions(
-            guessRows ?? [],
-            (guestRows ?? []).map((g) => ({ id: g.id, displayName: g.display_name }))
-          )
-        : buildRevealedSubmissions(
-            guessRows ?? [],
-            (guestRows ?? [])
-              .filter((g) => g.completed_at !== null)
-              .map((g) => ({ id: g.id, displayName: g.display_name }))
-          );
-
-    setReport(buildTastingReport(domainSession, submissions));
+    if (data.kind === "seen") {
+      setSeenReport(data.report);
+    } else {
+      setReport(data.report);
+    }
     setLoadState("ready");
   }, []);
 
@@ -188,7 +138,11 @@ export default function ResultsPage() {
   if (loadState === "waiting") {
     return (
       <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-        <HomeLink />
+        <div className="flex items-center gap-2">
+          <HomeLink />
+          <ArchiveLink />
+          <AccountNav />
+        </div>
         <div className="w-full border-t border-cellar-gold/40 pt-5">
           <h1 className="font-display text-2xl font-semibold text-cellar-maroon-dark">
             Not revealed yet
@@ -219,7 +173,25 @@ export default function ResultsPage() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-8 px-6 py-10">
-      <HomeLink />
+      <div className="flex items-center gap-2">
+        <HomeLink />
+        <ArchiveLink />
+        <AccountNav />
+      </div>
+
+      {fromArchive && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-cellar-gold/40 pb-3">
+          <p className="text-xs font-medium uppercase tracking-[0.2em] text-cellar-gold">
+            From the archive
+          </p>
+          <Link
+            href="/archive"
+            className="inline-flex min-h-[44px] items-center text-sm font-medium text-cellar-maroon underline-offset-4 transition-colors hover:text-cellar-maroon-dark hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cellar-gold"
+          >
+            ← Back to archive
+          </Link>
+        </div>
+      )}
 
       <PageHeader
         eyebrow="The tasting report"
@@ -231,6 +203,18 @@ export default function ResultsPage() {
         <SeenTastingReportView report={seenReport} />
       ) : (
         report && <TastingReportView report={report} />
+      )}
+
+      {!authLoading && !user && (
+        <p className="border-t border-cellar-border pt-4 text-center text-xs text-cellar-muted">
+          Keep future tasting records across devices.{" "}
+          <Link
+            href={`/account/sign-in?redirect=${encodeURIComponent(`/results/${params.publicId}`)}`}
+            className="font-medium text-cellar-maroon underline-offset-4 hover:text-cellar-maroon-dark hover:underline"
+          >
+            Continue with email
+          </Link>
+        </p>
       )}
     </main>
   );

@@ -11,6 +11,7 @@ import { LoadingState } from "@/components/LoadingState";
 import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
+import { ArchiveLink } from "@/components/navigation/ArchiveLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   completeSubmission,
@@ -245,6 +246,7 @@ export default function GuestTastingPage() {
         <div className="flex items-center gap-2">
           <HomeLink />
           <HostControlsLink sessionPublicId={params.publicId} />
+          <ArchiveLink />
         </div>
         <div className="w-full border-t border-cellar-gold/40 pt-5">
           <h1 className="font-display text-2xl font-semibold text-cellar-maroon-dark">
