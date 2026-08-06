@@ -51,6 +51,8 @@ export interface WineAnswerKey {
   hostNotes?: string;
   /** Contributor's display name. Only ever populated after reveal. */
   contributorName?: string;
+  /** Contributor's guest id. Only ever populated after reveal — used by the Palate Profile ledger's "Contributed by you" label (see README "Palate Profile"); never inferred from display name. */
+  contributorGuestId?: string;
 }
 
 export type SessionStatus = "registration" | "collecting" | "revealed";

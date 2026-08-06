@@ -264,6 +264,41 @@ Writes only ever happen inside `claim_account_tasting_record`, which runs as the
 
 A commonly-suggested version of this schema uses `on delete set null` for `participant_id`, matching how other "soft" foreign keys in this app behave. That doesn't work here: the check constraint requires every `role = 'participant'` row to have a non-null `participant_id`, so a `set null` cascade would leave a row that violates its own table's constraint — which fails the deleting transaction, effectively blocking the guest-row deletion entirely. `cascade` avoids that: if the specific participant record a claim points to is ever gone, the claim itself is meaningless and is removed with it. This app has no guest-deletion feature today, so this is a forward-safety choice, not a behavior change.
 
+## Migrating for the Palate Profile
+
+Builds on "Migrating for account-linked tasting records" above — requires that section applied first. Re-running the full `supabase/schema.sql` brings an existing project up to date; both statements here are additive and safe to re-run.
+
+### 1. Run the SQL (in this order — already correct if you paste the whole file)
+
+1. **`profiles.include_seen_tastings boolean not null default false`** — added via `alter table ... add column if not exists`, so an existing project backfills every current row to `false` automatically (Postgres backfills a new `not null default` column for you; no separate `update` statement is needed). This is the persisted Tasting scope preference (`Blind tastings only` vs. `Include Seen tastings` — see README "Palate Profile").
+2. **`grant update (include_seen_tastings) on public.profiles to authenticated`** — widens the existing column-level update grant (alongside `display_name`) so a signed-in user can toggle their own scope preference via a direct client update, gated by the existing `profiles_update_own` RLS policy exactly as `display_name` already is. No new policy, no relaxation of any existing one.
+3. **`grant select (host_guest_id) on tasting_sessions to authenticated`** — a new, narrow column grant (see "Why this grant is safe" below) that lets the profile resolve a host's own guest row for their blind guesses/ratings, without which a host-only account link could never recover its own tasting activity.
+
+### 2. Verification queries
+
+```sql
+-- include_seen_tastings exists, is boolean, not null, defaults to false
+select column_name, data_type, is_nullable, column_default
+from information_schema.columns
+where table_name = 'profiles' and column_name = 'include_seen_tastings';
+
+-- authenticated can update include_seen_tastings; anon cannot
+select grantee, column_name, privilege_type
+from information_schema.column_privileges
+where table_name = 'profiles' and column_name = 'include_seen_tastings';
+
+-- authenticated can select host_guest_id on tasting_sessions; anon cannot
+select grantee, column_name, privilege_type
+from information_schema.column_privileges
+where table_name = 'tasting_sessions' and column_name = 'host_guest_id';
+```
+
+The last two queries should each show exactly one row, granted to `authenticated` only.
+
+### Why the `host_guest_id` grant is safe
+
+Every guest id — host or not — is already fully readable by anyone via the existing `grant select (id, session_id, display_name, created_at, completed_at) on guests to anon, authenticated`, with no row-level restriction of any kind. This new grant does not expose a previously-hidden identifier; it only tells an already-authorized caller *which* already-public guest id belongs to the host, for a session they already hold an `account_tasting_records` link to. `wines`/`wine_guesses` (the actually sensitive, answer-key-bearing tables) are completely untouched by this migration — no new column grant on either.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):
@@ -284,6 +319,7 @@ Every tasting workflow (hosting, joining, registering bottles, guessing, rating,
 - **Host-only mutations run through Next.js Route Handlers** (`app/api/host/*`), not directly from the browser — this includes tasting-order reordering (`app/api/host/reorder-bottles`) and the host page's own re-fetch of its anonymous bottle list after a realtime change (`app/api/host/session`, since `wineStyle`/`tastingOrder` aren't in the narrow anon column grant on `wines` and can only be read back through the host-token-gated `get_host_session` RPC). This keeps the raw host token out of client-side calls hitting Supabase's REST endpoint directly, though the real enforcement is still the Postgres function itself checking the token hash.
 - **The Tasting Archive (`/archive`, `app/api/archive/lookup`) introduces no new privilege at all** — it's a thin, bounded batch wrapper around `get_host_session`/`get_guest_session_state`, the same two token-validating RPCs the host control and guest tasting pages already call one at a time. It never accepts a bare session id with no token attached, never queries "every revealed session," and never returns a raw token in its response — only a minimized per-session summary (title, date, mode, counts, Wine of the Night, and the caller's own accuracy where applicable) for references the request already proved ownership of.
 - **Account-linked tasting records (`public.account_tasting_records`, `claim_account_tasting_record`) also introduce no new privilege** — see "Migrating for account-linked tasting records" above for the full schema. The short version: the only write path re-validates the exact same host/guest token every other RPC already does, `auth.uid()` (never a client-supplied user id) decides whose row gets written, and the table has no insert/update/delete policy for any role at all — a signed-in user who merely knows or guesses a session id, with no valid token for it, can never create a link. Reading is plain RLS (`auth.uid() = user_id`), so "Your record" needs no token round trip at all — ownership of the *row* is what's being checked there, not ownership of a token.
+- **The Palate Profile (`/profile`, `/api/profile`, `/api/profile/ledger`) introduces no new privilege either** — see "Migrating for the Palate Profile" above. Both Route Handlers use the cookie-aware client (so every query runs as the caller's own `authenticated` role, not an elevated one), read `account_tasting_records` under its existing RLS (`auth.uid() = user_id`, no exceptions), and re-derive every session's report through the same `loadTastingReportData` pipeline the archive and results page already call — there is no separate, broader "get all my data" query path, and no aggregate figure is ever computed from another user's rows.
 - **Bug fixed in this revision**: the `guest_visible_wines` and `revealed_wine_guesses` views were previously declared with `security_invoker = true`. Combined with `wines`/`wine_guesses` having Row Level Security enabled but no SELECT policy for `anon`, that setting would have made these views return **zero rows for anon on a real Supabase project** — a security_invoker view evaluates RLS as the calling role, and anon was never granted any row-visibility on those tables directly. The fix is to not set `security_invoker` (the default, `false`, runs the view as its owner), so the view's own `CASE`/`WHERE` masking logic — not the caller's RLS — is what decides what anon sees. This was never caught before because the app had not yet been tested against a live Supabase project.
 
 ### Honest MVP limitations
@@ -298,5 +334,7 @@ Every tasting workflow (hosting, joining, registering bottles, guessing, rating,
 - **No un-linking or account-merging in this phase.** Once a session is linked to an account (automatically or via claim), there's no UI to remove that association, and there's no way to merge two different signed-in identities' records together. Both are believed to be safe, additive follow-ups once there's a clear product need — see README "Recommended next features".
 - **No delete-account flow in this phase.** `/account` offers sign-out but not account deletion. Since `profiles.id` references `auth.users(id) on delete cascade`, deleting a user from the Auth dashboard already cleanly removes their `profiles` row (and, by the same cascade, their `account_tasting_records` rows) with no orphaned data — a self-service delete-account UI is a small, safe addition later, just out of scope for this pass; it was not omitted for any data-integrity reason.
 - **Account email delivery depends on Supabase's built-in email sending unless a custom SMTP provider is configured** (see "Setting up Supabase Auth (accounts)" above) — the built-in sender is rate-limited and intended for development, not production volume.
+- **The Tasted Wines Ledger paginates in memory, not at the database level.** `/api/profile/ledger` loads this one signed-in user's own account-linked sessions (never global data, never another user's), builds every wine observation, then filters/sorts/paginates that in-memory list before responding — the browser never receives more than one page, but the server-side bound is "this user's lifetime tasting history," not a database `LIMIT`/`OFFSET`. For a private dinner-party tool this is a non-issue in practice; a very high-volume account would eventually want the ledger's wine data queryable directly in SQL instead (see README "Recommended next features").
+- **No un-linking a single tasting from the Palate Profile.** Once a session is account-linked (automatically or via claim — see "Migrating for account-linked tasting records"), it always contributes to the profile's figures; there is no per-session "hide from my profile" action, matching the existing "no un-linking" limitation on account-linked records generally.
 
 If you need real accounts, audit logs, or token revocation later, that's a distinct follow-up step (see the README's "Recommended next features").

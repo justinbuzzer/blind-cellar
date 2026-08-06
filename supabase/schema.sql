@@ -2250,3 +2250,32 @@ $$;
 -- requires auth.uid(), so granting it to anon would only ever raise
 -- not_authenticated — narrower on purpose.
 grant execute on function public.claim_account_tasting_record(uuid, text, text, text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Palate Profile — see README "Palate Profile" and SUPABASE_SETUP.md
+-- "Migrating for the Palate Profile".
+--
+-- The profile is built entirely from account_tasting_records the signed-in
+-- user already owns (RLS-scoped to auth.uid()), plus two small additive
+-- grants below. No new tables, no new RLS policies, no relaxation of any
+-- existing policy.
+-- ---------------------------------------------------------------------------
+
+-- Scope preference: "Blind tastings only" (default) vs. "Include Seen
+-- tastings" — see README "Core scope rule: Seen tasting filter". Same
+-- column-grant pattern as profiles.display_name above: RLS
+-- (profiles_update_own) already restricts writes to the signed-in user's own
+-- row; this only widens which column a client update is allowed to touch.
+alter table public.profiles add column if not exists include_seen_tastings boolean not null default false;
+grant update (include_seen_tastings) on public.profiles to authenticated;
+
+-- Lets the profile attribute a host's own blind guesses/ratings to their own
+-- guest row when only a role='host' account_tasting_records link exists (see
+-- README "Palate Profile" — "Duplicate handling"). This is not new exposure:
+-- every guest id (host or otherwise) is already fully readable by anyone via
+-- the existing `grant select (id, ...) on guests` above — this grant only
+-- reveals *which already-public guest id* is the host, for a session the
+-- caller already independently holds an account_tasting_records link to.
+-- authenticated-only, since anon has no account-linked records to resolve
+-- this for.
+grant select (host_guest_id) on tasting_sessions to authenticated;

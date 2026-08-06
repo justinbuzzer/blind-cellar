@@ -31,6 +31,7 @@ export function mapRevealedWineRowToAnswerKey(row: GuestVisibleWineRow): WineAns
     wineStyle: row.wine_style ?? "other",
     tastingOrder: row.tasting_order,
     hostNotes: row.host_notes ?? undefined,
+    contributorGuestId: row.contributor_guest_id ?? undefined,
   };
 }
 

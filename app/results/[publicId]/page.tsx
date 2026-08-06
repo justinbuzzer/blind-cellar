@@ -10,6 +10,7 @@ import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { ArchiveLink } from "@/components/navigation/ArchiveLink";
 import { AccountNav } from "@/components/navigation/AccountNav";
+import { ProfileLink } from "@/components/navigation/ProfileLink";
 import { TastingReportView } from "@/components/report/TastingReportView";
 import { SeenTastingReportView } from "@/components/report/SeenTastingReportView";
 import { ClaimPanel } from "@/components/archive/ClaimPanel";
@@ -231,6 +232,7 @@ export default function ResultsPage() {
       <div className="flex items-center gap-2">
         <HomeLink />
         <ArchiveLink />
+        <ProfileLink />
         <AccountNav />
       </div>
 

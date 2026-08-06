@@ -11,6 +11,7 @@ import { ImageBand } from "@/components/ImageBand";
 import { archiveImage } from "@/lib/appImages";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { AccountNav } from "@/components/navigation/AccountNav";
+import { ProfileLink } from "@/components/navigation/ProfileLink";
 import { useAuthUser } from "@/lib/supabase/useAuthUser";
 import { ArchiveTabs } from "@/components/archive/ArchiveTabs";
 import { ArchiveEntryRow } from "@/components/archive/ArchiveEntryRow";
@@ -240,6 +241,7 @@ export default function ArchivePage() {
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-8 px-6 py-10">
       <div className="flex items-center gap-2">
         <HomeLink />
+        <ProfileLink />
         <AccountNav />
       </div>
 

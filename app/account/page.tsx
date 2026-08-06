@@ -190,6 +190,11 @@ export default function AccountPage() {
       </Card>
 
       <div className="flex flex-col gap-2">
+        <Link href="/profile">
+          <Button variant="secondary" fullWidth>
+            Your palate
+          </Button>
+        </Link>
         <Link href="/archive">
           <Button variant="secondary" fullWidth>
             View tasting archive
