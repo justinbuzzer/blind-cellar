@@ -2084,6 +2084,21 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
+-- MIGRATION-SENSITIVE BACKFILL: the trigger above only ever fires for a row
+-- inserted into auth.users *after* the trigger exists — any account created
+-- earlier (e.g. during initial testing of this feature, before this file's
+-- trigger was ever applied) has no public.profiles row at all and never will
+-- on its own. That's not merely cosmetic: profiles.include_seen_tastings and
+-- display_name updates from such an account silently match zero rows (no
+-- error, no effect) because there is nothing to update, and every read
+-- (`.select().eq('id', ...)`) returns empty. This one-time, idempotent
+-- backfill (`on conflict do nothing`, safe to re-run) creates the missing
+-- row for every existing auth.users entry, so this can never recur for an
+-- account that already existed when this line was added.
+insert into public.profiles (id, email)
+select id, email from auth.users
+on conflict (id) do nothing;
+
 -- ---------------------------------------------------------------------------
 -- Account-linked tasting records — see README "Account-linked tasting
 -- records" and SUPABASE_SETUP.md "Migrating for account-linked tasting
