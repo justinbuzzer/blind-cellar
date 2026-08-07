@@ -17,16 +17,30 @@ export interface CellarBottleFormInput extends WineIdentityInput {
   bottleFormatOther: string;
   storageLocation: string;
   personalNote: string;
+  /**
+   * How many separate, identical cellar_bottles rows to create in one
+   * submission — see README "Personal Cellar" — "Quantity". Purely an
+   * add-form convenience: the persisted model is still one row per physical
+   * bottle, never a stock count on a single row. Only meaningful on the add
+   * form; editing an existing bottle never touches this.
+   */
+  quantity: number;
 }
 
 export type CellarBottleFormErrors = WineIdentityErrors & {
   bottleFormat?: string;
   bottleFormatOther?: string;
+  quantity?: string;
 };
 
 const MAX_BOTTLE_FORMAT_OTHER_LENGTH = 60;
 const MAX_STORAGE_LOCATION_LENGTH = 120;
 const MAX_PERSONAL_NOTE_LENGTH = 500;
+
+/** Server-enforced range for a single Add-a-bottle submission — see add_cellar_bottle in supabase/schema.sql. */
+export const MIN_CELLAR_QUANTITY = 1;
+export const MAX_CELLAR_QUANTITY = 100;
+export const CELLAR_QUANTITY_ERROR = `Enter a quantity between ${MIN_CELLAR_QUANTITY} and ${MAX_CELLAR_QUANTITY}.`;
 
 export const EMPTY_CELLAR_BOTTLE: CellarBottleFormInput = {
   country: "",
@@ -44,14 +58,19 @@ export const EMPTY_CELLAR_BOTTLE: CellarBottleFormInput = {
   bottleFormatOther: "",
   storageLocation: "",
   personalNote: "",
+  quantity: MIN_CELLAR_QUANTITY,
 };
 
 /**
  * Reuses validateBottleForm (the exact same wine-identity rules the tasting
- * bottle form enforces) and adds only the two cellar-only checks — never a
+ * bottle form enforces) and adds only the cellar-only checks — never a
  * parallel, potentially-diverging rule set. Storage location / personal note
- * length caps mirror the server-side RPC limits (see schema.sql) so a
- * too-long value is caught before the round trip, not just after it.
+ * length caps and the quantity range mirror the server-side RPC limits (see
+ * schema.sql) so an invalid value is caught before the round trip, not just
+ * after it. Quantity is validated as a true integer — `Number.isInteger`
+ * rejects decimals, and also rejects `NaN`/`Infinity` (neither is an
+ * integer), so a blank, non-numeric, or fractional input is never silently
+ * rounded or coerced, only ever flagged.
  */
 export function validateCellarBottleForm(input: CellarBottleFormInput): CellarBottleFormErrors {
   const errors: CellarBottleFormErrors = validateBottleForm(input);
@@ -62,6 +81,14 @@ export function validateCellarBottleForm(input: CellarBottleFormInput): CellarBo
     errors.bottleFormatOther = "Add a short detail for this bottle format.";
   } else if (input.bottleFormatOther.length > MAX_BOTTLE_FORMAT_OTHER_LENGTH) {
     errors.bottleFormatOther = "That detail is too long — please shorten it.";
+  }
+
+  if (
+    !Number.isInteger(input.quantity) ||
+    input.quantity < MIN_CELLAR_QUANTITY ||
+    input.quantity > MAX_CELLAR_QUANTITY
+  ) {
+    errors.quantity = CELLAR_QUANTITY_ERROR;
   }
 
   return errors;
@@ -79,6 +106,9 @@ export function isPersonalNoteTooLong(value: string): boolean {
  * Maps a cellar bottle row to editable form state, for the edit page.
  * Mirrors `bottleFormInputFromDto`'s legacy-blend-reconstruction fallback so
  * a blend saved before the structured picker existed doesn't appear empty.
+ * `quantity` is fixed at 1 here and never rendered on the edit form (see
+ * `CellarBottleForm`'s `mode` prop) — quantity only ever applies to creating
+ * new rows on the add form, never to editing an existing one.
  */
 export function cellarBottleFormInputFromRow(row: CellarBottleRow): CellarBottleFormInput {
   const grapeBlendMode = row.grape_blend_mode ?? "single";
@@ -106,6 +136,7 @@ export function cellarBottleFormInputFromRow(row: CellarBottleRow): CellarBottle
     bottleFormatOther: row.bottle_format_other ?? "",
     storageLocation: row.storage_location ?? "",
     personalNote: row.personal_note ?? "",
+    quantity: MIN_CELLAR_QUANTITY,
   };
 }
 

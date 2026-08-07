@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  CELLAR_QUANTITY_ERROR,
   CellarBottleFormInput,
   EMPTY_CELLAR_BOTTLE,
+  MAX_CELLAR_QUANTITY,
+  MIN_CELLAR_QUANTITY,
   cellarBottleFormInputFromRow,
   cellarBottleFormatLabel,
   cellarBottleRpcArgs,
@@ -99,6 +102,65 @@ describe("validateCellarBottleForm", () => {
   });
 });
 
+describe("validateCellarBottleForm — quantity", () => {
+  it("defaults to 1 via EMPTY_CELLAR_BOTTLE", () => {
+    expect(EMPTY_CELLAR_BOTTLE.quantity).toBe(1);
+    expect(MIN_CELLAR_QUANTITY).toBe(1);
+  });
+
+  it("accepts every valid integer from 1 to 100", () => {
+    for (const quantity of [1, 2, 6, 50, 100]) {
+      const errors = validateCellarBottleForm(makeCellarBottle({ quantity }));
+      expect(errors.quantity).toBeUndefined();
+    }
+  });
+
+  it("rejects 0", () => {
+    const errors = validateCellarBottleForm(makeCellarBottle({ quantity: 0 }));
+    expect(errors.quantity).toBe(CELLAR_QUANTITY_ERROR);
+  });
+
+  it("rejects a negative value", () => {
+    const errors = validateCellarBottleForm(makeCellarBottle({ quantity: -3 }));
+    expect(errors.quantity).toBe(CELLAR_QUANTITY_ERROR);
+  });
+
+  it("rejects a decimal value", () => {
+    const errors = validateCellarBottleForm(makeCellarBottle({ quantity: 2.5 }));
+    expect(errors.quantity).toBe(CELLAR_QUANTITY_ERROR);
+  });
+
+  it("rejects a non-numeric value (NaN, e.g. from a blank input)", () => {
+    const errors = validateCellarBottleForm(makeCellarBottle({ quantity: NaN }));
+    expect(errors.quantity).toBe(CELLAR_QUANTITY_ERROR);
+  });
+
+  it("rejects Infinity", () => {
+    const errors = validateCellarBottleForm(makeCellarBottle({ quantity: Infinity }));
+    expect(errors.quantity).toBe(CELLAR_QUANTITY_ERROR);
+  });
+
+  it("rejects a value above the maximum", () => {
+    const errors = validateCellarBottleForm(makeCellarBottle({ quantity: MAX_CELLAR_QUANTITY + 1 }));
+    expect(errors.quantity).toBe(CELLAR_QUANTITY_ERROR);
+  });
+
+  it("uses the exact required error copy", () => {
+    expect(CELLAR_QUANTITY_ERROR).toBe("Enter a quantity between 1 and 100.");
+  });
+
+  it("never silently rounds — a decimal quantity is rejected outright, not floored/ceiled to a valid one", () => {
+    const errors = validateCellarBottleForm(makeCellarBottle({ quantity: 1.9 }));
+    expect(errors.quantity).toBeDefined();
+  });
+
+  it("leaves every other field's validation unaffected by an invalid quantity", () => {
+    const errors = validateCellarBottleForm(makeCellarBottle({ quantity: 0 }));
+    expect(errors.producer).toBeUndefined();
+    expect(errors.bottleFormat).toBeUndefined();
+  });
+});
+
 describe("isStorageLocationTooLong / isPersonalNoteTooLong", () => {
   it("allows values at or under the limit", () => {
     expect(isStorageLocationTooLong("Home cellar")).toBe(false);
@@ -121,6 +183,7 @@ describe("cellarBottleFormInputFromRow", () => {
     expect(input.bottleFormatOther).toBe("");
     expect(input.storageLocation).toBe("");
     expect(input.personalNote).toBe("");
+    expect(input.quantity).toBe(1);
   });
 
   it("preserves storage location and personal note when present", () => {
@@ -208,6 +271,11 @@ describe("cellarBottleRpcArgs", () => {
       makeCellarBottle({ region: "Burgundy", appellation: "Chablis" })
     );
     expect(args.p_appellation).toBe("Chablis");
+  });
+
+  it("never includes quantity — update_cellar_bottle has no such parameter, so it's added separately only for the add call (see lib/supabase/cellarActions.ts)", () => {
+    const args = cellarBottleRpcArgs(makeCellarBottle({ quantity: 6 }));
+    expect(args).not.toHaveProperty("p_quantity");
   });
 });
 

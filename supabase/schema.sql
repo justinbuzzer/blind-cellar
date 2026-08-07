@@ -2696,14 +2696,18 @@ begin
 end;
 $$;
 
--- Owner: add a new available cellar bottle. SECURITY DEFINER only to reach
--- the table past its "no insert policy at all" RLS above; auth.uid() (never
--- a client-supplied owner id) is what the new row is actually attributed to.
--- Validation mirrors register_bottle's exactly, plus the cellar-only bottle
--- format/storage/note fields.
--- Signature changed (appellation added) — explicitly drop the old overload
--- so it can't be called with stale semantics; safe/no-op on a fresh install.
-drop function if exists public.add_cellar_bottle(text, text, text, text, jsonb, text, text, text, text, text, text, text, text);
+-- Owner: add one or more identical new available cellar bottles in one
+-- atomic operation (see README "Personal Cellar" — "Quantity"). SECURITY
+-- DEFINER only to reach the table past its "no insert policy at all" RLS
+-- above; auth.uid() (never a client-supplied owner id) is what every new row
+-- is actually attributed to. Validation mirrors register_bottle's exactly,
+-- plus the cellar-only bottle format/storage/note/quantity fields. The
+-- one-cellar-bottle-row-per-physical-bottle model is unchanged: p_quantity
+-- only controls how many separate, independently-reservable/consumable rows
+-- this single call creates — it is never itself persisted as a stock count.
+-- Signature changed (quantity added) — explicitly drop the old overload so
+-- it can't be called with stale semantics; safe/no-op on a fresh install.
+drop function if exists public.add_cellar_bottle(text, text, text, text, jsonb, text, text, text, text, text, text, text, text, text);
 
 create or replace function public.add_cellar_bottle(
   p_country text,
@@ -2719,7 +2723,8 @@ create or replace function public.add_cellar_bottle(
   p_bottle_format_other text,
   p_storage_location text,
   p_personal_note text,
-  p_appellation text
+  p_appellation text,
+  p_quantity int default 1
 ) returns jsonb
 language plpgsql
 security definer
@@ -2727,7 +2732,7 @@ set search_path = public, extensions
 as $$
 declare
   v_uid uuid := auth.uid();
-  v_id uuid;
+  v_ids uuid[];
 begin
   if v_uid is null then
     raise exception 'not_authenticated';
@@ -2759,6 +2764,15 @@ begin
   if not is_valid_appellation(btrim(p_country), btrim(p_region), p_appellation) then
     raise exception 'invalid_appellation';
   end if;
+  -- Authoritative range check — the client only ever provides immediate
+  -- feedback (see lib/cellar.ts); this is what actually prevents a bypassed
+  -- client from creating 0, a negative count, or an unbounded number of rows
+  -- in one call. p_quantity's `int` parameter type already rejects a
+  -- fractional value (e.g. "2.5") at the PostgREST binding layer, before
+  -- this function body ever runs, so it is never silently rounded.
+  if p_quantity is null or p_quantity < 1 or p_quantity > 100 then
+    raise exception 'invalid_quantity';
+  end if;
   perform validate_grape_blend_components(p_grape_blend_mode, p_grape_blend_components);
   if btrim(coalesce(p_country, '')) = '' or btrim(coalesce(p_region, '')) = ''
      or btrim(coalesce(p_grape_blend, '')) = ''
@@ -2767,20 +2781,30 @@ begin
     raise exception 'bottle_fields_required';
   end if;
 
-  insert into public.cellar_bottles (
-    owner_user_id, wine_style, country, region, appellation, grape_blend_mode, grape_blend, grape_blend_components,
-    producer, wine_cuvee, vintage, bottle_format, bottle_format_other, storage_location, personal_note
-  ) values (
-    v_uid, p_wine_style, btrim(p_country), btrim(p_region), nullif(btrim(coalesce(p_appellation, '')), ''),
-    p_grape_blend_mode, btrim(p_grape_blend), p_grape_blend_components,
-    btrim(p_producer), btrim(p_wine_cuvee), btrim(p_vintage), p_bottle_format,
-    nullif(btrim(coalesce(p_bottle_format_other, '')), ''),
-    nullif(btrim(coalesce(p_storage_location, '')), ''),
-    nullif(btrim(coalesce(p_personal_note, '')), '')
+  -- One INSERT ... SELECT, not a loop of separate statements: this is a
+  -- single atomic operation inside the function's own transaction — either
+  -- every row is created, or (on any error) none are, exactly like every
+  -- other single-statement write in this file. Each generate_series
+  -- iteration produces its own independent row with its own id; nothing here
+  -- collapses the physical bottles into a shared quantity counter.
+  with inserted as (
+    insert into public.cellar_bottles (
+      owner_user_id, wine_style, country, region, appellation, grape_blend_mode, grape_blend, grape_blend_components,
+      producer, wine_cuvee, vintage, bottle_format, bottle_format_other, storage_location, personal_note
+    )
+    select
+      v_uid, p_wine_style, btrim(p_country), btrim(p_region), nullif(btrim(coalesce(p_appellation, '')), ''),
+      p_grape_blend_mode, btrim(p_grape_blend), p_grape_blend_components,
+      btrim(p_producer), btrim(p_wine_cuvee), btrim(p_vintage), p_bottle_format,
+      nullif(btrim(coalesce(p_bottle_format_other, '')), ''),
+      nullif(btrim(coalesce(p_storage_location, '')), ''),
+      nullif(btrim(coalesce(p_personal_note, '')), '')
+    from generate_series(1, p_quantity)
+    returning id
   )
-  returning id into v_id;
+  select array_agg(id) into v_ids from inserted;
 
-  return jsonb_build_object('id', v_id);
+  return jsonb_build_object('ids', to_jsonb(v_ids), 'count', p_quantity);
 end;
 $$;
 
@@ -3075,7 +3099,7 @@ $$;
 -- claim_account_tasting_record — granting to anon would only let it raise
 -- not_authenticated/cellar_bottle_unavailable; authenticated-only is
 -- narrower on purpose.
-grant execute on function public.add_cellar_bottle(text, text, text, text, jsonb, text, text, text, text, text, text, text, text, text) to authenticated;
+grant execute on function public.add_cellar_bottle(text, text, text, text, jsonb, text, text, text, text, text, text, text, text, text, int) to authenticated;
 grant execute on function public.update_cellar_bottle(uuid, text, text, text, text, jsonb, text, text, text, text, text, text, text, text, text) to authenticated;
 grant execute on function public.register_bottle_from_cellar(text, uuid) to authenticated;
 grant execute on function public.return_cellar_bottle_to_available(uuid) to authenticated;

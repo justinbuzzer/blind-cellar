@@ -148,6 +148,7 @@ export default function EditCellarBottlePage() {
       <PageHeader eyebrow="Private cellar" title="Edit bottle" supporting="Update this bottle's details." />
 
       <CellarBottleForm
+        mode="edit"
         value={value}
         errors={errors}
         onChange={setValue}

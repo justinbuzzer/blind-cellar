@@ -10,7 +10,14 @@ import { AddCellarBottleResponse, RegisterBottleFromCellarResponse } from "./typ
  */
 
 export async function addCellarBottle(supabase: SupabaseClient, input: CellarBottleFormInput) {
-  const { data, error } = await supabase.rpc("add_cellar_bottle", cellarBottleRpcArgs(input));
+  // p_quantity is add-only — deliberately not part of the shared
+  // cellarBottleRpcArgs (update_cellar_bottle has no such parameter and
+  // editing never changes how many rows exist; see README "Personal
+  // Cellar" — "Quantity").
+  const { data, error } = await supabase.rpc("add_cellar_bottle", {
+    ...cellarBottleRpcArgs(input),
+    p_quantity: input.quantity,
+  });
   return { data: data as AddCellarBottleResponse | null, error };
 }
 

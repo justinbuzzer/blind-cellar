@@ -393,8 +393,16 @@ export interface CellarBottleRow {
   updated_at: string;
 }
 
+/**
+ * `ids`/`count` cover both the single- and multi-quantity cases uniformly
+ * (see README "Personal Cellar" — "Quantity") — a quantity-1 submission
+ * simply returns a one-element `ids` array. Internal ids are never rendered
+ * to the user; the UI only ever reads `count` for the pluralized
+ * confirmation message.
+ */
 export interface AddCellarBottleResponse {
-  id: string;
+  ids: string[];
+  count: number;
 }
 
 /** Same shape as RegisterBottleResponse — register_bottle_from_cellar returns the identical DTO. */
@@ -452,6 +460,7 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   return_window_closed: "This bottle can no longer be returned to your cellar.",
   consumption_not_eligible: "This bottle can't be marked consumed yet.",
   invalid_bottle_format: "Choose a bottle format.",
+  invalid_quantity: "Enter a quantity between 1 and 100.",
   bottle_format_detail_required: "Add a short detail for this bottle format.",
   bottle_format_detail_too_long: "That bottle format detail is too long — please shorten it.",
   storage_location_too_long: "That storage location is too long — please shorten it.",

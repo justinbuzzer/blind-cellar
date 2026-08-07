@@ -63,7 +63,7 @@ export default function AddCellarBottlePage() {
     }
 
     setSubmitting(true);
-    const { error } = await addCellarBottle(supabase, value);
+    const { data, error } = await addCellarBottle(supabase, value);
     setSubmitting(false);
 
     if (error) {
@@ -71,7 +71,11 @@ export default function AddCellarBottlePage() {
       return;
     }
 
-    router.push("/cellar?added=1");
+    // `added` carries the created count so /cellar can show the correctly
+    // pluralized confirmation ("Bottle added…" vs "N bottles added…") — see
+    // README "Personal Cellar" — "Quantity". Falls back to the submitted
+    // quantity if the response is ever missing it for some reason.
+    router.push(`/cellar?added=${data?.count ?? value.quantity}`);
   }
 
   if (loadState === "no-config") {
@@ -102,6 +106,7 @@ export default function AddCellarBottlePage() {
       />
 
       <CellarBottleForm
+        mode="add"
         value={value}
         errors={errors}
         onChange={setValue}

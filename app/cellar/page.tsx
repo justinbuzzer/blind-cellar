@@ -37,7 +37,7 @@ export default function CellarPage() {
   const [configState, setConfigState] = useState<ConfigState>("checking");
   const [tab, setTab] = useState<CellarBottleStatus>("available");
   const [tabInitialized, setTabInitialized] = useState(false);
-  const [showAdded, setShowAdded] = useState(false);
+  const [addedCount, setAddedCount] = useState<number | null>(null);
 
   const [rows, setRows] = useState<CellarBottleRow[]>([]);
   const [sessionById, setSessionById] = useState<Map<string, CellarSessionSummary>>(new Map());
@@ -72,8 +72,13 @@ export default function CellarPage() {
     if (requestedTab === "available" || requestedTab === "reserved" || requestedTab === "consumed") {
       setTab(requestedTab);
     }
-    if (params.get("added") === "1") {
-      setShowAdded(true);
+    // `added` carries how many bottles were just created (see
+    // app/cellar/new/page.tsx and README "Personal Cellar" — "Quantity") so
+    // the confirmation below can use correct singular/plural grammar — a
+    // plain positive integer, never trusted beyond that for anything else.
+    const addedRaw = Number(params.get("added"));
+    if (Number.isInteger(addedRaw) && addedRaw > 0) {
+      setAddedCount(addedRaw);
       router.replace(requestedTab ? `/cellar?tab=${requestedTab}` : "/cellar");
     }
     setTabInitialized(true);
@@ -201,9 +206,11 @@ export default function CellarPage() {
             </Link>
           }
         />
-        {showAdded && (
+        {addedCount !== null && (
           <p role="status" aria-live="polite" className="mt-3 text-sm font-medium text-cellar-success">
-            Bottle added to your cellar.
+            {addedCount === 1
+              ? "Bottle added to your cellar."
+              : `${addedCount} bottles added to your cellar.`}
           </p>
         )}
       </div>

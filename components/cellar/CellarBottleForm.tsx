@@ -17,14 +17,24 @@ interface CellarBottleFormProps {
   submitError?: string | null;
   /** Secondary action rendered beside the primary submit button — e.g. "Back to cellar". */
   secondaryAction?: React.ReactNode;
+  /**
+   * "add" shows the Quantity field; "edit" hides it — quantity only ever
+   * applies when creating new rows (see README "Personal Cellar" —
+   * "Quantity"), never to changing how many copies of an already-existing
+   * bottle exist. Defaults to "add" for backward compatibility with any
+   * other caller.
+   */
+  mode?: "add" | "edit";
 }
+
+const QUANTITY_HINT = "Add one record for each physical bottle.";
 
 /**
  * Add/edit form for a Personal Cellar bottle (see README "Personal Cellar")
- * — reuses WineIdentityFields unchanged, then adds the three cellar-only
- * groups (bottle format, storage location, personal note). Deliberately no
- * photo, price, or advanced inventory fields — see the feature's exclusion
- * list.
+ * — reuses WineIdentityFields unchanged, then adds the cellar-only groups
+ * (bottle format, quantity, storage location, personal note). Deliberately
+ * no photo, price, or advanced inventory fields — see the feature's
+ * exclusion list.
  */
 export function CellarBottleForm({
   value,
@@ -35,6 +45,7 @@ export function CellarBottleForm({
   submitting,
   submitError,
   secondaryAction,
+  mode = "add",
 }: CellarBottleFormProps) {
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-6" noValidate>
@@ -51,6 +62,24 @@ export function CellarBottleForm({
             error={errors.bottleFormat}
             otherError={errors.bottleFormatOther}
           />
+          {mode === "add" && (
+            <TextField
+              label="Quantity"
+              hint={QUANTITY_HINT}
+              error={errors.quantity}
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={100}
+              step={1}
+              className="max-w-[8rem]"
+              value={Number.isFinite(value.quantity) ? value.quantity : ""}
+              onChange={(e) => {
+                const raw = e.target.value;
+                onChange({ ...value, quantity: raw === "" ? NaN : Number(raw) });
+              }}
+            />
+          )}
           <TextField
             label="Storage location (optional)"
             value={value.storageLocation}

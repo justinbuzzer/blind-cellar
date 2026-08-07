@@ -472,6 +472,40 @@ select scoring_version from tasting_sessions order by created_at desc limit 1;
 
 No RLS policy changed. `scoring_version` is an additive column on `tasting_sessions`, read through the same anon-readable column grant `tasting_mode` already used — no new table-level access. It is written exactly once, at creation, inside `create_tasting_session` (a `SECURITY DEFINER` function that already fully owns session creation) as a hardcoded literal — there is no RPC parameter, no update path, and no other function that ever writes this column, so a client cannot choose, negotiate, or later change a session's scoring version under any circumstance. Score values themselves are still never persisted or trusted from the client: every report figure is recalculated server/pure-function-side on each load from the caller's already-authorized guess/wine rows, through the exact same `SECURITY DEFINER` RPCs and views (`get_host_session`, `get_guest_session_state`, `get_revealed_bottle`, `guest_visible_wines`, `revealed_wine_guesses`) that already governed pre-reveal secrecy — none of their gating logic changed.
 
+## Migrating for Cellar bottle quantity
+
+Extends Personal Cellar v1 (see README "Personal Cellar" — "Quantity") — requires `add_cellar_bottle` already in place. No schema/table change at all: `cellar_bottles` still has no quantity column, since the one-row-per-physical-bottle model is unchanged. Re-running the full `supabase/schema.sql` brings an existing project up to date; the statement below is additive and safe to re-run.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+1. **`add_cellar_bottle` gains one new trailing parameter**, `p_quantity int default 1`, validated to be an integer between 1 and 100 (`raise exception 'invalid_quantity'` otherwise). The prior 14-parameter overload is explicitly dropped first (see the existing `drop function if exists` line) so it can't be called with stale semantics.
+2. **The single-row `insert ... values (...)` becomes `insert ... select ... from generate_series(1, p_quantity)`** — one SQL statement that produces `p_quantity` independent rows (each with its own `id`, all sharing the identical validated wine/bottle/storage/note fields), wrapped in a `with inserted as (...) select array_agg(id) into v_ids from inserted` so every created id can be returned. This is what makes the operation atomic: it is a single statement inside the function's own transaction, so a Postgres error partway through (e.g. a constraint violation) rolls back every row it would have created — there is no partial batch. `p_quantity = 1` (the default) produces exactly the same single row the function created before this change.
+3. **Return shape changed**: `add_cellar_bottle` now returns `{"ids": [...], "count": n}` instead of `{"id": "..."}`. Nothing in this app's UI ever read the old `id` field (the add-bottle page only ever checked for an error and redirected), so this is not a breaking change to any existing behavior — but if you have external tooling calling this RPC directly, update it accordingly.
+4. **Grant**: the existing `add_cellar_bottle` grant line is updated to match its new parameter-type list (trailing `int`).
+
+### 2. Verification queries
+
+```sql
+-- add_cellar_bottle has the new 15-parameter signature ending in integer
+select routine_name, data_type from information_schema.parameters
+where specific_name = (
+  select specific_name from information_schema.routines
+  where routine_name = 'add_cellar_bottle'
+) order by ordinal_position;
+
+-- after adding one bottle with Quantity = 6 in the app, confirm six distinct rows
+-- with identical wine identity and all status = 'available':
+select id, producer, wine_cuvee, vintage, status, created_at
+from cellar_bottles
+where owner_user_id = auth.uid()
+order by created_at desc
+limit 6;
+```
+
+### RLS summary
+
+No RLS policy changed, and no new column was added. `cellar_bottles` keeps its existing `select`-only RLS (`auth.uid() = owner_user_id`) and its "no insert/update/delete policy at all" posture — every row created by a quantity-N submission still exists only because `add_cellar_bottle` (a `SECURITY DEFINER` function) inserted it, attributed to `auth.uid()`, exactly as a quantity-1 submission always has. The function independently re-validates ownership and every field regardless of what a caller sends (including clamping `p_quantity` to 1–100 server-side, so a bypassed client can never request zero, a negative count, or an unbounded number of rows), and the client can never supply `status`, `owner_user_id`, or any reservation/consumption field — the insert's column list has no such client-supplied values, only the server's own `v_uid` and the already-validated wine/bottle fields. Each created row is independently governed by the exact same reserve/return/consume RPCs as any other cellar bottle — nothing about creating several rows at once changes their individual authorization story afterward.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):
