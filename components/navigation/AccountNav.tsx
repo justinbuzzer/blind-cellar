@@ -8,6 +8,10 @@ export interface AccountNavProps {
   className?: string;
   /** Renders against a dark background (e.g. the home page's hero overlay) — swaps the light/dark text treatment accordingly. */
   tone?: "light" | "dark";
+  /** Overrides the signed-out link's visible text. Defaults to "Keep your tasting record" everywhere except where a caller opts into different copy (e.g. the landing header's "Login"). */
+  signedOutLabel?: string;
+  /** Optional aria-label for the signed-out link, for use alongside a shorter signedOutLabel. */
+  signedOutAriaLabel?: string;
 }
 
 /**
@@ -16,7 +20,12 @@ export interface AccountNavProps {
  * consistent with the rest of this app's navigation (Home, Host controls,
  * Tasting archive) always being available regardless of auth state.
  */
-export function AccountNav({ className = "", tone = "dark" }: AccountNavProps) {
+export function AccountNav({
+  className = "",
+  tone = "dark",
+  signedOutLabel = "Keep your tasting record",
+  signedOutAriaLabel,
+}: AccountNavProps) {
   const pathname = usePathname();
   const { user, loading } = useAuthUser();
 
@@ -42,8 +51,12 @@ export function AccountNav({ className = "", tone = "dark" }: AccountNavProps) {
   }
 
   return (
-    <Link href="/account/sign-in" className={`${base} ${toneClasses} ${className}`}>
-      Keep your tasting record
+    <Link
+      href="/account/sign-in"
+      aria-label={signedOutAriaLabel}
+      className={`${base} ${toneClasses} ${className}`}
+    >
+      {signedOutLabel}
     </Link>
   );
 }

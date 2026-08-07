@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { ArchiveLink } from "@/components/navigation/ArchiveLink";
 import { AccountNav } from "@/components/navigation/AccountNav";
 import { ProfileLink } from "@/components/navigation/ProfileLink";
@@ -38,13 +37,7 @@ export function LandingHeader() {
         <ArchiveLink tone="light" />
         <ProfileLink tone="light" />
         <CellarLink tone="light" />
-        <AccountNav tone="light" />
-        <Link
-          href="/host/new"
-          className="inline-flex min-h-[44px] items-center border border-landing-parchment/60 px-4 text-sm font-medium text-landing-parchment transition-colors hover:border-landing-parchment hover:bg-landing-parchment/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-landing-gold"
-        >
-          Host a tasting
-        </Link>
+        <AccountNav tone="light" signedOutLabel="Login" signedOutAriaLabel="Log in to your account" />
       </nav>
     </header>
   );
