@@ -13,8 +13,7 @@ import { GrapeBlendField, GrapeBlendFormValue } from "@/components/GrapeBlendFie
 import { WineStyleField } from "@/components/WineStyleField";
 import { SectionEyebrow } from "@/components/SectionEyebrow";
 
-const WINE_CUVEE_HINT =
-  "Add the specific wine name, vineyard, cru, or appellation where relevant — e.g. Nuits-Saint-Georges, Margaux, or Santa Rita Hills.";
+const WINE_CUVEE_HINT = "Enter the wine name or cuvée.";
 
 const APPELLATION_HINT = "Optional. Select the recognised appellation if applicable.";
 const APPELLATION_CLEARED_MESSAGE = "Appellation cleared because the region changed.";
