@@ -34,15 +34,12 @@ export function HeroSection() {
         <LandingHeader />
 
         <div className="landing-fade-in mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-6 py-20 text-center sm:px-10">
-          <p className="font-display text-lg italic text-landing-gold sm:text-xl">
-            A private table. A hidden bottle. A shared memory.
-          </p>
-          <h1 className="mt-5 font-display text-4xl font-semibold leading-[1.1] text-landing-parchment sm:text-6xl">
-            A better way to gather around wine.
+          <h1 className="font-display text-4xl font-semibold leading-[1.1] text-landing-parchment sm:text-6xl">
+            Private wine tastings, made simple.
           </h1>
           <p className="mx-auto mt-6 max-w-xl text-base leading-relaxed text-landing-parchment/85 sm:text-lg">
-            Create a private tasting, invite your table, and let every bottle
-            reveal its story in its own time.
+            Host blind, revealed, or seen tastings. Invite guests, record
+            every bottle, and keep the results.
           </p>
 
           <div className="mt-9 flex flex-col items-center justify-center gap-4 sm:flex-row">
@@ -67,10 +64,6 @@ export function HeroSection() {
           >
             See a demo report <span aria-hidden="true">&rarr;</span>
           </Link>
-
-          <p className="mt-4 text-xs uppercase tracking-[0.2em] text-landing-parchment/60">
-            Full blind&nbsp;&nbsp;·&nbsp;&nbsp;Course reveal&nbsp;&nbsp;·&nbsp;&nbsp;Seen tasting
-          </p>
         </div>
       </div>
     </section>

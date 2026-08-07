@@ -84,3 +84,21 @@ input[type="range"].rating-slider {
     transform: translateY(0);
   }
 }
+
+/* How it works' Host/Guest flow switch (components/landing/HowItWorksSection.tsx):
+   opacity only, no translate, so it never reads as a content shift. Gated on
+   prefers-reduced-motion like every other landing-page animation above. */
+@media (prefers-reduced-motion: no-preference) {
+  .landing-flow-fade {
+    animation: landing-flow-fade 250ms ease-out both;
+  }
+}
+
+@keyframes landing-flow-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

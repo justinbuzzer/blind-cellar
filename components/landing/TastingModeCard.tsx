@@ -7,7 +7,7 @@ interface TastingModeCardProps {
 /** One entry in the "Three ways to taste" section — a numeral, a fine rule, then title/description. */
 export function TastingModeCard({ number, title, description }: TastingModeCardProps) {
   return (
-    <div className="flex flex-col gap-4 px-2 py-8 sm:px-8 sm:py-0">
+    <div className="flex flex-col gap-3 px-2 py-5 sm:px-4 sm:py-0">
       <span className="font-display text-4xl text-landing-gold sm:text-5xl" aria-hidden="true">
         {number}
       </span>

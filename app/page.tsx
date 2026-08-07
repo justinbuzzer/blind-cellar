@@ -32,18 +32,15 @@ export default function HomePage() {
 
       <HowItWorksSection />
 
-      <section id="tasting-formats" className="scroll-mt-8 bg-landing-parchment py-24 sm:py-32">
+      <section id="tasting-formats" className="scroll-mt-8 bg-landing-parchment py-8 sm:py-12">
         <div className="mx-auto max-w-6xl px-6 sm:px-10">
           <div className="landing-fade-in max-w-2xl">
-            <p className="text-xs font-medium uppercase tracking-[0.2em] text-landing-claret">
-              Three ways to taste
-            </p>
-            <h2 className="mt-4 font-display text-3xl font-semibold text-landing-plum sm:text-4xl">
-              Built for the way your table gathers.
+            <h2 className="font-display text-3xl font-semibold text-landing-plum sm:text-4xl">
+              Choose your tasting format
             </h2>
           </div>
 
-          <div className="mt-14 divide-y divide-landing-stone sm:mt-16 sm:grid sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+          <div className="mt-6 divide-y divide-landing-stone sm:mt-8 sm:grid sm:grid-cols-3 sm:divide-x sm:divide-y-0">
             {TASTING_FORMATS.map((format) => (
               <TastingModeCard
                 key={format.number}
@@ -53,13 +50,6 @@ export default function HomePage() {
               />
             ))}
           </div>
-
-          <a
-            href="#tasting-formats"
-            className="mt-14 inline-block text-sm font-medium text-landing-claret underline-offset-4 transition-colors hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-landing-gold sm:mt-16"
-          >
-            Explore tasting formats &rarr;
-          </a>
         </div>
       </section>
 
