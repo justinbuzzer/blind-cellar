@@ -31,6 +31,65 @@ export const WINE_STYLE_LABELS: Record<WineStyle, string> = {
   other: "Other",
 };
 
+/**
+ * The wine-identity fields shared, unchanged, by both the tasting bottle
+ * form and the Personal Cellar bottle form (see README "Personal Cellar")
+ * — kept as one shape so the two can never drift into divergent field sets
+ * or validation. `BottleFormInput`/`CellarBottleFormInput` each extend this
+ * with their own additional fields (a private per-tasting note vs. bottle
+ * format/storage/personal note).
+ */
+export interface WineIdentityInput {
+  country: string;
+  region: string;
+  /** "" until the contributor picks single/blend for this bottle. */
+  grapeBlendMode: GrapeBlendMode | "";
+  grapeBlend: string;
+  /** Blend mode only: grapes picked from the curated list. Empty/unused in single mode. */
+  selectedGrapes: string[];
+  /** Blend mode only: raw free text for varieties not on the curated list. Empty/unused in single mode. */
+  otherGrapesText: string;
+  producer: string;
+  wineName: string;
+  vintage: string;
+  wineStyle: WineStyle | "";
+}
+
+/**
+ * Personal Cellar v1 (see README "Personal Cellar"): a controlled bottle-size
+ * vocabulary, aligned with real cellar usage rather than every possible
+ * format. "Other" pairs with a short free-text detail field.
+ */
+export type BottleFormat = "375ml" | "500ml" | "750ml" | "1500ml" | "other";
+
+export const BOTTLE_FORMATS: BottleFormat[] = ["375ml", "500ml", "750ml", "1500ml", "other"];
+
+export const BOTTLE_FORMAT_LABELS: Record<BottleFormat, string> = {
+  "375ml": "375ml (half)",
+  "500ml": "500ml",
+  "750ml": "750ml (standard)",
+  "1500ml": "Magnum (1.5L)",
+  other: "Other",
+};
+
+/**
+ * A cellar bottle's lifecycle (see README "Personal Cellar" —
+ * "Status lifecycle"): `available` → `reserved` (registered for a tasting,
+ * not yet used or returned) → `consumed` (used; permanent, never reverts).
+ * `reserved` can also return to `available` if the bottle is removed from
+ * the tasting before it begins. Enforced primarily by
+ * `cellar_bottles_status_shape` in `supabase/schema.sql`, not just this type.
+ */
+export type CellarBottleStatus = "available" | "reserved" | "consumed";
+
+export const CELLAR_BOTTLE_STATUSES: CellarBottleStatus[] = ["available", "reserved", "consumed"];
+
+export const CELLAR_STATUS_LABELS: Record<CellarBottleStatus, string> = {
+  available: "Available",
+  reserved: "Reserved",
+  consumed: "Consumed",
+};
+
 /** The private answer key for one bottle. Never shown to other participants before reveal. */
 export interface WineAnswerKey {
   id: string;

@@ -300,6 +300,70 @@ The last two queries should each show exactly one row, granted to `authenticated
 
 Every guest id — host or not — is already fully readable by anyone via the existing `grant select (id, session_id, display_name, created_at, completed_at) on guests to anon, authenticated`, with no row-level restriction of any kind. This new grant does not expose a previously-hidden identifier; it only tells an already-authorized caller *which* already-public guest id belongs to the host, for a session they already hold an `account_tasting_records` link to. `wines`/`wine_guesses` (the actually sensitive, answer-key-bearing tables) are completely untouched by this migration — no new column grant on either.
 
+## Migrating for Personal Cellar v1
+
+Builds on everything above — requires the base schema (bottle registration, `wines`) already applied. Re-running the full `supabase/schema.sql` brings an existing project up to date; every statement here is additive and safe to re-run.
+
+### 1. Run the SQL (in this order — already correct if you paste the whole file)
+
+1. **`public.cellar_bottles`** is created — one row per physical bottle (see README "Personal Cellar" — "Physical-bottle model"), owned by `owner_user_id` (→ `auth.users`, cascade delete). Wine-identity columns (`country`, `region`, `grape_blend_mode`, `grape_blend`, `grape_blend_components`, `vintage`, `producer`, `wine_cuvee`, `wine_style`) mirror `wines`' own shape exactly, not the nullable variant a first sketch of this feature suggested — see "Assumptions and design choices" in the README. `status` (`available`/`reserved`/`consumed`) plus the reservation/consumption columns are constrained by `cellar_bottles_status_shape`, a single check constraint enforcing all three valid shapes and rejecting every other combination.
+2. **Five indexes** are created: `(owner_user_id, status)` for the cellar list's tab filter; `(owner_user_id, created_at desc)` for newest-first ordering; three partial indexes (`reserved_session_id`, `reserved_tasting_bottle_id`, `consumed_session_id`, each `where ... is not null`) supporting the RPCs' own lookups.
+3. **RLS is enabled, with exactly one policy**: `cellar_bottles_select_own`, `for select using (auth.uid() = owner_user_id)`. There is no insert, update, or delete policy at all — stricter than `profiles`, since every mutation goes through a `SECURITY DEFINER` RPC instead (see step 5 below).
+4. **`wines.cellar_bottle_id`** is added — nullable, `references public.cellar_bottles(id) on delete set null`, null for every existing and every future manually-registered bottle. A unique partial index (`wines_cellar_bottle_id_uniq`) guarantees no two `wines` rows can ever reference the same cellar bottle. No new column grant is added for it — it stays unreadable to `anon`/`authenticated` table-level access, exactly like `contributor_guest_id`.
+5. **`repack_tasting_order(p_session_id uuid)`** is extracted from `delete_bottle`'s existing inline re-packing logic, so `return_cellar_bottle_to_available` (below) can reuse it exactly rather than duplicating it.
+6. **`delete_bottle` is modified** (not a new function — same signature, same grant) to also release a linked cellar bottle back to `available` when the bottle being deleted has a non-null `cellar_bottle_id`. This is the only change to any pre-existing function in this migration.
+7. **Five new RPCs** are created: `add_cellar_bottle`, `update_cellar_bottle`, `register_bottle_from_cellar`, `return_cellar_bottle_to_available`, `mark_cellar_bottle_consumed` — see README "Personal Cellar" for what each one does and validates.
+8. **Grants**: `execute` on all five new RPCs to `authenticated` only (each requires `auth.uid()`, so granting to `anon` would only ever raise `not_authenticated`/`cellar_bottle_unavailable`).
+
+### 2. Verification queries
+
+```sql
+-- Table, status-shape constraint, and format-detail constraint exist
+select conname, contype from pg_constraint where conrelid = 'public.cellar_bottles'::regclass;
+
+-- All five indexes exist
+select indexname from pg_indexes where tablename = 'cellar_bottles';
+
+-- RLS is on, and exactly one policy exists (select-only)
+select relrowsecurity from pg_class where relname = 'cellar_bottles';
+select polname, polcmd from pg_policy where polrelid = 'public.cellar_bottles'::regclass;
+
+-- anon has no privileges at all on cellar_bottles; authenticated has select only
+select grantee, privilege_type from information_schema.role_table_grants
+where table_name = 'cellar_bottles';
+
+-- wines.cellar_bottle_id exists, and its unique partial index exists
+select column_name from information_schema.columns
+where table_name = 'wines' and column_name = 'cellar_bottle_id';
+select indexname, indexdef from pg_indexes where indexname = 'wines_cellar_bottle_id_uniq';
+
+-- All five RPCs exist and are granted to authenticated only
+select routine_name from information_schema.routines
+where routine_name in (
+  'add_cellar_bottle', 'update_cellar_bottle', 'register_bottle_from_cellar',
+  'return_cellar_bottle_to_available', 'mark_cellar_bottle_consumed'
+);
+```
+
+The `role_table_grants` query should show only `authenticated` with `SELECT` — no `anon` row, and no `INSERT`/`UPDATE`/`DELETE` for either role.
+
+### RLS policy summary
+
+| Role | Select own rows | Select others' rows | Insert | Update | Delete |
+|---|---|---|---|---|---|
+| `anon` | No (no grant at all) | No | No | No | No |
+| `authenticated` | Yes (`auth.uid() = owner_user_id`) | No | No (no policy) | No (no policy) | No (no policy) |
+
+Every mutation — add, edit, reserve-via-registration, return, consume — happens inside one of the five `SECURITY DEFINER` RPCs, each of which independently re-validates `auth.uid()` and ownership regardless of who calls it (every RPC in this file is reachable directly via the anon key). This is deliberately stricter than `profiles`' "owner may update their own row" column-grant pattern: a cellar bottle's status/reservation fields must never be reachable by a plain client update, even the owner's own.
+
+### Why reservation can't double-book a bottle
+
+`register_bottle_from_cellar` takes two `select ... for update` row locks in sequence — first the tasting session (for the existing bottle-numbering counter, same as `register_bottle` already does), then the cellar bottle itself, re-checking `status = 'available'` only *after* acquiring that second lock. If two requests race to use the same cellar bottle, the second one's lock acquisition blocks until the first transaction commits; when it resumes, it re-reads the now-`reserved` row and fails with the same generic `cellar_bottle_unavailable` a "bottle doesn't exist" or "not yours" failure would also produce.
+
+### Why `region`/`grape_blend`/`vintage` are `not null`, not nullable
+
+An earlier sketch of this schema made these three columns nullable. They're `not null` (`region`/`grape_blend` defaulting to `''`, matching `wines`' own columns exactly; `vintage` required) instead, because every add/edit RPC already requires them non-blank in practice — the same validation the tasting bottle form enforces. Making them nullable at the column level would only invite the two tables' wine-identity shapes to drift apart over time, for no real flexibility gained.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):
@@ -321,6 +385,7 @@ Every tasting workflow (hosting, joining, registering bottles, guessing, rating,
 - **The Tasting Archive (`/archive`, `app/api/archive/lookup`) introduces no new privilege at all** — it's a thin, bounded batch wrapper around `get_host_session`/`get_guest_session_state`, the same two token-validating RPCs the host control and guest tasting pages already call one at a time. It never accepts a bare session id with no token attached, never queries "every revealed session," and never returns a raw token in its response — only a minimized per-session summary (title, date, mode, counts, Wine of the Night, and the caller's own accuracy where applicable) for references the request already proved ownership of.
 - **Account-linked tasting records (`public.account_tasting_records`, `claim_account_tasting_record`) also introduce no new privilege** — see "Migrating for account-linked tasting records" above for the full schema. The short version: the only write path re-validates the exact same host/guest token every other RPC already does, `auth.uid()` (never a client-supplied user id) decides whose row gets written, and the table has no insert/update/delete policy for any role at all — a signed-in user who merely knows or guesses a session id, with no valid token for it, can never create a link. Reading is plain RLS (`auth.uid() = user_id`), so "Your record" needs no token round trip at all — ownership of the *row* is what's being checked there, not ownership of a token.
 - **The Palate Profile (`/profile`, `/api/profile`, `/api/profile/ledger`) introduces no new privilege either** — see "Migrating for the Palate Profile" above. Both Route Handlers use the cookie-aware client (so every query runs as the caller's own `authenticated` role, not an elevated one), read `account_tasting_records` under its existing RLS (`auth.uid() = user_id`, no exceptions), and re-derive every session's report through the same `loadTastingReportData` pipeline the archive and results page already call — there is no separate, broader "get all my data" query path, and no aggregate figure is ever computed from another user's rows.
+- **Personal Cellar (`cellar_bottles` and its five RPCs) is the strictest privacy boundary in this app** — see "Migrating for Personal Cellar v1" above. Unlike every other table, there is no direct-client write path at all, not even an "owner may update their own row" policy: add/edit/reserve/return/consume all go through a `SECURITY DEFINER` RPC that re-validates `auth.uid()` and ownership independently, every time. `wines.cellar_bottle_id` carries no `anon`/`authenticated` column grant, so cellar provenance is structurally invisible to the host, other participants, and reports — not just hidden by convention.
 - **Bug fixed in this revision**: the `guest_visible_wines` and `revealed_wine_guesses` views were previously declared with `security_invoker = true`. Combined with `wines`/`wine_guesses` having Row Level Security enabled but no SELECT policy for `anon`, that setting would have made these views return **zero rows for anon on a real Supabase project** — a security_invoker view evaluates RLS as the calling role, and anon was never granted any row-visibility on those tables directly. The fix is to not set `security_invoker` (the default, `false`, runs the view as its owner), so the view's own `CASE`/`WHERE` masking logic — not the caller's RLS — is what decides what anon sees. This was never caught before because the app had not yet been tested against a live Supabase project.
 
 ### Honest MVP limitations
@@ -337,5 +402,8 @@ Every tasting workflow (hosting, joining, registering bottles, guessing, rating,
 - **Account email delivery depends on Supabase's built-in email sending unless a custom SMTP provider is configured** (see "Setting up Supabase Auth (accounts)" above) — the built-in sender is rate-limited and intended for development, not production volume.
 - **The Tasted Wines Ledger paginates in memory, not at the database level.** `/api/profile/ledger` loads this one signed-in user's own account-linked sessions (never global data, never another user's), builds every wine observation, then filters/sorts/paginates that in-memory list before responding — the browser never receives more than one page, but the server-side bound is "this user's lifetime tasting history," not a database `LIMIT`/`OFFSET`. For a private dinner-party tool this is a non-issue in practice; a very high-volume account would eventually want the ledger's wine data queryable directly in SQL instead (see README "Recommended next features").
 - **No un-linking a single tasting from the Palate Profile.** Once a session is account-linked (automatically or via claim — see "Migrating for account-linked tasting records"), it always contributes to the profile's figures; there is no per-session "hide from my profile" action, matching the existing "no un-linking" limitation on account-linked records generally.
+- **No tasting-session cancellation, so "return to cellar" is scoped to the `registration` status.** This app has no `cancelled` session status today — sessions only ever move `registration → collecting → revealed`. A reserved cellar bottle can be returned to `available` only before its tasting leaves `registration`; once collecting or revealed, the only path forward is completing the tasting and either marking the bottle consumed or leaving it reserved indefinitely. If session cancellation is ever added, its handler would need to call the same cellar-release logic `delete_bottle`/`return_cellar_bottle_to_available` already use.
+- **No "swap this cellar bottle for a different one" replacement flow.** Before a tasting begins, the only supported change to a cellar-linked tasting bottle is returning it (via the existing pre-tasting delete flow or `/cellar`) and then registering a fresh selection — there is no single "replace" action that does both atomically. This was deliberately deferred rather than implemented as a riskier combined operation.
+- **The cellar selector loads up to 300 available bottles and filters/searches client-side** rather than querying per keystroke — the same "small personal dataset" scaling boundary already documented for the Palate Profile's ledger. A cellar with more than a few hundred bottles would eventually want server-side search instead.
 
 If you need real accounts, audit logs, or token revocation later, that's a distinct follow-up step (see the README's "Recommended next features").

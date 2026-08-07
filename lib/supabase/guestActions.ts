@@ -1,5 +1,5 @@
 import { SupabaseClient } from "@supabase/supabase-js";
-import { Confidence, GrapeBlendMode, WineGuess, WineStyle } from "@/types/tasting";
+import { Confidence, WineGuess, WineIdentityInput } from "@/types/tasting";
 import { reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
 import {
   ActiveBottleStateResponse,
@@ -145,19 +145,8 @@ export async function upsertSeenRating(
   });
 }
 
-export interface BottleFormInput {
-  country: string;
-  region: string;
-  grapeBlendMode: GrapeBlendMode | "";
-  grapeBlend: string;
-  /** Blend mode only: curated grapes picked from the multi-select. */
-  selectedGrapes: string[];
-  /** Blend mode only: raw free text for varieties not on the curated list. */
-  otherGrapesText: string;
-  producer: string;
-  wineName: string;
-  vintage: string;
-  wineStyle: WineStyle | "";
+export interface BottleFormInput extends WineIdentityInput {
+  /** Private, per-tasting-only note — never part of the shared wine-identity shape (see WineIdentityInput). */
   notes: string;
 }
 

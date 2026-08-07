@@ -1,7 +1,6 @@
-import { BottleFormErrors } from "@/components/registration/BottleForm";
-import { BottleFormInput } from "@/lib/supabase/guestActions";
+import { WineIdentityErrors } from "@/components/registration/WineIdentityFields";
 import { combineBlendComponents, isKnownCountry, isValidRegionForCountry } from "@/lib/wineReferenceData";
-import { TASTING_MODES, TastingMode, WineGuess } from "@/types/tasting";
+import { TASTING_MODES, TastingMode, WineGuess, WineIdentityInput } from "@/types/tasting";
 
 /** Type guard for the `tastingMode` field submitted from session creation. */
 export function isValidTastingMode(value: string): value is TastingMode {
@@ -24,8 +23,16 @@ export function isValidVintage(value: string): boolean {
   return year >= 1900 && year <= currentYear + 1;
 }
 
-export function validateBottleForm(input: BottleFormInput): BottleFormErrors {
-  const errors: BottleFormErrors = {};
+/**
+ * Validates the wine-identity fields shared by the tasting bottle form and
+ * the Personal Cellar bottle form (see README "Personal Cellar") — takes the
+ * common `WineIdentityInput` shape so both `BottleFormInput` and
+ * `CellarBottleFormInput` (each a superset) can reuse it unchanged, keeping
+ * their validation rules identical by construction rather than by
+ * convention.
+ */
+export function validateBottleForm(input: WineIdentityInput): WineIdentityErrors {
+  const errors: WineIdentityErrors = {};
 
   if (!input.country.trim() || !isKnownCountry(input.country)) {
     errors.country = "Select a country.";
@@ -63,7 +70,8 @@ export function validateBottleForm(input: BottleFormInput): BottleFormErrors {
   return errors;
 }
 
-export function hasBottleFormErrors(errors: BottleFormErrors): boolean {
+/** Generic over any bottle-shaped error object (tasting or cellar) — only ever checks for the presence of a key. */
+export function hasBottleFormErrors(errors: object): boolean {
   return Object.keys(errors).length > 0;
 }
 

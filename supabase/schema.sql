@@ -1142,9 +1142,20 @@ $$;
 -- Participant: delete their own bottle. The bottle_number is never reused
 -- (see register_bottle's next_bottle_number counter) and remaining bottles
 -- keep their bottle_number exactly as-is. tasting_order, however, must stay
--- a contiguous 1..N permutation, so it's re-packed after the delete (the
--- session row is locked first to serialize this against concurrent
--- register/update/reorder calls on the same session).
+-- a contiguous 1..N permutation, so it's re-packed after the delete via
+-- repack_tasting_order (see "Personal Cellar" section below — forward
+-- reference is safe since plpgsql bodies aren't resolved until called, and
+-- that section runs later in this same script, before any RPC is ever
+-- invoked by the app).
+--
+-- MIGRATION-SENSITIVE (Personal Cellar): if this bottle was registered from
+-- the contributor's cellar (wines.cellar_bottle_id is not null — a column
+-- added later in this file, so this reference is forward-safe for the same
+-- reason as repack_tasting_order above), releasing it back to `available`
+-- here is what makes this existing, only pre-tasting removal path also
+-- double as "return to cellar" with zero UI changes — see README "Personal
+-- Cellar". The `where status = 'reserved'` guard makes this a no-op if the
+-- cellar bottle was already returned/consumed through another path.
 create or replace function delete_bottle(
   p_guest_token text,
   p_wine_id uuid
@@ -1173,15 +1184,19 @@ begin
     raise exception 'registration_closed';
   end if;
 
+  if v_wine.cellar_bottle_id is not null then
+    update cellar_bottles
+    set status = 'available',
+        reserved_session_id = null,
+        reserved_tasting_bottle_id = null,
+        reserved_at = null,
+        updated_at = now()
+    where id = v_wine.cellar_bottle_id and status = 'reserved';
+  end if;
+
   delete from wines where id = p_wine_id;
 
-  update wines w
-  set tasting_order = ranked.new_order
-  from (
-    select id, row_number() over (order by tasting_order) as new_order
-    from wines where session_id = v_session.id
-  ) ranked
-  where w.id = ranked.id and w.tasting_order <> ranked.new_order;
+  perform repack_tasting_order(v_session.id);
 end;
 $$;
 
@@ -2294,3 +2309,516 @@ grant update (include_seen_tastings) on public.profiles to authenticated;
 -- authenticated-only, since anon has no account-linked records to resolve
 -- this for.
 grant select (host_guest_id) on tasting_sessions to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Personal Cellar v1 — see README "Personal Cellar" and SUPABASE_SETUP.md
+-- "Migrating for Personal Cellar v1".
+--
+-- A private, account-owned inventory of physical bottles, wholly separate
+-- from the anonymous host/guest token model above: a cellar bottle belongs
+-- to exactly one auth.users row (never a guest/session identity), is never
+-- readable by anyone but its owner, and only ever becomes visible inside a
+-- tasting indirectly — as the already-anonymous wines row it was used to
+-- create. No existing RLS, RPC, or grant on tasting_sessions/wines/guests/
+-- wine_guesses is loosened by any of this.
+-- ---------------------------------------------------------------------------
+
+-- One record = one physical bottle (see README "Physical-bottle model") —
+-- deliberately not a quantity column. `region`/`grape_blend`/`vintage` use
+-- the same not-null-with-blank-default shape as the equivalent `wines`
+-- columns (rather than this file's own earlier "nullable" sketch) so the two
+-- tables can never drift into divergent wine-field formats — every add/edit
+-- RPC below still requires them non-blank in practice, exactly like
+-- register_bottle/update_bottle already do for `wines`.
+create table if not exists public.cellar_bottles (
+  id uuid primary key default gen_random_uuid(),
+  owner_user_id uuid not null references auth.users(id) on delete cascade,
+
+  wine_style text not null check (wine_style in ('bubbles', 'white', 'red', 'sweet', 'other')),
+  country text not null,
+  region text not null default '',
+  grape_blend_mode text check (grape_blend_mode is null or grape_blend_mode in ('single', 'blend')),
+  grape_blend text not null default '',
+  grape_blend_components jsonb,
+  vintage text not null,
+  producer text not null,
+  wine_cuvee text not null,
+
+  bottle_format text not null default '750ml' check (bottle_format in ('375ml', '500ml', '750ml', '1500ml', 'other')),
+  -- Free-text detail, required only when bottle_format = 'other' (see check
+  -- constraint below) — e.g. "3L double magnum".
+  bottle_format_other text,
+  storage_location text,
+  personal_note text,
+
+  status text not null default 'available' check (status in ('available', 'reserved', 'consumed')),
+
+  -- MIGRATION-SENSITIVE DESIGN NOTE: `on delete set null` here (rather than
+  -- `restrict`) is intentionally paired with the status-shape check
+  -- constraint below as a belt-and-suspenders pair: every RPC that deletes a
+  -- reserved bottle's `wines` row (delete_bottle,
+  -- return_cellar_bottle_to_available) always clears these three columns
+  -- back to null in the SAME transaction *before* the delete, so this FK
+  -- action is never actually exercised on the happy path. If some future
+  -- code path ever deleted a linked `wines` row without going through one of
+  -- those two RPCs, `on delete set null` would leave `status = 'reserved'`
+  -- with a null `reserved_tasting_bottle_id` — which the check constraint
+  -- below forbids — so the deletion itself would fail loudly instead of
+  -- silently orphaning a reservation.
+  reserved_session_id uuid references public.tasting_sessions(id) on delete set null,
+  reserved_tasting_bottle_id uuid references public.wines(id) on delete set null,
+  reserved_at timestamptz,
+
+  consumed_at timestamptz,
+  consumed_session_id uuid references public.tasting_sessions(id) on delete set null,
+  consumed_tasting_bottle_id uuid references public.wines(id) on delete set null,
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  -- The three status invariants from the spec, enforced in the database
+  -- itself rather than trusted to application code — see README "Personal
+  -- Cellar" for the full lifecycle. Every RPC below writes exactly one of
+  -- these three shapes per transaction; there is no fourth shape possible.
+  constraint cellar_bottles_status_shape check (
+    (status = 'available'
+      and reserved_session_id is null and reserved_tasting_bottle_id is null and reserved_at is null
+      and consumed_at is null and consumed_session_id is null and consumed_tasting_bottle_id is null)
+    or
+    (status = 'reserved'
+      and reserved_session_id is not null and reserved_tasting_bottle_id is not null and reserved_at is not null
+      and consumed_at is null and consumed_session_id is null and consumed_tasting_bottle_id is null)
+    or
+    (status = 'consumed'
+      and reserved_session_id is null and reserved_tasting_bottle_id is null and reserved_at is null
+      and consumed_at is not null and consumed_session_id is not null and consumed_tasting_bottle_id is not null)
+  ),
+  constraint cellar_bottles_format_other_required check (
+    bottle_format <> 'other' or bottle_format_other is not null
+  )
+);
+
+-- Cellar list default filter ("Available") and the Reserved/Consumed tabs
+-- both query (owner_user_id, status) together; the archive-style
+-- newest-first ordering uses (owner_user_id, created_at desc). The other two
+-- support the reservation/consumption RPCs' own lookups and are narrow on
+-- purpose (partial, non-null only).
+create index if not exists cellar_bottles_owner_status_idx on public.cellar_bottles (owner_user_id, status);
+create index if not exists cellar_bottles_owner_created_idx on public.cellar_bottles (owner_user_id, created_at desc);
+create index if not exists cellar_bottles_reserved_session_idx on public.cellar_bottles (reserved_session_id) where reserved_session_id is not null;
+create index if not exists cellar_bottles_reserved_wine_idx on public.cellar_bottles (reserved_tasting_bottle_id) where reserved_tasting_bottle_id is not null;
+create index if not exists cellar_bottles_consumed_session_idx on public.cellar_bottles (consumed_session_id) where consumed_session_id is not null;
+
+alter table public.cellar_bottles enable row level security;
+
+drop policy if exists cellar_bottles_select_own on public.cellar_bottles;
+create policy cellar_bottles_select_own on public.cellar_bottles
+  for select using (auth.uid() = owner_user_id);
+
+-- No insert/update/delete policy at all, for any role — stricter than even
+-- `profiles`. Unlike a display name or a scope preference, a cellar bottle's
+-- status/reservation fields are exactly the kind of "must be transactionally
+-- consistent with another table" data this app has always kept off direct
+-- client mutation paths; add/edit/reserve/return/consume all go through the
+-- SECURITY DEFINER RPCs below instead, every one of which independently
+-- re-validates auth.uid() and ownership regardless of who calls it (the
+-- anon key can reach any RPC in this file).
+revoke all on public.cellar_bottles from anon, authenticated;
+grant select on public.cellar_bottles to authenticated;
+
+-- Additive, nullable link from an existing tasting bottle back to the
+-- cellar bottle it was created from — null for every manually-registered
+-- bottle, before and after this migration. Never exposed to the host, other
+-- participants, or reports: no anon/authenticated column grant is added for
+-- it (the narrow `wines` grant a few sections above stays exactly as it
+-- was), so the only way to ever read it is a SECURITY DEFINER function that
+-- explicitly selects it.
+alter table public.wines add column if not exists cellar_bottle_id uuid references public.cellar_bottles(id) on delete set null;
+
+-- The reservation-time write path (register_bottle_from_cellar below) is the
+-- only place this column is ever set, always to a wines.id it just inserted
+-- in the same transaction — so in practice this can never collide. This
+-- index is the hard backstop that makes that a guarantee rather than an
+-- assumption: no two wines rows can ever reference the same cellar bottle.
+create unique index if not exists wines_cellar_bottle_id_uniq on public.wines (cellar_bottle_id) where cellar_bottle_id is not null;
+
+-- Re-packs tasting_order into a contiguous 1..N permutation after a bottle
+-- is removed from a session — extracted from delete_bottle so
+-- return_cellar_bottle_to_available (below) can reuse the exact same logic
+-- rather than duplicating it. Not SECURITY DEFINER: like
+-- validate_grape_blend_components above, it only ever runs via `perform`
+-- from inside a caller that already has the privilege it needs.
+create or replace function public.repack_tasting_order(p_session_id uuid) returns void
+language plpgsql
+as $$
+begin
+  update wines w
+  set tasting_order = ranked.new_order
+  from (
+    select id, row_number() over (order by tasting_order) as new_order
+    from wines where session_id = p_session_id
+  ) ranked
+  where w.id = ranked.id and w.tasting_order <> ranked.new_order;
+end;
+$$;
+
+-- Owner: add a new available cellar bottle. SECURITY DEFINER only to reach
+-- the table past its "no insert policy at all" RLS above; auth.uid() (never
+-- a client-supplied owner id) is what the new row is actually attributed to.
+-- Validation mirrors register_bottle's exactly, plus the cellar-only bottle
+-- format/storage/note fields.
+create or replace function public.add_cellar_bottle(
+  p_country text,
+  p_region text,
+  p_grape_blend_mode text,
+  p_grape_blend text,
+  p_grape_blend_components jsonb,
+  p_producer text,
+  p_wine_cuvee text,
+  p_vintage text,
+  p_wine_style text,
+  p_bottle_format text,
+  p_bottle_format_other text,
+  p_storage_location text,
+  p_personal_note text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_id uuid;
+begin
+  if v_uid is null then
+    raise exception 'not_authenticated';
+  end if;
+  if p_grape_blend_mode not in ('single', 'blend') then
+    raise exception 'invalid_grape_blend_mode';
+  end if;
+  if p_wine_style not in ('bubbles', 'white', 'red', 'sweet', 'other') then
+    raise exception 'invalid_wine_style';
+  end if;
+  if p_bottle_format not in ('375ml', '500ml', '750ml', '1500ml', 'other') then
+    raise exception 'invalid_bottle_format';
+  end if;
+  if p_bottle_format = 'other' and length(btrim(coalesce(p_bottle_format_other, ''))) = 0 then
+    raise exception 'bottle_format_detail_required';
+  end if;
+  if length(coalesce(p_bottle_format_other, '')) > 60 then
+    raise exception 'bottle_format_detail_too_long';
+  end if;
+  if length(coalesce(p_storage_location, '')) > 120 then
+    raise exception 'storage_location_too_long';
+  end if;
+  if length(coalesce(p_personal_note, '')) > 500 then
+    raise exception 'personal_note_too_long';
+  end if;
+  perform validate_grape_blend_components(p_grape_blend_mode, p_grape_blend_components);
+  if btrim(coalesce(p_country, '')) = '' or btrim(coalesce(p_region, '')) = ''
+     or btrim(coalesce(p_grape_blend, '')) = ''
+     or btrim(coalesce(p_producer, '')) = '' or btrim(coalesce(p_wine_cuvee, '')) = ''
+     or btrim(coalesce(p_vintage, '')) = '' then
+    raise exception 'bottle_fields_required';
+  end if;
+
+  insert into public.cellar_bottles (
+    owner_user_id, wine_style, country, region, grape_blend_mode, grape_blend, grape_blend_components,
+    producer, wine_cuvee, vintage, bottle_format, bottle_format_other, storage_location, personal_note
+  ) values (
+    v_uid, p_wine_style, btrim(p_country), btrim(p_region), p_grape_blend_mode, btrim(p_grape_blend), p_grape_blend_components,
+    btrim(p_producer), btrim(p_wine_cuvee), btrim(p_vintage), p_bottle_format,
+    nullif(btrim(coalesce(p_bottle_format_other, '')), ''),
+    nullif(btrim(coalesce(p_storage_location, '')), ''),
+    nullif(btrim(coalesce(p_personal_note, '')), '')
+  )
+  returning id into v_id;
+
+  return jsonb_build_object('id', v_id);
+end;
+$$;
+
+-- Owner: edit a bottle that is still `available`. Re-validated the same way
+-- as add_cellar_bottle; a `reserved`/`consumed` row is never matched by the
+-- `for update` lookup's status check, so this always fails safely for those
+-- (see README — reserved/consumed bottles are read-only in v1).
+create or replace function public.update_cellar_bottle(
+  p_cellar_bottle_id uuid,
+  p_country text,
+  p_region text,
+  p_grape_blend_mode text,
+  p_grape_blend text,
+  p_grape_blend_components jsonb,
+  p_producer text,
+  p_wine_cuvee text,
+  p_vintage text,
+  p_wine_style text,
+  p_bottle_format text,
+  p_bottle_format_other text,
+  p_storage_location text,
+  p_personal_note text
+) returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_cellar cellar_bottles%rowtype;
+begin
+  if v_uid is null then
+    raise exception 'not_authenticated';
+  end if;
+
+  select * into v_cellar from cellar_bottles where id = p_cellar_bottle_id for update;
+  if not found or v_cellar.owner_user_id is distinct from v_uid then
+    raise exception 'cellar_bottle_not_found';
+  end if;
+  if v_cellar.status <> 'available' then
+    raise exception 'cellar_bottle_not_editable';
+  end if;
+
+  if p_grape_blend_mode not in ('single', 'blend') then
+    raise exception 'invalid_grape_blend_mode';
+  end if;
+  if p_wine_style not in ('bubbles', 'white', 'red', 'sweet', 'other') then
+    raise exception 'invalid_wine_style';
+  end if;
+  if p_bottle_format not in ('375ml', '500ml', '750ml', '1500ml', 'other') then
+    raise exception 'invalid_bottle_format';
+  end if;
+  if p_bottle_format = 'other' and length(btrim(coalesce(p_bottle_format_other, ''))) = 0 then
+    raise exception 'bottle_format_detail_required';
+  end if;
+  if length(coalesce(p_bottle_format_other, '')) > 60 then
+    raise exception 'bottle_format_detail_too_long';
+  end if;
+  if length(coalesce(p_storage_location, '')) > 120 then
+    raise exception 'storage_location_too_long';
+  end if;
+  if length(coalesce(p_personal_note, '')) > 500 then
+    raise exception 'personal_note_too_long';
+  end if;
+  perform validate_grape_blend_components(p_grape_blend_mode, p_grape_blend_components);
+  if btrim(coalesce(p_country, '')) = '' or btrim(coalesce(p_region, '')) = ''
+     or btrim(coalesce(p_grape_blend, '')) = ''
+     or btrim(coalesce(p_producer, '')) = '' or btrim(coalesce(p_wine_cuvee, '')) = ''
+     or btrim(coalesce(p_vintage, '')) = '' then
+    raise exception 'bottle_fields_required';
+  end if;
+
+  update cellar_bottles set
+    wine_style = p_wine_style,
+    country = btrim(p_country),
+    region = btrim(p_region),
+    grape_blend_mode = p_grape_blend_mode,
+    grape_blend = btrim(p_grape_blend),
+    grape_blend_components = p_grape_blend_components,
+    producer = btrim(p_producer),
+    wine_cuvee = btrim(p_wine_cuvee),
+    vintage = btrim(p_vintage),
+    bottle_format = p_bottle_format,
+    bottle_format_other = nullif(btrim(coalesce(p_bottle_format_other, '')), ''),
+    storage_location = nullif(btrim(coalesce(p_storage_location, '')), ''),
+    personal_note = nullif(btrim(coalesce(p_personal_note, '')), ''),
+    updated_at = now()
+  where id = p_cellar_bottle_id;
+end;
+$$;
+
+-- Participant (who must also be the cellar owner): register a tasting
+-- bottle from an available cellar bottle, atomically reserving it in the
+-- same transaction — see README "Personal Cellar" — "Atomic reserve +
+-- tasting-bottle creation". Reachable directly via the anon key regardless
+-- of caller, so every condition is re-validated here independently: this
+-- never trusts that a Route Handler or the browser already checked
+-- anything. Both `for update` locks (session row, then cellar row) are what
+-- make concurrent double-booking impossible — a second concurrent call
+-- blocks on whichever row the first call locked first, then re-reads
+-- already-committed state and fails its own check.
+--
+-- One error tag ('cellar_bottle_unavailable') covers every cellar-side
+-- failure — bottle not found, not owned by this signed-in user, or already
+-- reserved/consumed — so a caller can never distinguish "not yours" from
+-- "no longer available" from the response alone.
+create or replace function public.register_bottle_from_cellar(
+  p_guest_token text,
+  p_cellar_bottle_id uuid
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_guest guests%rowtype;
+  v_session tasting_sessions%rowtype;
+  v_cellar cellar_bottles%rowtype;
+  v_next_number int;
+  v_next_order int;
+  v_wine_id uuid;
+begin
+  select * into v_guest from guests where guest_token = p_guest_token;
+  if not found then
+    raise exception 'invalid_guest_token';
+  end if;
+
+  select * into v_session from tasting_sessions where id = v_guest.session_id for update;
+  if v_session.status <> 'registration' then
+    raise exception 'registration_closed';
+  end if;
+
+  if v_uid is null then
+    raise exception 'cellar_bottle_unavailable';
+  end if;
+
+  select * into v_cellar from cellar_bottles where id = p_cellar_bottle_id for update;
+  if not found or v_cellar.owner_user_id is distinct from v_uid or v_cellar.status <> 'available' then
+    raise exception 'cellar_bottle_unavailable';
+  end if;
+
+  perform validate_grape_blend_components(v_cellar.grape_blend_mode, v_cellar.grape_blend_components);
+
+  v_next_number := v_session.next_bottle_number;
+  select coalesce(max(tasting_order), 0) + 1 into v_next_order
+  from wines where session_id = v_session.id;
+
+  insert into wines (
+    session_id, display_order, bottle_number, tasting_order, anonymous_code, contributor_guest_id,
+    country, region, grape_style, grape_blend_mode, grape_blend_components, producer, wine_cuvee,
+    vintage, wine_style, cellar_bottle_id
+  ) values (
+    v_session.id, v_next_number - 1, v_next_number, v_next_order, 'Bottle ' || v_next_number, v_guest.id,
+    v_cellar.country, v_cellar.region, v_cellar.grape_blend, v_cellar.grape_blend_mode, v_cellar.grape_blend_components,
+    v_cellar.producer, v_cellar.wine_cuvee, v_cellar.vintage, v_cellar.wine_style, v_cellar.id
+  )
+  returning wines.id into v_wine_id;
+
+  update tasting_sessions set next_bottle_number = v_next_number + 1 where id = v_session.id;
+
+  update cellar_bottles
+  set status = 'reserved',
+      reserved_session_id = v_session.id,
+      reserved_tasting_bottle_id = v_wine_id,
+      reserved_at = now(),
+      updated_at = now()
+  where id = v_cellar.id;
+
+  return jsonb_build_object('id', v_wine_id, 'bottleNumber', v_next_number);
+end;
+$$;
+
+-- Owner (from /cellar — no guest token involved, unlike delete_bottle's
+-- equivalent release path): void the reservation's tasting bottle and
+-- restore the cellar bottle to available. Only permitted while the linked
+-- session is still `registration` (before tasting begins) — see README
+-- "Personal Cellar" — "Return to cellar". auth.uid() plus cellar ownership
+-- is the entire authorization chain; it deliberately does not require or
+-- accept a guest/host token, since the signed-in owner may not be on the
+-- browser that holds one.
+create or replace function public.return_cellar_bottle_to_available(
+  p_cellar_bottle_id uuid
+) returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_cellar cellar_bottles%rowtype;
+  v_session tasting_sessions%rowtype;
+begin
+  if v_uid is null then
+    raise exception 'not_authenticated';
+  end if;
+
+  select * into v_cellar from cellar_bottles where id = p_cellar_bottle_id for update;
+  if not found or v_cellar.owner_user_id is distinct from v_uid then
+    raise exception 'cellar_bottle_not_found';
+  end if;
+  if v_cellar.status <> 'reserved' then
+    raise exception 'cellar_bottle_not_reserved';
+  end if;
+
+  select * into v_session from tasting_sessions where id = v_cellar.reserved_session_id for update;
+  if not found or v_session.status <> 'registration' then
+    raise exception 'return_window_closed';
+  end if;
+
+  -- Must run before the delete below: wines.id is referenced by
+  -- reserved_tasting_bottle_id with `on delete set null`, so deleting the
+  -- wines row first would fire that FK action mid-transaction and leave
+  -- status = 'reserved' with a null reserved_tasting_bottle_id for an
+  -- instant — which cellar_bottles_status_shape forbids, aborting the
+  -- transaction before this update ever ran. Updating the shape to
+  -- 'available' first means the FK action either never fires (fields
+  -- already null) or is a harmless no-op.
+  update cellar_bottles
+  set status = 'available',
+      reserved_session_id = null,
+      reserved_tasting_bottle_id = null,
+      reserved_at = null,
+      updated_at = now()
+  where id = v_cellar.id;
+
+  delete from wines where id = v_cellar.reserved_tasting_bottle_id;
+  perform repack_tasting_order(v_session.id);
+end;
+$$;
+
+-- Owner: the deliberate, explicit "Mark bottle as consumed" action — see
+-- README "Personal Cellar" — "Consume action". Only reachable once the
+-- linked session has actually reached `revealed` (this app's equivalent of
+-- "completed"), so a bottle can never be marked consumed while its tasting
+-- is still in progress or hasn't started.
+create or replace function public.mark_cellar_bottle_consumed(
+  p_cellar_bottle_id uuid
+) returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_cellar cellar_bottles%rowtype;
+  v_session tasting_sessions%rowtype;
+begin
+  if v_uid is null then
+    raise exception 'not_authenticated';
+  end if;
+
+  select * into v_cellar from cellar_bottles where id = p_cellar_bottle_id for update;
+  if not found or v_cellar.owner_user_id is distinct from v_uid then
+    raise exception 'cellar_bottle_not_found';
+  end if;
+  if v_cellar.status <> 'reserved' then
+    raise exception 'cellar_bottle_not_reserved';
+  end if;
+
+  select * into v_session from tasting_sessions where id = v_cellar.reserved_session_id;
+  if not found or v_session.status <> 'revealed' then
+    raise exception 'consumption_not_eligible';
+  end if;
+
+  update cellar_bottles
+  set status = 'consumed',
+      consumed_at = now(),
+      consumed_session_id = v_cellar.reserved_session_id,
+      consumed_tasting_bottle_id = v_cellar.reserved_tasting_bottle_id,
+      reserved_session_id = null,
+      reserved_tasting_bottle_id = null,
+      reserved_at = null,
+      updated_at = now()
+  where id = v_cellar.id;
+end;
+$$;
+
+-- All five require auth.uid() to ever succeed, so — like
+-- claim_account_tasting_record — granting to anon would only let it raise
+-- not_authenticated/cellar_bottle_unavailable; authenticated-only is
+-- narrower on purpose.
+grant execute on function public.add_cellar_bottle(text, text, text, text, jsonb, text, text, text, text, text, text, text, text) to authenticated;
+grant execute on function public.update_cellar_bottle(uuid, text, text, text, text, jsonb, text, text, text, text, text, text, text, text) to authenticated;
+grant execute on function public.register_bottle_from_cellar(text, uuid) to authenticated;
+grant execute on function public.return_cellar_bottle_to_available(uuid) to authenticated;
+grant execute on function public.mark_cellar_bottle_consumed(uuid) to authenticated;

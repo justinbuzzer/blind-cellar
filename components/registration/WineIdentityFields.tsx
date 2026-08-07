@@ -1,0 +1,121 @@
+import { WineIdentityInput } from "@/types/tasting";
+import {
+  COUNTRY_OPTIONS,
+  regionOptionsForCountry,
+  resetRegionIfInvalid,
+} from "@/lib/wineReferenceData";
+import { TextField } from "@/components/TextField";
+import { SelectField } from "@/components/SelectField";
+import { VintageField } from "@/components/VintageField";
+import { GrapeBlendField, GrapeBlendFormValue } from "@/components/GrapeBlendField";
+import { WineStyleField } from "@/components/WineStyleField";
+import { SectionEyebrow } from "@/components/SectionEyebrow";
+
+const WINE_CUVEE_HINT =
+  "Add the specific wine name, vineyard, cru, or appellation where relevant — e.g. Nuits-Saint-Georges, Margaux, or Santa Rita Hills.";
+
+export type WineIdentityErrors = Partial<Record<keyof WineIdentityInput, string>>;
+
+interface WineIdentityFieldsProps {
+  value: WineIdentityInput;
+  errors: WineIdentityErrors;
+  onChange: (value: WineIdentityInput) => void;
+}
+
+/**
+ * The wine-identity field groups (Origin / Identity / Producer & cuvée)
+ * shared, unchanged, by the tasting bottle form and the Personal Cellar
+ * bottle form (see README "Personal Cellar") — extracted from BottleForm so
+ * the two can never drift into divergent markup or validation. Callers
+ * supply their own `<Card>`/border wrapper and append any fields of their
+ * own (a private note, or bottle format/storage/note) after this.
+ */
+export function WineIdentityFields({ value, errors, onChange }: WineIdentityFieldsProps) {
+  function set<K extends keyof WineIdentityInput>(key: K, next: WineIdentityInput[K]) {
+    onChange({ ...value, [key]: next });
+  }
+
+  function setCountry(nextCountry: string) {
+    onChange({
+      ...value,
+      country: nextCountry,
+      region: resetRegionIfInvalid(nextCountry, value.region),
+    });
+  }
+
+  function setGrapeBlend(next: GrapeBlendFormValue) {
+    onChange({ ...value, ...next });
+  }
+
+  return (
+    <>
+      <div className="flex flex-col gap-4 border-b border-cellar-border p-5">
+        <SectionEyebrow>Origin</SectionEyebrow>
+        <WineStyleField
+          value={value.wineStyle}
+          onChange={(next) => set("wineStyle", next)}
+          error={errors.wineStyle}
+        />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <SelectField
+            label="Country"
+            value={value.country}
+            error={errors.country}
+            placeholder="Select country"
+            options={COUNTRY_OPTIONS}
+            onChange={(e) => setCountry(e.target.value)}
+          />
+          <SelectField
+            label="Region / appellation"
+            value={value.region}
+            error={errors.region}
+            placeholder={value.country ? "Select region" : "Select country first"}
+            disabled={!value.country}
+            options={regionOptionsForCountry(value.country)}
+            onChange={(e) => set("region", e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-4 border-b border-cellar-border p-5">
+        <SectionEyebrow>Identity</SectionEyebrow>
+        <GrapeBlendField
+          value={{
+            grapeBlendMode: value.grapeBlendMode,
+            grapeBlend: value.grapeBlend,
+            selectedGrapes: value.selectedGrapes,
+            otherGrapesText: value.otherGrapesText,
+          }}
+          onChange={setGrapeBlend}
+          error={errors.grapeBlendMode ?? errors.grapeBlend}
+        />
+        <VintageField
+          value={value.vintage}
+          onChange={(next) => set("vintage", next)}
+          error={errors.vintage}
+        />
+      </div>
+
+      <div className="flex flex-col gap-4 border-b border-cellar-border p-5">
+        <SectionEyebrow>Producer &amp; cuvée</SectionEyebrow>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <TextField
+            label="Producer"
+            value={value.producer}
+            error={errors.producer}
+            maxLength={100}
+            onChange={(e) => set("producer", e.target.value)}
+          />
+          <TextField
+            label="Wine / cuvée"
+            value={value.wineName}
+            error={errors.wineName}
+            hint={WINE_CUVEE_HINT}
+            maxLength={100}
+            onChange={(e) => set("wineName", e.target.value)}
+          />
+        </div>
+      </div>
+    </>
+  );
+}

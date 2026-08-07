@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArchiveLink } from "@/components/navigation/ArchiveLink";
 import { AccountNav } from "@/components/navigation/AccountNav";
 import { ProfileLink } from "@/components/navigation/ProfileLink";
+import { CellarLink } from "@/components/navigation/CellarLink";
 
 /**
  * Sits over HeroSection's background image (rendered as the first child
@@ -36,6 +37,7 @@ export function LandingHeader() {
         </a>
         <ArchiveLink tone="light" />
         <ProfileLink tone="light" />
+        <CellarLink tone="light" />
         <AccountNav tone="light" />
         <Link
           href="/host/new"

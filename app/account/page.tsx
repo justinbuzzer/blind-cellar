@@ -195,6 +195,11 @@ export default function AccountPage() {
             Your palate
           </Button>
         </Link>
+        <Link href="/cellar">
+          <Button variant="secondary" fullWidth>
+            My cellar
+          </Button>
+        </Link>
         <Link href="/archive">
           <Button variant="secondary" fullWidth>
             View tasting archive

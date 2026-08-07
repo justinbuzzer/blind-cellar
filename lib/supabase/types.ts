@@ -1,4 +1,12 @@
-import { Confidence, GrapeBlendMode, SessionStatus, TastingMode, WineStyle } from "@/types/tasting";
+import {
+  BottleFormat,
+  CellarBottleStatus,
+  Confidence,
+  GrapeBlendMode,
+  SessionStatus,
+  TastingMode,
+  WineStyle,
+} from "@/types/tasting";
 
 // Raw shapes returned by direct table/view reads (snake_case, PostgREST).
 
@@ -333,6 +341,49 @@ export interface SeenTastingStateResponse {
   bottles: SeenBottleDTO[];
 }
 
+// --- Personal Cellar (see README "Personal Cellar") ---
+
+/**
+ * A signed-in user's own row from `cellar_bottles` — RLS already scopes
+ * reads to `auth.uid()`, so no owner id is needed client-side (mirrors
+ * `AccountTastingRecordRow` above).
+ */
+export interface CellarBottleRow {
+  id: string;
+  wine_style: WineStyle;
+  country: string;
+  region: string;
+  grape_blend_mode: GrapeBlendMode | null;
+  grape_blend: string;
+  grape_blend_components: { selectedGrapes?: string[]; otherGrapesText?: string } | null;
+  vintage: string;
+  producer: string;
+  wine_cuvee: string;
+  bottle_format: BottleFormat;
+  bottle_format_other: string | null;
+  storage_location: string | null;
+  personal_note: string | null;
+  status: CellarBottleStatus;
+  reserved_session_id: string | null;
+  reserved_tasting_bottle_id: string | null;
+  reserved_at: string | null;
+  consumed_at: string | null;
+  consumed_session_id: string | null;
+  consumed_tasting_bottle_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AddCellarBottleResponse {
+  id: string;
+}
+
+/** Same shape as RegisterBottleResponse — register_bottle_from_cellar returns the identical DTO. */
+export interface RegisterBottleFromCellarResponse {
+  id: string;
+  bottleNumber: number;
+}
+
 /** Machine-readable error tags raised by the RPC functions (see schema.sql). */
 export const RPC_ERROR_MESSAGES: Record<string, string> = {
   title_required: "A tasting title is required.",
@@ -365,6 +416,26 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   guess_already_locked: "Your guess for this bottle is already locked in.",
   bottle_not_revealed: "That bottle hasn't been revealed yet.",
   rating_required: "A rating is required.",
+
+  // Personal Cellar (see README "Personal Cellar") — cellar_bottle_unavailable
+  // deliberately covers every "can't use this bottle" case (not found, not
+  // yours, already reserved/consumed) with one generic message, matching the
+  // exact required copy, so a failure never reveals which specific condition
+  // tripped it.
+  not_authenticated: "Sign in to use your cellar.",
+  cellar_bottle_unavailable:
+    "This bottle is no longer available in your cellar. Choose another bottle or add a new one.",
+  cellar_bottle_not_found: "That cellar bottle couldn't be found.",
+  cellar_bottle_not_editable:
+    "This bottle cannot be edited while it is reserved or after it has been consumed.",
+  cellar_bottle_not_reserved: "That cellar bottle isn't currently reserved.",
+  return_window_closed: "This bottle can no longer be returned to your cellar.",
+  consumption_not_eligible: "This bottle can't be marked consumed yet.",
+  invalid_bottle_format: "Choose a bottle format.",
+  bottle_format_detail_required: "Add a short detail for this bottle format.",
+  bottle_format_detail_too_long: "That bottle format detail is too long — please shorten it.",
+  storage_location_too_long: "That storage location is too long — please shorten it.",
+  personal_note_too_long: "That note is too long — please shorten it.",
 };
 
 /** Turns a Supabase/Postgres error into a friendly, pre-written message when we recognize it. */
