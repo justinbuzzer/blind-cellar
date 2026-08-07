@@ -23,6 +23,7 @@ export function mapRevealedWineRowToAnswerKey(row: GuestVisibleWineRow): WineAns
     code: row.anonymous_code,
     country: row.country ?? "",
     region: row.region ?? "",
+    appellation: row.appellation ?? undefined,
     grapeBlendMode: row.grape_blend_mode ?? "",
     grapeBlend: row.grape_style ?? "",
     producer: row.producer ?? "",
@@ -66,6 +67,7 @@ export function mapGuestGuessDtoToWineGuess(dto: GuestGuessDTO): WineGuess {
     wineId: dto.wineId,
     country: dto.countryGuess,
     region: dto.regionGuess,
+    appellation: dto.appellationGuess ?? "",
     grapeBlendMode,
     grapeBlend: dto.grapeBlendGuess,
     selectedGrapes,
@@ -92,6 +94,7 @@ export function mapRevealedGuessRowToWineGuess(row: RevealedWineGuessRow): WineG
     wineId: row.wine_id,
     country: row.country_guess,
     region: row.region_guess,
+    appellation: row.appellation_guess ?? "",
     grapeBlendMode: row.grape_blend_mode ?? "",
     grapeBlend: row.grape_style_guess,
     selectedGrapes: [],
@@ -173,6 +176,7 @@ function mapRevealedBottleGuessToWineGuess(wineId: string, dto: RevealedBottleGu
     wineId,
     country: dto.countryGuess,
     region: dto.regionGuess,
+    appellation: dto.appellationGuess ?? "",
     grapeBlendMode: dto.grapeBlendMode ?? "",
     grapeBlend: dto.grapeBlendGuess,
     selectedGrapes: [],
@@ -199,6 +203,7 @@ export function buildRevealedBottleResult(response: RevealedBottleResponse): Win
     code: response.wine.anonymousCode,
     country: response.wine.country,
     region: response.wine.region,
+    appellation: response.wine.appellation ?? undefined,
     grapeBlendMode: response.wine.grapeBlendMode ?? "",
     grapeBlend: response.wine.grapeBlend,
     producer: response.wine.producer,
@@ -217,6 +222,7 @@ export function buildRevealedBottleResult(response: RevealedBottleResponse): Win
     wines: [answerKey],
     status: response.session.status,
     createdAt: "",
+    scoringVersion: response.session.scoringVersion,
   };
 
   const submissions: GuestSubmission[] = response.guesses.map((guess) => ({

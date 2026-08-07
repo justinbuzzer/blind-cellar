@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { WineIdentityInput } from "@/types/tasting";
 import {
   COUNTRY_OPTIONS,
   regionOptionsForCountry,
   resetRegionIfInvalid,
 } from "@/lib/wineReferenceData";
+import { getAppellations, hasAppellations } from "@/lib/appellations";
 import { TextField } from "@/components/TextField";
 import { SelectField } from "@/components/SelectField";
 import { VintageField } from "@/components/VintageField";
@@ -13,6 +15,9 @@ import { SectionEyebrow } from "@/components/SectionEyebrow";
 
 const WINE_CUVEE_HINT =
   "Add the specific wine name, vineyard, cru, or appellation where relevant — e.g. Nuits-Saint-Georges, Margaux, or Santa Rita Hills.";
+
+const APPELLATION_HINT = "Optional. Select the recognised appellation if applicable.";
+const APPELLATION_CLEARED_MESSAGE = "Appellation cleared because the region changed.";
 
 export type WineIdentityErrors = Partial<Record<keyof WineIdentityInput, string>>;
 
@@ -31,21 +36,41 @@ interface WineIdentityFieldsProps {
  * own (a private note, or bottle format/storage/note) after this.
  */
 export function WineIdentityFields({ value, errors, onChange }: WineIdentityFieldsProps) {
+  const [clearedMessage, setClearedMessage] = useState("");
+
   function set<K extends keyof WineIdentityInput>(key: K, next: WineIdentityInput[K]) {
     onChange({ ...value, [key]: next });
   }
 
+  function announceAppellationClearedIfNeeded(hadAppellation: string) {
+    setClearedMessage(hadAppellation.trim() ? APPELLATION_CLEARED_MESSAGE : "");
+  }
+
   function setCountry(nextCountry: string) {
+    const nextRegion = resetRegionIfInvalid(nextCountry, value.region);
     onChange({
       ...value,
       country: nextCountry,
-      region: resetRegionIfInvalid(nextCountry, value.region),
+      region: nextRegion,
+      appellation: "",
     });
+    announceAppellationClearedIfNeeded(value.appellation);
+  }
+
+  function setRegion(nextRegion: string) {
+    onChange({ ...value, region: nextRegion, appellation: "" });
+    announceAppellationClearedIfNeeded(value.appellation);
   }
 
   function setGrapeBlend(next: GrapeBlendFormValue) {
     onChange({ ...value, ...next });
   }
+
+  const appellationOptions = getAppellations(value.country, value.region).map((name) => ({
+    value: name,
+    label: name,
+  }));
+  const showAppellation = hasAppellations(value.country, value.region);
 
   return (
     <>
@@ -66,15 +91,29 @@ export function WineIdentityFields({ value, errors, onChange }: WineIdentityFiel
             onChange={(e) => setCountry(e.target.value)}
           />
           <SelectField
-            label="Region / appellation"
+            label="Region"
             value={value.region}
             error={errors.region}
             placeholder={value.country ? "Select region" : "Select country first"}
             disabled={!value.country}
             options={regionOptionsForCountry(value.country)}
-            onChange={(e) => set("region", e.target.value)}
+            onChange={(e) => setRegion(e.target.value)}
           />
         </div>
+        {showAppellation && (
+          <SelectField
+            label="Appellation"
+            value={value.appellation}
+            error={errors.appellation}
+            hint={APPELLATION_HINT}
+            placeholder="Select an appellation"
+            options={appellationOptions}
+            onChange={(e) => set("appellation", e.target.value)}
+          />
+        )}
+        <p role="status" aria-live="polite" className="sr-only">
+          {clearedMessage}
+        </p>
       </div>
 
       <div className="flex flex-col gap-4 border-b border-cellar-border p-5">

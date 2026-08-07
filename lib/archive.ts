@@ -1,4 +1,4 @@
-import { SessionStatus, TastingMode, WineAnswerKey } from "@/types/tasting";
+import { ScoringVersion, SessionStatus, TastingMode, WineAnswerKey } from "@/types/tasting";
 import {
   AccountTastingRecordRow,
   GuestSessionStateResponse,
@@ -76,7 +76,11 @@ export interface ArchiveLookupResultItem {
 export interface ArchiveResolutionDeps {
   getHostSession: (publicId: string, token: string) => Promise<HostSessionResponse | null>;
   getGuestSessionState: (token: string) => Promise<GuestSessionStateResponse | null>;
-  loadReport: (session: { id: string; tastingMode: TastingMode }) => Promise<ReportData>;
+  loadReport: (session: {
+    id: string;
+    tastingMode: TastingMode;
+    scoringVersion: ScoringVersion;
+  }) => Promise<ReportData>;
 }
 
 function formatWineIdentity(wine: WineAnswerKey): string {
@@ -125,6 +129,7 @@ async function resolveHostItem(
   const report = await deps.loadReport({
     id: data.session.id,
     tastingMode: data.session.tastingMode,
+    scoringVersion: data.session.scoringVersion,
   });
 
   const entry: ArchiveEntry = {
@@ -168,6 +173,7 @@ async function resolveParticipantItem(
   const report = await deps.loadReport({
     id: data.session.id,
     tastingMode: data.session.tastingMode,
+    scoringVersion: data.session.scoringVersion,
   });
 
   const entry: ArchiveEntry = {
@@ -330,6 +336,8 @@ export interface AccountSessionSummary {
   tastingDate: string;
   status: SessionStatus;
   tastingMode: TastingMode;
+  /** Immutable, assigned at creation — see ScoringVersion. */
+  scoringVersion: ScoringVersion;
   createdAt: string;
   bottleCount: number;
   participantCount: number;
@@ -337,7 +345,11 @@ export interface AccountSessionSummary {
 
 export interface AccountArchiveResolutionDeps {
   getSessionSummary: (sessionId: string) => Promise<AccountSessionSummary | null>;
-  loadReport: (session: { id: string; tastingMode: TastingMode }) => Promise<ReportData>;
+  loadReport: (session: {
+    id: string;
+    tastingMode: TastingMode;
+    scoringVersion: ScoringVersion;
+  }) => Promise<ReportData>;
 }
 
 /**
@@ -361,7 +373,11 @@ async function resolveAccountRecord(
   const summary = await deps.getSessionSummary(record.session_id);
   if (!summary || summary.status !== "revealed") return null;
 
-  const report = await deps.loadReport({ id: summary.id, tastingMode: summary.tastingMode });
+  const report = await deps.loadReport({
+    id: summary.id,
+    tastingMode: summary.tastingMode,
+    scoringVersion: summary.scoringVersion,
+  });
   const wineOfTheNight = buildWineHighlight(reportWineOfTheNight(report));
   const accuracyPercent =
     record.role === "participant" && record.participant_id

@@ -47,6 +47,16 @@ create table if not exists tasting_sessions (
   -- 'full_blind' (today's only behaviour) once the NOT NULL + check
   -- constraint are added in the migration block.
   tasting_mode text,
+  -- MIGRATION-SENSITIVE: chosen once at creation, hardcoded server-side in
+  -- create_tasting_session — never a client-supplied parameter, never
+  -- editable afterwards (see README "Scoring model"). Nullable here only so
+  -- a fresh CREATE TABLE and the migration backfill below share one code
+  -- path — existing sessions are backfilled to 'legacy_v1' (the only
+  -- scoring model ever actually shipped before this feature; the
+  -- previously-planned 140-point Appellation-bonus model was never
+  -- deployed), while brand-new sessions always get
+  -- 'core_v3_appellation_conditional'.
+  scoring_version text,
   host_token_hash text not null,
   -- MIGRATION-SENSITIVE: the guests row representing the host (see below).
   -- Nullable because it can only be set after the host's own guest row
@@ -110,6 +120,17 @@ create table if not exists wines (
   tasting_order int,
   country text not null,
   region text not null,
+  -- MIGRATION-SENSITIVE: new nullable field (see README "Region and
+  -- Appellation"). `region` keeps its existing meaning (broad geographical
+  -- region); `appellation` is an optional, more specific recognised
+  -- appellation within that region (e.g. Chablis within Burgundy), only ever
+  -- offered for a small curated set of country/region pairs (see
+  -- lib/appellations.ts). Null for every bottle registered before this
+  -- field existed, and for any bottle whose country/region pair has no
+  -- curated appellation list. Never backfilled/guessed, never used in
+  -- scoring, and masked the same way as region/country in
+  -- guest_visible_wines below.
+  appellation text,
   -- Physical column name kept for migration safety (see README); holds the
   -- grape/blend text for both legacy single-variety/style values and new
   -- single-variety-or-blend values.
@@ -159,7 +180,8 @@ create table if not exists wines (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (session_id, display_order),
-  unique (session_id, anonymous_code)
+  unique (session_id, anonymous_code),
+  constraint wines_appellation_length check (appellation is null or length(appellation) <= 200)
 );
 
 create table if not exists wine_guesses (
@@ -169,6 +191,14 @@ create table if not exists wine_guesses (
   guest_id uuid not null references guests(id) on delete cascade,
   country_guess text not null default '',
   region_guess text not null default '',
+  -- MIGRATION-SENSITIVE: new nullable field (see README "Region and
+  -- Appellation" — "Blind-guess Appellation"). Optional participant call for
+  -- a more specific appellation within region_guess, using the same curated
+  -- country/region/appellation map as actual wine records
+  -- (lib/appellations.ts / is_valid_appellation below) — never a second,
+  -- separate list. Never scored: no FieldScore, no core/bonus points, no
+  -- appellation_correct column. Null for every guess predating this field.
+  appellation_guess text constraint wine_guesses_appellation_guess_length check (appellation_guess is null or length(appellation_guess) <= 200),
   -- Physical column name kept for migration safety; holds the grape/blend guess text.
   grape_style_guess text not null default '',
   -- MIGRATION-SENSITIVE: new nullable field, same meaning as wines.grape_blend_mode.
@@ -245,6 +275,21 @@ alter table wines add column if not exists updated_at timestamptz not null defau
 alter table wines add column if not exists grape_blend_components jsonb;
 alter table wine_guesses add column if not exists grape_blend_components jsonb;
 
+-- 1b. Region/Appellation split (see README "Region and Appellation"):
+-- additive nullable column, existing `region` values and meaning are
+-- untouched. Never backfilled — every existing bottle simply has a null
+-- appellation until edited.
+alter table wines add column if not exists appellation text;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'wines_appellation_length'
+  ) then
+    alter table wines add constraint wines_appellation_length
+      check (appellation is null or length(appellation) <= 200);
+  end if;
+end $$;
+
 -- 1a. Grape/blend + price-band update (see README "Scoring and grape/blend"):
 -- add the new nullable grape_blend_mode columns, and stop requiring
 -- price_band on existing rows now that new bottles never set it. Existing
@@ -269,6 +314,22 @@ begin
   ) then
     alter table wine_guesses add constraint wine_guesses_grape_blend_mode_check
       check (grape_blend_mode is null or grape_blend_mode in ('single', 'blend'));
+  end if;
+end $$;
+
+-- 1c. Blind-guess Appellation (see README "Region and Appellation" —
+-- "Blind-guess Appellation"): additive nullable column, same shape as
+-- wines.appellation above. revealed_wine_guesses (defined later in this
+-- file as `select g.*`) picks this column up automatically once it exists,
+-- with no view-definition change needed.
+alter table wine_guesses add column if not exists appellation_guess text;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'wine_guesses_appellation_guess_length'
+  ) then
+    alter table wine_guesses add constraint wine_guesses_appellation_guess_length
+      check (appellation_guess is null or length(appellation_guess) <= 200);
   end if;
 end $$;
 
@@ -393,6 +454,26 @@ alter table tasting_sessions drop constraint if exists tasting_sessions_tasting_
 alter table tasting_sessions add constraint tasting_sessions_tasting_mode_check
   check (tasting_mode in ('full_blind', 'course_reveal', 'seen'));
 
+-- 12. Scoring model replacement (see README "Scoring model"): country(20)/
+-- region(20)/appellation(20, conditional)/grape-blend(20)/vintage(20), no
+-- producer/wine-cuvée bonus, 80 or 100-point denominator depending on
+-- whether the actual wine has a recorded Appellation. Existing sessions keep
+-- their original scoring model forever — backfilled to 'legacy_v1', never
+-- recalculated. Only two versions have ever actually existed, so there is no
+-- intermediate legacy version here (see types/tasting.ts ScoringVersion).
+alter table tasting_sessions add column if not exists scoring_version text;
+update tasting_sessions set scoring_version = 'legacy_v1' where scoring_version is null;
+alter table tasting_sessions alter column scoring_version set not null;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'tasting_sessions_scoring_version_check'
+  ) then
+    alter table tasting_sessions add constraint tasting_sessions_scoring_version_check
+      check (scoring_version in ('legacy_v1', 'core_v3_appellation_conditional'));
+  end if;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security (enabled everywhere; anon gets no default table grants,
 -- see the GRANT section below — RLS is defense-in-depth on top of that).
@@ -466,7 +547,12 @@ select
   -- sequence itself is meant to be visible to every participant throughout,
   -- only the style/identity of each bottle is secret pre-reveal.
   case when s.status = 'revealed' then w.wine_style else null end as wine_style,
-  w.tasting_order
+  w.tasting_order,
+  -- Region/Appellation (see README "Region and Appellation"): masked the
+  -- same way as region/country above. Appended at the end for the same
+  -- CREATE OR REPLACE VIEW column-ordering reason as grape_blend_mode/
+  -- wine_style.
+  case when s.status = 'revealed' then w.appellation else null end as appellation
 from wines w
 join tasting_sessions s on s.id = w.session_id;
 
@@ -533,6 +619,93 @@ begin
 end;
 $$;
 
+-- Server-side mirror of the curated country/region/appellation map in
+-- lib/appellations.ts (see README "Region and Appellation") — used by
+-- register_bottle, update_bottle, add_cellar_bottle, and
+-- update_cellar_bottle so an appellation is never trusted from the client
+-- alone (see that spec's "Do not trust client-only filtering"). A blank
+-- appellation is always valid, matching lib/appellations.ts's
+-- isValidAppellation exactly. Adding a new supported country/region pair
+-- means updating BOTH this jsonb literal and lib/appellations.ts — see
+-- SUPABASE_SETUP.md "Adding a new supported region/appellation pair".
+create or replace function is_valid_appellation(
+  p_country text,
+  p_region text,
+  p_appellation text
+) returns boolean
+language plpgsql
+as $$
+declare
+  v_map jsonb := '{
+    "France": {
+      "Burgundy": ["Chablis", "Petit Chablis", "Chablis Premier Cru", "Chablis Grand Cru", "Bourgogne", "Bourgogne Aligoté", "Bourgogne Côte d''Or", "Côte de Nuits-Villages", "Côte de Beaune-Villages", "Marsannay", "Fixin", "Gevrey-Chambertin", "Morey-Saint-Denis", "Chambolle-Musigny", "Vougeot", "Vosne-Romanée", "Nuits-Saint-Georges", "Pernand-Vergelesses", "Aloxe-Corton", "Savigny-lès-Beaune", "Chorey-lès-Beaune", "Beaune", "Pommard", "Volnay", "Monthelie", "Meursault", "Puligny-Montrachet", "Chassagne-Montrachet", "Saint-Aubin", "Santenay", "Maranges", "Mercurey", "Givry", "Rully", "Montagny", "Mâcon", "Mâcon-Villages", "Pouilly-Fuissé", "Pouilly-Vinzelles", "Pouilly-Loché", "Saint-Véran", "Viré-Clessé"],
+      "Beaujolais": ["Beaujolais", "Beaujolais-Villages", "Brouilly", "Côte de Brouilly", "Chénas", "Chiroubles", "Fleurie", "Juliénas", "Morgon", "Moulin-à-Vent", "Régnié", "Saint-Amour"],
+      "Bordeaux": ["Bordeaux", "Bordeaux Supérieur", "Médoc", "Haut-Médoc", "Margaux", "Moulis-en-Médoc", "Listrac-Médoc", "Saint-Estèphe", "Pauillac", "Saint-Julien", "Graves", "Pessac-Léognan", "Pomerol", "Saint-Émilion", "Saint-Émilion Grand Cru", "Fronsac", "Canon-Fronsac", "Lalande-de-Pomerol", "Sauternes", "Barsac", "Cadillac", "Cérons", "Sainte-Croix-du-Mont"],
+      "Champagne": ["Champagne", "Coteaux Champenois", "Rosé des Riceys"],
+      "Loire Valley": ["Muscadet Sèvre et Maine", "Sancerre", "Pouilly-Fumé", "Menetou-Salon", "Quincy", "Reuilly", "Touraine", "Vouvray", "Montlouis-sur-Loire", "Saumur", "Saumur-Champigny", "Chinon", "Bourgueil", "Saint-Nicolas-de-Bourgueil", "Anjou", "Savennières", "Coteaux du Layon", "Bonnezeaux", "Quarts de Chaume"],
+      "Rhône Valley": ["Côte-Rôtie", "Condrieu", "Château-Grillet", "Saint-Joseph", "Crozes-Hermitage", "Hermitage", "Cornas", "Saint-Péray", "Côtes du Rhône", "Côtes du Rhône Villages", "Châteauneuf-du-Pape", "Gigondas", "Vacqueyras", "Beaumes-de-Venise", "Tavel", "Lirac", "Rasteau", "Vinsobres", "Cairanne"],
+      "Alsace": ["Alsace", "Alsace Grand Cru", "Crémant d''Alsace"],
+      "Provence": ["Côtes de Provence", "Coteaux d''Aix-en-Provence", "Coteaux Varois en Provence", "Bandol", "Cassis", "Palette", "Bellet"]
+    },
+    "Italy": {
+      "Piedmont": ["Barolo", "Barbaresco", "Langhe", "Roero", "Nebbiolo d''Alba", "Barbera d''Asti", "Barbera d''Alba", "Nizza", "Dolcetto d''Alba", "Dolcetto di Dogliani", "Dogliani", "Gavi", "Arneis", "Moscato d''Asti", "Asti", "Brachetto d''Acqui", "Gattinara", "Ghemme", "Carema", "Boca", "Lessona", "Bramaterra"],
+      "Tuscany": ["Chianti", "Chianti Classico", "Brunello di Montalcino", "Rosso di Montalcino", "Vino Nobile di Montepulciano", "Bolgheri", "Bolgheri Sassicaia", "Morellino di Scansano", "Carmignano", "Vernaccia di San Gimignano", "Vin Santo del Chianti"],
+      "Veneto": ["Valpolicella", "Valpolicella Classico", "Valpolicella Ripasso", "Amarone della Valpolicella", "Recioto della Valpolicella", "Soave", "Soave Classico", "Bardolino", "Lugana", "Prosecco", "Conegliano Valdobbiadene Prosecco"],
+      "Sicily": ["Etna", "Cerasuolo di Vittoria", "Marsala", "Noto", "Menfi"],
+      "Campania": ["Taurasi", "Fiano di Avellino", "Greco di Tufo", "Aglianico del Taburno", "Falerno del Massico"]
+    },
+    "Spain": {
+      "La Rioja": ["Rioja", "Rioja Alta", "Rioja Alavesa", "Rioja Oriental"],
+      "Ribera del Duero": ["Ribera del Duero"],
+      "Priorat": ["Priorat"],
+      "Rías Baixas": ["Rías Baixas", "Val do Salnés", "O Rosal", "Condado do Tea", "Soutomaior", "Ribeira do Ulla"],
+      "Jerez": ["Jerez-Xérès-Sherry", "Manzanilla-Sanlúcar de Barrameda"]
+    },
+    "Portugal": {
+      "Douro": ["Douro", "Porto"],
+      "Dão": ["Dão"],
+      "Alentejo": ["Alentejo"]
+    },
+    "Germany": {
+      "Mosel": ["Mosel"],
+      "Rheingau": ["Rheingau"],
+      "Pfalz": ["Pfalz"]
+    },
+    "Austria": {
+      "Wachau": ["Wachau"],
+      "Kamptal": ["Kamptal"],
+      "Kremstal": ["Kremstal"]
+    },
+    "United States": {
+      "California": ["Napa Valley", "Sonoma County", "Russian River Valley", "Sonoma Coast", "Carneros", "Santa Barbara County", "Santa Maria Valley", "Santa Ynez Valley", "Sta. Rita Hills", "Paso Robles"],
+      "Oregon": ["Willamette Valley", "Dundee Hills", "Eola-Amity Hills", "Yamhill-Carlton", "Chehalem Mountains", "McMinnville", "Ribbon Ridge"],
+      "Washington": ["Columbia Valley", "Walla Walla Valley", "Red Mountain", "Yakima Valley", "Horse Heaven Hills"]
+    },
+    "Australia": {
+      "South Australia": ["Barossa Valley", "Eden Valley", "McLaren Vale", "Clare Valley", "Coonawarra", "Adelaide Hills", "Padthaway", "Langhorne Creek"],
+      "Victoria": ["Yarra Valley", "Mornington Peninsula", "Heathcote", "Rutherglen", "Beechworth", "Macedon Ranges"],
+      "Western Australia": ["Margaret River", "Great Southern", "Swan Valley"],
+      "New South Wales": ["Hunter Valley", "Riverina", "Orange", "Canberra District"]
+    },
+    "New Zealand": {
+      "Marlborough": ["Marlborough", "Wairau Valley", "Awatere Valley", "Southern Valleys"],
+      "Central Otago": ["Central Otago", "Bannockburn", "Gibbston", "Bendigo", "Alexandra", "Cromwell Basin"],
+      "Hawke''s Bay": ["Hawke''s Bay", "Gimblett Gravels", "Bridge Pa Triangle"]
+    }
+  }'::jsonb;
+begin
+  if btrim(coalesce(p_appellation, '')) = '' then
+    return true;
+  end if;
+
+  return exists (
+    select 1
+    from jsonb_array_elements_text(coalesce(v_map->p_country->p_region, '[]'::jsonb)) a
+    where lower(a) = lower(btrim(p_appellation))
+  );
+end;
+$$;
+
 -- The old create_tasting_session took a `jsonb` array of wines and created
 -- them all at once. Sessions no longer collect wines at creation time — bottles
 -- are registered afterwards by participants — so the signature changed.
@@ -583,8 +756,11 @@ begin
     raise exception 'invalid_tasting_mode';
   end if;
 
-  insert into tasting_sessions (title, tasting_date, join_code, host_token_hash, status, tasting_mode)
-  values (btrim(p_title), p_tasting_date, p_join_code, p_host_token_hash, 'registration', p_tasting_mode)
+  -- scoring_version is deliberately a hardcoded literal, never a parameter —
+  -- see README "Scoring model": the client can never choose or influence
+  -- which scoring model a session gets.
+  insert into tasting_sessions (title, tasting_date, join_code, host_token_hash, status, tasting_mode, scoring_version)
+  values (btrim(p_title), p_tasting_date, p_join_code, p_host_token_hash, 'registration', p_tasting_mode, 'core_v3_appellation_conditional')
   returning tasting_sessions.id, tasting_sessions.public_id into v_session_id, v_public_id;
 
   v_host_token := encode(gen_random_bytes(32), 'base64');
@@ -692,7 +868,8 @@ begin
       'joinCode', v_session.join_code,
       'createdAt', v_session.created_at,
       'hostGuestId', v_session.host_guest_id,
-      'tastingMode', v_session.tasting_mode
+      'tastingMode', v_session.tasting_mode,
+      'scoringVersion', v_session.scoring_version
     ),
     'wines', coalesce((
       select jsonb_agg(jsonb_build_object(
@@ -953,6 +1130,7 @@ begin
         'bottleNumber', w.bottle_number,
         'country', w.country,
         'region', w.region,
+        'appellation', w.appellation,
         'grapeBlendMode', w.grape_blend_mode,
         'grapeBlend', w.grape_style,
         'selectedGrapes', coalesce(w.grape_blend_components->'selectedGrapes', '[]'::jsonb),
@@ -1003,7 +1181,8 @@ create or replace function register_bottle(
   p_vintage text,
   p_notes text,
   p_wine_style text,
-  p_grape_blend_components jsonb
+  p_grape_blend_components jsonb,
+  p_appellation text
 ) returns jsonb
 language plpgsql
 security definer
@@ -1039,6 +1218,12 @@ begin
      or btrim(coalesce(p_vintage, '')) = '' then
     raise exception 'bottle_fields_required';
   end if;
+  if length(coalesce(p_appellation, '')) > 200 then
+    raise exception 'invalid_appellation';
+  end if;
+  if not is_valid_appellation(btrim(p_country), btrim(p_region), p_appellation) then
+    raise exception 'invalid_appellation';
+  end if;
 
   v_next_number := v_session.next_bottle_number;
   -- New bottles always join at the end of the current tasting order — the
@@ -1049,11 +1234,11 @@ begin
 
   insert into wines (
     session_id, display_order, bottle_number, tasting_order, anonymous_code, contributor_guest_id,
-    country, region, grape_style, grape_blend_mode, grape_blend_components, producer, wine_cuvee,
+    country, region, appellation, grape_style, grape_blend_mode, grape_blend_components, producer, wine_cuvee,
     vintage, wine_style, host_notes
   ) values (
     v_session.id, v_next_number - 1, v_next_number, v_next_order, 'Bottle ' || v_next_number, v_guest.id,
-    btrim(p_country), btrim(p_region), btrim(p_grape_blend), p_grape_blend_mode, p_grape_blend_components,
+    btrim(p_country), btrim(p_region), nullif(btrim(coalesce(p_appellation, '')), ''), btrim(p_grape_blend), p_grape_blend_mode, p_grape_blend_components,
     btrim(p_producer), btrim(p_wine_cuvee), btrim(p_vintage), p_wine_style, nullif(btrim(coalesce(p_notes, '')), '')
   )
   returning wines.id into v_wine_id;
@@ -1085,7 +1270,8 @@ create or replace function update_bottle(
   p_vintage text,
   p_notes text,
   p_wine_style text,
-  p_grape_blend_components jsonb
+  p_grape_blend_components jsonb,
+  p_appellation text
 ) returns void
 language plpgsql
 security definer
@@ -1123,10 +1309,17 @@ begin
      or btrim(coalesce(p_vintage, '')) = '' then
     raise exception 'bottle_fields_required';
   end if;
+  if length(coalesce(p_appellation, '')) > 200 then
+    raise exception 'invalid_appellation';
+  end if;
+  if not is_valid_appellation(btrim(p_country), btrim(p_region), p_appellation) then
+    raise exception 'invalid_appellation';
+  end if;
 
   update wines set
     country = btrim(p_country),
     region = btrim(p_region),
+    appellation = nullif(btrim(coalesce(p_appellation, '')), ''),
     grape_style = btrim(p_grape_blend),
     grape_blend_mode = p_grape_blend_mode,
     grape_blend_components = p_grape_blend_components,
@@ -1291,6 +1484,7 @@ begin
       'tastingDate', v_session.tasting_date,
       'status', v_session.status,
       'tastingMode', v_session.tasting_mode,
+      'scoringVersion', v_session.scoring_version,
       -- Additive fields for the Tasting Archive (see README "Tasting
       -- archive"): id/createdAt let the archive sort/query this session the
       -- same way get_host_session's response already does, and
@@ -1313,6 +1507,7 @@ begin
         'wineId', wg.wine_id,
         'countryGuess', wg.country_guess,
         'regionGuess', wg.region_guess,
+        'appellationGuess', wg.appellation_guess,
         'grapeBlendMode', wg.grape_blend_mode,
         'grapeBlendGuess', wg.grape_style_guess,
         'selectedGrapes', coalesce(wg.grape_blend_components->'selectedGrapes', '[]'::jsonb),
@@ -1337,8 +1532,8 @@ $$;
 -- participant — including a bottle's own contributor — may guess every
 -- bottle, so there is no ownership check against wines here.
 -- Signature changed (price band removed, grape/blend mode added, structured
--- grape/blend components added) — explicitly drop old overloads; safe/no-op
--- on a fresh install.
+-- grape/blend components added, appellation guess added) — explicitly drop
+-- old overloads; safe/no-op on a fresh install.
 drop function if exists upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text);
 drop function if exists upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text, jsonb);
 
@@ -1355,7 +1550,8 @@ create or replace function upsert_wine_guess(
   p_rating int,
   p_confidence text,
   p_tasting_note text,
-  p_grape_blend_components jsonb
+  p_grape_blend_components jsonb,
+  p_appellation_guess text
 ) returns void
 language plpgsql
 security definer
@@ -1411,12 +1607,25 @@ begin
   -- malformed or mode-inconsistent components payload, not an empty one.
   perform validate_grape_blend_components(p_grape_blend_mode, p_grape_blend_components);
 
+  -- Appellation guess reuses the exact same server-side check as actual-wine
+  -- appellation (see README "Region and Appellation") — never a second
+  -- curated list. A blank guess is always valid regardless of
+  -- country_guess/region_guess; is_valid_appellation returns false for a
+  -- non-blank value against an unsupported or mismatched pair either way.
+  if length(coalesce(p_appellation_guess, '')) > 200 then
+    raise exception 'invalid_appellation';
+  end if;
+  if not is_valid_appellation(coalesce(p_country_guess, ''), coalesce(p_region_guess, ''), p_appellation_guess) then
+    raise exception 'invalid_appellation';
+  end if;
+
   insert into wine_guesses (
-    session_id, wine_id, guest_id, country_guess, region_guess, grape_style_guess,
+    session_id, wine_id, guest_id, country_guess, region_guess, appellation_guess, grape_style_guess,
     grape_blend_mode, grape_blend_components, producer_guess, wine_cuvee_guess, vintage_guess, rating,
     confidence, tasting_note, submitted_at
   ) values (
     v_session.id, p_wine_id, v_guest.id, coalesce(p_country_guess, ''), coalesce(p_region_guess, ''),
+    nullif(btrim(coalesce(p_appellation_guess, '')), ''),
     coalesce(p_grape_blend_guess, ''), nullif(p_grape_blend_mode, ''), p_grape_blend_components,
     coalesce(p_producer_guess, ''), coalesce(p_wine_cuvee_guess, ''), coalesce(p_vintage_guess, ''), p_rating,
     coalesce(nullif(p_confidence, ''), 'medium'), nullif(p_tasting_note, ''), now()
@@ -1424,6 +1633,7 @@ begin
   on conflict (guest_id, wine_id) do update set
     country_guess = excluded.country_guess,
     region_guess = excluded.region_guess,
+    appellation_guess = excluded.appellation_guess,
     grape_style_guess = excluded.grape_style_guess,
     grape_blend_mode = excluded.grape_blend_mode,
     grape_blend_components = excluded.grape_blend_components,
@@ -1517,6 +1727,7 @@ begin
       'wineId', v_my_guess.wine_id,
       'countryGuess', v_my_guess.country_guess,
       'regionGuess', v_my_guess.region_guess,
+      'appellationGuess', v_my_guess.appellation_guess,
       'grapeBlendMode', v_my_guess.grape_blend_mode,
       'grapeBlendGuess', v_my_guess.grape_style_guess,
       'selectedGrapes', coalesce(v_my_guess.grape_blend_components->'selectedGrapes', '[]'::jsonb),
@@ -1640,7 +1851,8 @@ begin
   select jsonb_build_object(
     'session', jsonb_build_object(
       'publicId', v_session.public_id,
-      'status', v_session.status
+      'status', v_session.status,
+      'scoringVersion', v_session.scoring_version
     ),
     'wine', jsonb_build_object(
       'id', v_wine.id,
@@ -1650,6 +1862,7 @@ begin
       'totalBottles', v_total_bottles,
       'country', v_wine.country,
       'region', v_wine.region,
+      'appellation', v_wine.appellation,
       'grapeBlendMode', v_wine.grape_blend_mode,
       'grapeBlend', v_wine.grape_style,
       'producer', v_wine.producer,
@@ -1664,6 +1877,7 @@ begin
         'guestName', g.display_name,
         'countryGuess', wg.country_guess,
         'regionGuess', wg.region_guess,
+        'appellationGuess', wg.appellation_guess,
         'grapeBlendMode', wg.grape_blend_mode,
         'grapeBlendGuess', wg.grape_style_guess,
         'producerGuess', wg.producer_guess,
@@ -1745,6 +1959,7 @@ begin
         'wineStyle', w.wine_style,
         'country', w.country,
         'region', w.region,
+        'appellation', w.appellation,
         'grapeBlendMode', w.grape_blend_mode,
         'grapeBlend', w.grape_style,
         'producer', w.producer,
@@ -1925,7 +2140,7 @@ revoke all on wines from anon, authenticated;
 revoke all on guests from anon, authenticated;
 revoke all on wine_guesses from anon, authenticated;
 
-grant select (id, public_id, join_code, title, tasting_date, status, created_at, updated_at, tasting_mode)
+grant select (id, public_id, join_code, title, tasting_date, status, created_at, updated_at, tasting_mode, scoring_version)
   on tasting_sessions to anon, authenticated;
 
 grant select (id, session_id, display_name, created_at, completed_at)
@@ -1947,12 +2162,12 @@ grant execute on function reveal_tasting_session(uuid, text) to anon, authentica
 grant execute on function reveal_bottle(uuid, text, uuid) to anon, authenticated;
 grant execute on function join_tasting_session(uuid, text) to anon, authenticated;
 grant execute on function get_registration_state(text) to anon, authenticated;
-grant execute on function register_bottle(text, text, text, text, text, text, text, text, text, text, jsonb) to anon, authenticated;
-grant execute on function update_bottle(text, uuid, text, text, text, text, text, text, text, text, text, jsonb) to anon, authenticated;
+grant execute on function register_bottle(text, text, text, text, text, text, text, text, text, text, jsonb, text) to anon, authenticated;
+grant execute on function update_bottle(text, uuid, text, text, text, text, text, text, text, text, text, jsonb, text) to anon, authenticated;
 grant execute on function delete_bottle(text, uuid) to anon, authenticated;
 grant execute on function reorder_wines(uuid, text, uuid[]) to anon, authenticated;
 grant execute on function get_guest_session_state(text) to anon, authenticated;
-grant execute on function upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text, jsonb) to anon, authenticated;
+grant execute on function upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text, jsonb, text) to anon, authenticated;
 grant execute on function get_active_bottle_state(text) to anon, authenticated;
 grant execute on function lock_wine_guess(text, uuid) to anon, authenticated;
 grant execute on function get_revealed_bottle(text, uuid) to anon, authenticated;
@@ -2337,6 +2552,11 @@ create table if not exists public.cellar_bottles (
   wine_style text not null check (wine_style in ('bubbles', 'white', 'red', 'sweet', 'other')),
   country text not null,
   region text not null default '',
+  -- Optional, more specific appellation within `region` — see README
+  -- "Region and Appellation" and wines.appellation above. Same meaning,
+  -- same curated-list source (lib/appellations.ts), never used in scoring
+  -- (the cellar has no scoring at all).
+  appellation text constraint cellar_bottles_appellation_length check (appellation is null or length(appellation) <= 200),
   grape_blend_mode text check (grape_blend_mode is null or grape_blend_mode in ('single', 'blend')),
   grape_blend text not null default '',
   grape_blend_components jsonb,
@@ -2397,6 +2617,20 @@ create table if not exists public.cellar_bottles (
     bottle_format <> 'other' or bottle_format_other is not null
   )
 );
+
+-- MIGRATION: additive nullable column for a project where cellar_bottles
+-- already existed before Region/Appellation (see README "Region and
+-- Appellation") — no-op on a fresh install (already defined above).
+alter table public.cellar_bottles add column if not exists appellation text;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'cellar_bottles_appellation_length'
+  ) then
+    alter table public.cellar_bottles add constraint cellar_bottles_appellation_length
+      check (appellation is null or length(appellation) <= 200);
+  end if;
+end $$;
 
 -- Cellar list default filter ("Available") and the Reserved/Consumed tabs
 -- both query (owner_user_id, status) together; the archive-style
@@ -2467,6 +2701,10 @@ $$;
 -- a client-supplied owner id) is what the new row is actually attributed to.
 -- Validation mirrors register_bottle's exactly, plus the cellar-only bottle
 -- format/storage/note fields.
+-- Signature changed (appellation added) — explicitly drop the old overload
+-- so it can't be called with stale semantics; safe/no-op on a fresh install.
+drop function if exists public.add_cellar_bottle(text, text, text, text, jsonb, text, text, text, text, text, text, text, text);
+
 create or replace function public.add_cellar_bottle(
   p_country text,
   p_region text,
@@ -2480,7 +2718,8 @@ create or replace function public.add_cellar_bottle(
   p_bottle_format text,
   p_bottle_format_other text,
   p_storage_location text,
-  p_personal_note text
+  p_personal_note text,
+  p_appellation text
 ) returns jsonb
 language plpgsql
 security definer
@@ -2514,6 +2753,12 @@ begin
   if length(coalesce(p_personal_note, '')) > 500 then
     raise exception 'personal_note_too_long';
   end if;
+  if length(coalesce(p_appellation, '')) > 200 then
+    raise exception 'invalid_appellation';
+  end if;
+  if not is_valid_appellation(btrim(p_country), btrim(p_region), p_appellation) then
+    raise exception 'invalid_appellation';
+  end if;
   perform validate_grape_blend_components(p_grape_blend_mode, p_grape_blend_components);
   if btrim(coalesce(p_country, '')) = '' or btrim(coalesce(p_region, '')) = ''
      or btrim(coalesce(p_grape_blend, '')) = ''
@@ -2523,10 +2768,11 @@ begin
   end if;
 
   insert into public.cellar_bottles (
-    owner_user_id, wine_style, country, region, grape_blend_mode, grape_blend, grape_blend_components,
+    owner_user_id, wine_style, country, region, appellation, grape_blend_mode, grape_blend, grape_blend_components,
     producer, wine_cuvee, vintage, bottle_format, bottle_format_other, storage_location, personal_note
   ) values (
-    v_uid, p_wine_style, btrim(p_country), btrim(p_region), p_grape_blend_mode, btrim(p_grape_blend), p_grape_blend_components,
+    v_uid, p_wine_style, btrim(p_country), btrim(p_region), nullif(btrim(coalesce(p_appellation, '')), ''),
+    p_grape_blend_mode, btrim(p_grape_blend), p_grape_blend_components,
     btrim(p_producer), btrim(p_wine_cuvee), btrim(p_vintage), p_bottle_format,
     nullif(btrim(coalesce(p_bottle_format_other, '')), ''),
     nullif(btrim(coalesce(p_storage_location, '')), ''),
@@ -2542,6 +2788,10 @@ $$;
 -- as add_cellar_bottle; a `reserved`/`consumed` row is never matched by the
 -- `for update` lookup's status check, so this always fails safely for those
 -- (see README — reserved/consumed bottles are read-only in v1).
+-- Signature changed (appellation added) — explicitly drop the old overload
+-- so it can't be called with stale semantics; safe/no-op on a fresh install.
+drop function if exists public.update_cellar_bottle(uuid, text, text, text, text, jsonb, text, text, text, text, text, text, text, text);
+
 create or replace function public.update_cellar_bottle(
   p_cellar_bottle_id uuid,
   p_country text,
@@ -2556,7 +2806,8 @@ create or replace function public.update_cellar_bottle(
   p_bottle_format text,
   p_bottle_format_other text,
   p_storage_location text,
-  p_personal_note text
+  p_personal_note text,
+  p_appellation text
 ) returns void
 language plpgsql
 security definer
@@ -2599,6 +2850,12 @@ begin
   if length(coalesce(p_personal_note, '')) > 500 then
     raise exception 'personal_note_too_long';
   end if;
+  if length(coalesce(p_appellation, '')) > 200 then
+    raise exception 'invalid_appellation';
+  end if;
+  if not is_valid_appellation(btrim(p_country), btrim(p_region), p_appellation) then
+    raise exception 'invalid_appellation';
+  end if;
   perform validate_grape_blend_components(p_grape_blend_mode, p_grape_blend_components);
   if btrim(coalesce(p_country, '')) = '' or btrim(coalesce(p_region, '')) = ''
      or btrim(coalesce(p_grape_blend, '')) = ''
@@ -2611,6 +2868,7 @@ begin
     wine_style = p_wine_style,
     country = btrim(p_country),
     region = btrim(p_region),
+    appellation = nullif(btrim(coalesce(p_appellation, '')), ''),
     grape_blend_mode = p_grape_blend_mode,
     grape_blend = btrim(p_grape_blend),
     grape_blend_components = p_grape_blend_components,
@@ -2685,11 +2943,11 @@ begin
 
   insert into wines (
     session_id, display_order, bottle_number, tasting_order, anonymous_code, contributor_guest_id,
-    country, region, grape_style, grape_blend_mode, grape_blend_components, producer, wine_cuvee,
+    country, region, appellation, grape_style, grape_blend_mode, grape_blend_components, producer, wine_cuvee,
     vintage, wine_style, cellar_bottle_id
   ) values (
     v_session.id, v_next_number - 1, v_next_number, v_next_order, 'Bottle ' || v_next_number, v_guest.id,
-    v_cellar.country, v_cellar.region, v_cellar.grape_blend, v_cellar.grape_blend_mode, v_cellar.grape_blend_components,
+    v_cellar.country, v_cellar.region, v_cellar.appellation, v_cellar.grape_blend, v_cellar.grape_blend_mode, v_cellar.grape_blend_components,
     v_cellar.producer, v_cellar.wine_cuvee, v_cellar.vintage, v_cellar.wine_style, v_cellar.id
   )
   returning wines.id into v_wine_id;
@@ -2817,8 +3075,8 @@ $$;
 -- claim_account_tasting_record — granting to anon would only let it raise
 -- not_authenticated/cellar_bottle_unavailable; authenticated-only is
 -- narrower on purpose.
-grant execute on function public.add_cellar_bottle(text, text, text, text, jsonb, text, text, text, text, text, text, text, text) to authenticated;
-grant execute on function public.update_cellar_bottle(uuid, text, text, text, text, jsonb, text, text, text, text, text, text, text, text) to authenticated;
+grant execute on function public.add_cellar_bottle(text, text, text, text, jsonb, text, text, text, text, text, text, text, text, text) to authenticated;
+grant execute on function public.update_cellar_bottle(uuid, text, text, text, text, jsonb, text, text, text, text, text, text, text, text, text) to authenticated;
 grant execute on function public.register_bottle_from_cellar(text, uuid) to authenticated;
 grant execute on function public.return_cellar_bottle_to_available(uuid) to authenticated;
 grant execute on function public.mark_cellar_bottle_consumed(uuid) to authenticated;

@@ -42,6 +42,13 @@ export const WINE_STYLE_LABELS: Record<WineStyle, string> = {
 export interface WineIdentityInput {
   country: string;
   region: string;
+  /**
+   * Optional, conditional on country+region (see lib/appellations.ts) — a
+   * more specific recognised appellation within `region`, e.g. Chablis
+   * within Burgundy. Always "" when the selected country/region pair has no
+   * curated appellation list, or when the contributor leaves it blank.
+   */
+  appellation: string;
   /** "" until the contributor picks single/blend for this bottle. */
   grapeBlendMode: GrapeBlendMode | "";
   grapeBlend: string;
@@ -97,6 +104,8 @@ export interface WineAnswerKey {
   code: string;
   country: string;
   region: string;
+  /** Optional, more specific appellation within `region` — see WineIdentityInput. Undefined for historic bottles predating this field, or when the bottle's country/region pair has no curated list, or when left blank. Never used in scoring. */
+  appellation?: string;
   /** How `grapeBlend` was captured. "" means legacy/unknown — see GrapeBlendMode. */
   grapeBlendMode: GrapeBlendMode | "";
   /** Canonical single-variety name, or free-text blend description. */
@@ -113,6 +122,30 @@ export interface WineAnswerKey {
   /** Contributor's guest id. Only ever populated after reveal — used by the Palate Profile ledger's "Contributed by you" label (see README "Palate Profile"); never inferred from display name. */
   contributorGuestId?: string;
 }
+
+/**
+ * Which scoring model a session uses — chosen once, immutably, at session
+ * creation (see supabase/schema.sql `create_tasting_session`) and never
+ * client-controlled or editable afterwards. Historic sessions keep whatever
+ * they were created with forever; scoring is never recalculated under a
+ * different version. Only two versions have ever actually existed:
+ * 'legacy_v1' is the country(20)/region(30)/grapeBlend(30)/vintage(20) core
+ * (100 max) plus producer(10)/wineName(10) bonus (20 max), 120 max total,
+ * every session ever shipped before this feature. The previously-planned
+ * 140-point Appellation-bonus model was never actually deployed (Appellation
+ * guesses existed but were always explicitly unscored), so there is no
+ * intermediate legacy version to support. 'core_v3_appellation_conditional'
+ * is the current model — see CORE_V3_FIELD_POINTS and lib/scoring.ts.
+ */
+export type ScoringVersion = "legacy_v1" | "core_v3_appellation_conditional";
+
+export const SCORING_VERSIONS: ScoringVersion[] = [
+  "legacy_v1",
+  "core_v3_appellation_conditional",
+];
+
+/** Every newly created session is assigned this version, server-side only — never a client-supplied value. See create_tasting_session in supabase/schema.sql. */
+export const CURRENT_SCORING_VERSION: ScoringVersion = "core_v3_appellation_conditional";
 
 export type SessionStatus = "registration" | "collecting" | "revealed";
 
@@ -156,6 +189,8 @@ export interface TastingSession {
   wines: WineAnswerKey[];
   status: SessionStatus;
   createdAt: string;
+  /** Immutable, assigned at creation — see ScoringVersion. Governs which scoring math lib/scoring.ts and lib/results.ts use for every guess in this session. */
+  scoringVersion: ScoringVersion;
 }
 
 export interface Guest {
@@ -169,6 +204,14 @@ export interface WineGuess {
   wineId: string;
   country: string;
   region: string;
+  /**
+   * Optional, conditional on country+region (see lib/appellations.ts) — the
+   * same curated map and conditional visibility actual-wine registration
+   * uses. Never scored: see ScoredGuess.appellationGuess for how this is
+   * carried through to display without affecting corePoints/bonusPoints/
+   * totalPoints or fieldScores.
+   */
+  appellation: string;
   /** "" until the guest picks single/blend mode for this wine. */
   grapeBlendMode: GrapeBlendMode | "";
   grapeBlend: string;
@@ -197,10 +240,11 @@ export interface GuestSubmission {
 }
 
 /**
- * The new scoring model (replaces the old flat 75-point-per-wine model):
- * country, region, grape/blend, and vintage make up a 100-point core score;
- * producer and wine/cuvée are 20-point bonus categories on top, for a
- * 120-point maximum per wine. Price band is never scored.
+ * legacy_v1 ONLY (see ScoringVersion) — every session created before the
+ * scoring-model replacement: country, region, grape/blend, and vintage make
+ * up a 100-point core score; producer and wine/cuvée are 20-point bonus
+ * categories on top, for a 120-point maximum per wine. Never used for new
+ * (core_v3_appellation_conditional) sessions — see CORE_V3_FIELD_POINTS.
  */
 export const CORE_FIELD_POINTS = {
   country: 20,
@@ -209,6 +253,7 @@ export const CORE_FIELD_POINTS = {
   vintage: 20,
 } as const;
 
+/** legacy_v1 only — see CORE_FIELD_POINTS. Producer/wine-cuvée are never scored under core_v3_appellation_conditional. */
 export const BONUS_FIELD_POINTS = {
   producer: 10,
   wineName: 10,
@@ -216,17 +261,38 @@ export const BONUS_FIELD_POINTS = {
 
 export type CoreScorableField = keyof typeof CORE_FIELD_POINTS;
 export type BonusScorableField = keyof typeof BONUS_FIELD_POINTS;
-export type ScorableField = CoreScorableField | BonusScorableField;
+/** "appellation" is core_v3_appellation_conditional only — see CORE_V3_FIELD_POINTS. */
+export type ScorableField = CoreScorableField | BonusScorableField | "appellation";
 
+/** legacy_v1 only. */
 export const CORE_MAX_POINTS = Object.values(CORE_FIELD_POINTS).reduce(
   (sum, p) => sum + p,
   0
 );
+/** legacy_v1 only. */
 export const BONUS_MAX_POINTS = Object.values(BONUS_FIELD_POINTS).reduce(
   (sum, p) => sum + p,
   0
 );
+/** legacy_v1 only — a fixed 120-point-per-wine constant. core_v3_appellation_conditional's possible score varies per bottle (80 or 100); see ScoredGuess.totalPossiblePoints. */
 export const TOTAL_MAX_POINTS_PER_WINE = CORE_MAX_POINTS + BONUS_MAX_POINTS;
+
+/**
+ * core_v3_appellation_conditional ONLY (see ScoringVersion): five potential
+ * 20-point core categories, no bonus category at all. Appellation is
+ * excluded entirely — from both the guess's fieldScores and the
+ * possible-points denominator — whenever the actual wine has no recorded
+ * Appellation; see calculateBlindScoreV3 in lib/scoring.ts. Producer and
+ * wine/cuvée remain optional guess fields but are never scored under this
+ * model.
+ */
+export const CORE_V3_FIELD_POINTS = {
+  country: 20,
+  region: 20,
+  appellation: 20,
+  grapeBlend: 20,
+  vintage: 20,
+} as const;
 
 /** Per-field scoring breakdown for one guess against its answer key. */
 export interface FieldScore {
@@ -239,6 +305,53 @@ export interface FieldScore {
   correct: boolean;
   points: number;
   pointsAvailable: number;
+  /**
+   * core_v3_appellation_conditional only, and only ever on the "appellation"
+   * field: false means this category does not apply to this wine at all —
+   * the actual wine has no recorded Appellation, so there is nothing to
+   * score. Render as "Not applicable", never "0/20" or a correct/incorrect
+   * badge. Absent or true for every other field/version.
+   */
+  applicable?: boolean;
+}
+
+/**
+ * The full core_v3_appellation_conditional per-bottle score breakdown for
+ * one guess — see lib/scoring.ts's calculateBlindScoreV3, the pure function
+ * that produces this shape, and README "Scoring model". Appellation is
+ * conditionally excluded (both from scoring and from the denominator)
+ * whenever the actual wine has no recorded Appellation.
+ */
+export interface BlindScoreResult {
+  countryCorrect: boolean;
+  countryPoints: number;
+  countryPossiblePoints: 20;
+
+  regionCorrect: boolean;
+  regionPoints: number;
+  regionPossiblePoints: 20;
+
+  appellationApplicable: boolean;
+  /** Null exactly when appellationApplicable is false — never a fabricated true/false for a category that doesn't exist for this wine. */
+  appellationCorrect: boolean | null;
+  appellationPoints: number;
+  appellationPossiblePoints: 0 | 20;
+
+  grapeBlendCorrect: boolean;
+  grapeBlendPoints: number;
+  grapeBlendPossiblePoints: 20;
+
+  vintageCorrect: boolean;
+  vintagePoints: number;
+  vintagePossiblePoints: 20;
+
+  corePoints: number;
+  corePossiblePoints: 80 | 100;
+
+  /** Equal to corePoints under this model — there is no bonus category. */
+  totalPoints: number;
+  /** Equal to corePossiblePoints under this model. */
+  totalPossiblePoints: 80 | 100;
 }
 
 export interface ScoredGuess {
@@ -246,15 +359,42 @@ export interface ScoredGuess {
   guestName: string;
   wineId: string;
   fieldScores: FieldScore[];
-  /** 0-100: country + region + grape/blend + vintage. */
+  /**
+   * legacy_v1 only: the guest's raw appellation guess, carried straight
+   * through for display only — never a FieldScore, never part of
+   * corePoints/bonusPoints/totalPoints, no correctness computed. Undefined
+   * under core_v3_appellation_conditional (there, Appellation is a genuine
+   * scored FieldScore instead — see fieldScores) or when left blank.
+   */
+  appellationGuess?: string;
+  /**
+   * core_v3_appellation_conditional only: the guest's raw producer/wine-cuvée
+   * guesses, carried straight through for an unscored reveal comparison —
+   * there is no bonus category under this model. Undefined under legacy_v1
+   * (there they're scored bonus FieldScores instead — see fieldScores) or
+   * when left blank.
+   */
+  producerGuess?: string;
+  wineCuveeGuess?: string;
+  /** Which model produced every number below — see ScoringVersion. */
+  scoringVersion: ScoringVersion;
+  /** core_v3_appellation_conditional only: whether the actual wine had a recorded Appellation at all. Always false (unused) under legacy_v1. */
+  appellationApplicable: boolean;
+  /** legacy_v1: country+region+grape/blend+vintage, 0-100. core_v3_appellation_conditional: country+region+appellation(if applicable)+grape/blend+vintage, 0-80 or 0-100. */
   corePoints: number;
-  /** 0-20: producer + wine/cuvée. */
+  /** legacy_v1: producer+wine/cuvée, 0-20. Always 0 under core_v3_appellation_conditional — there is no bonus category in that model. */
   bonusPoints: number;
-  /** 0-120: corePoints + bonusPoints. */
+  /** corePoints + bonusPoints. */
   totalPoints: number;
-  /** corePoints / 100 * 100. */
+  /** This guess's own possible core points. legacy_v1: always CORE_MAX_POINTS (100). core_v3_appellation_conditional: 80 or 100 depending on whether the actual wine had an Appellation — never a fixed session-wide constant. */
+  corePossiblePoints: number;
+  /** legacy_v1: always BONUS_MAX_POINTS (20). Always 0 under core_v3_appellation_conditional. */
+  bonusPossiblePoints: number;
+  /** corePossiblePoints + bonusPossiblePoints. */
+  totalPossiblePoints: number;
+  /** corePoints / corePossiblePoints * 100. */
   coreAccuracyPercent: number;
-  /** totalPoints / 120 * 100. */
+  /** totalPoints / totalPossiblePoints * 100. */
   overallAccuracyPercent: number;
   rating: number | null;
   confidence: Confidence;
@@ -277,6 +417,8 @@ export interface WineResult {
   guesses: ScoredGuess[];
   /** Highest-scoring taster(s) for this wine; more than one entry means a tie. */
   topTasters: TasterOnWine[];
+  /** The session's scoring model — every guess in `guesses` shares this same version. See ScoringVersion. */
+  scoringVersion: ScoringVersion;
 }
 
 export interface TasterResult {
@@ -284,17 +426,29 @@ export interface TasterResult {
   guestName: string;
   rank: number;
   totalPoints: number;
+  /**
+   * legacy_v1: a fixed session-wide constant (TOTAL_MAX_POINTS_PER_WINE *
+   * number of wines), matching this model's original, unchanged ranking
+   * behaviour. core_v3_appellation_conditional: the sum of each *submitted*
+   * guess's own totalPossiblePoints — bottles the taster never guessed on
+   * are excluded from both totalPoints and totalPossible, so a taster who
+   * only saw 80-point wines is compared fairly against one who saw 100-point
+   * wines. See lib/results.ts.
+   */
   totalPossible: number;
   corePoints: number;
   corePossible: number;
+  /** Always 0/0 under core_v3_appellation_conditional — there is no bonus category in that model. */
   bonusPoints: number;
   bonusPossible: number;
-  /** totalPoints / totalPossible * 100. */
+  /** totalPoints / totalPossible * 100. core_v3_appellation_conditional's primary ranking key — see lib/results.ts. */
   overallAccuracyPercent: number;
   /** corePoints / corePossible * 100. */
   coreAccuracyPercent: number;
-  /** Count of core-category (country/region/grape-blend/vintage) fields correct across every wine. Used as the final tie-break. */
+  /** Count of core-category fields correct across every submitted wine. Tie-break: last for legacy_v1, third for core_v3_appellation_conditional (after percentage and raw points). */
   exactCoreMatches: number;
+  /** Number of wines this taster actually submitted a guess for. core_v3_appellation_conditional's second tie-break (after raw points, before exactCoreMatches) — see lib/results.ts. */
+  submittedGuessCount: number;
   averageRatingGiven: number | null;
 }
 
@@ -303,10 +457,12 @@ export interface TastingReport {
   tasterResults: TasterResult[];
   /** Wine(s) with the highest average rating; more than one entry means a tie. */
   wineOfTheNight: WineResult[];
-  /** Guest(s) tied for rank 1 on the leaderboard; more than one entry means a tie. */
+  /** Guest(s) tied for rank 1 on the leaderboard; more than one entry means a tie. Ranked by percentage accuracy under core_v3_appellation_conditional, raw points under legacy_v1 — see lib/results.ts. */
   bestTaster: TasterResult[];
   /** Wine(s) with the largest rating spread; more than one entry means a tie. */
   mostDivisiveWine: WineResult[];
+  /** This session's scoring model — every wineResult/tasterResult here shares this same version. See ScoringVersion. */
+  scoringVersion: ScoringVersion;
 }
 
 /**

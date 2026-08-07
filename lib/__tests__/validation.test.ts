@@ -54,6 +54,7 @@ function makeBottle(overrides: Partial<BottleFormInput> = {}): BottleFormInput {
   return {
     country: "France",
     region: "Champagne",
+    appellation: "",
     grapeBlendMode: "single",
     grapeBlend: "Chardonnay",
     selectedGrapes: [],
@@ -195,6 +196,34 @@ describe("validateBottleForm", () => {
       expect(errors.wineStyle).toBeUndefined();
     }
   });
+
+  it("appellation is optional — a supported region with no appellation is valid", () => {
+    const errors = validateBottleForm(
+      makeBottle({ country: "France", region: "Burgundy", appellation: "" })
+    );
+    expect(errors.appellation).toBeUndefined();
+  });
+
+  it("accepts a valid appellation for its country/region", () => {
+    const errors = validateBottleForm(
+      makeBottle({ country: "France", region: "Burgundy", appellation: "Chablis" })
+    );
+    expect(errors.appellation).toBeUndefined();
+  });
+
+  it("rejects an appellation that doesn't belong to the selected region", () => {
+    const errors = validateBottleForm(
+      makeBottle({ country: "France", region: "Burgundy", appellation: "Barolo" })
+    );
+    expect(errors.appellation).toBe("Select an appellation from the available options.");
+  });
+
+  it("rejects any appellation for a country/region pair with no curated list", () => {
+    const errors = validateBottleForm(
+      makeBottle({ country: "Greece", region: "Crete", appellation: "Chablis" })
+    );
+    expect(errors.appellation).toBe("Select an appellation from the available options.");
+  });
 });
 
 function makeGuess(overrides: Partial<WineGuess> = {}): WineGuess {
@@ -202,6 +231,7 @@ function makeGuess(overrides: Partial<WineGuess> = {}): WineGuess {
     wineId: "wine-1",
     country: "",
     region: "",
+    appellation: "",
     grapeBlendMode: "single",
     grapeBlend: "",
     selectedGrapes: [],

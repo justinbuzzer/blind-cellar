@@ -1,12 +1,8 @@
 import {
-  BonusScorableField,
-  CORE_MAX_POINTS,
-  CoreScorableField,
   ScorableField,
   ScoredGuess,
   TASTING_MODES,
   TastingMode,
-  TOTAL_MAX_POINTS_PER_WINE,
   WINE_STYLE_LABELS,
   WINE_STYLES,
   WineAnswerKey,
@@ -276,15 +272,23 @@ export function computeAtAGlance(scopedMetas: SessionMeta[], scopedObservations:
 // the Seen scope toggle (see README "Core scope rule: Seen tasting filter").
 // ---------------------------------------------------------------------------
 
-const CORE_FIELDS: { field: CoreScorableField; label: string }[] = [
+/**
+ * Country, region, grape/blend, and vintage exist and are scored (correct or
+ * not) under every scoring version ever shipped, so their accuracy is always
+ * computed across every submitted blind guess regardless of which session's
+ * scoring model produced it. Appellation is handled separately (see
+ * appellationCategoryAccuracy below) since it is only ever a genuine scored
+ * category under core_v3_appellation_conditional, and only for wines that
+ * actually had a recorded Appellation. Producer/wine-cuvée are deliberately
+ * absent here — see README "Scoring model": they are never scored under
+ * core_v3_appellation_conditional, and mixing a legacy-only "bonus hit rate"
+ * into an aggregate spanning both scoring versions would be misleading.
+ */
+const CATEGORY_FIELDS: { field: Exclude<ScorableField, "producer" | "wineName" | "appellation">; label: string }[] = [
   { field: "country", label: "Country" },
   { field: "region", label: "Region" },
   { field: "grapeBlend", label: "Grape / blend" },
   { field: "vintage", label: "Vintage" },
-];
-const BONUS_FIELDS: { field: BonusScorableField; label: string }[] = [
-  { field: "producer", label: "Producer" },
-  { field: "wineName", label: "Wine / cuvée" },
 ];
 
 const MIN_BLIND_SAMPLE_OVERALL = 10;
@@ -299,22 +303,26 @@ export interface CategoryAccuracy {
 }
 
 export interface BlindPalateStrengths {
-  strongestCore: CategoryAccuracy | null;
-  developingCore: CategoryAccuracy | null;
-  bestBonus: CategoryAccuracy | null;
+  strongestCategory: CategoryAccuracy | null;
+  developingCategory: CategoryAccuracy | null;
   hasSufficientSample: boolean;
 }
 
 export interface BlindPalate {
   totalSubmittedCalls: number;
-  coreAccuracyPercent: number | null;
-  overallAccuracyPercent: number | null;
-  corePointsEarned: number;
-  corePointsPossible: number;
-  totalPointsEarned: number;
-  totalPointsPossible: number;
-  coreCategories: CategoryAccuracy[];
-  bonusCategories: CategoryAccuracy[];
+  /**
+   * sum(totalPoints) / sum(totalPossiblePoints) * 100 across every submitted
+   * blind guess, legacy_v1 and core_v3_appellation_conditional sessions
+   * alike — each guess's own possible-points denominator already reflects
+   * its own session's scoring version (see ScoredGuess.totalPossiblePoints),
+   * so combining them here is safe and never conflates the two models' point
+   * scales. See README "Scoring model" — displayed as "Blind accuracy".
+   */
+  blindAccuracyPercent: number | null;
+  pointsEarned: number;
+  pointsPossible: number;
+  /** Country, Region, Grape/blend, Vintage (every blind guess), then Appellation (only guesses where the actual wine had one). */
+  categories: CategoryAccuracy[];
   strengths: BlindPalateStrengths;
 }
 
@@ -330,49 +338,63 @@ function categoryAccuracy(guesses: ScoredGuess[], field: ScorableField, label: s
   };
 }
 
+/**
+ * Appellation accuracy only ever counts guesses where the actual wine had a
+ * recorded Appellation (core_v3_appellation_conditional's
+ * appellationApplicable flag) — see README "Scoring model": a wine with no
+ * Appellation is never included in this category's denominator, and
+ * legacy_v1 guesses (which never set appellationApplicable) never
+ * contribute at all, since Appellation wasn't scored under that model.
+ */
+function appellationCategoryAccuracy(guesses: ScoredGuess[]): CategoryAccuracy {
+  const applicable = guesses.filter((g) => g.appellationApplicable);
+  const correct = applicable.filter(
+    (g) => g.fieldScores.find((f) => f.field === "appellation")?.correct
+  ).length;
+  return {
+    field: "appellation",
+    label: "Appellation",
+    correct,
+    submitted: applicable.length,
+    accuracyPercent: applicable.length > 0 ? round1((correct / applicable.length) * 100) : null,
+  };
+}
+
 /** `blindObservations` must already be restricted to full_blind/course_reveal sessions with a submitted guess — see extractBlindObservations. */
 export function computeBlindPalate(blindObservations: WineObservation[]): BlindPalate {
   const guesses = blindObservations.map((o) => o.scoredGuess).filter((g): g is ScoredGuess => g !== null);
 
   const totalSubmittedCalls = guesses.length;
-  const corePointsEarned = guesses.reduce((sum, g) => sum + g.corePoints, 0);
-  const totalPointsEarned = guesses.reduce((sum, g) => sum + g.totalPoints, 0);
-  const corePointsPossible = CORE_MAX_POINTS * totalSubmittedCalls;
-  const totalPointsPossible = TOTAL_MAX_POINTS_PER_WINE * totalSubmittedCalls;
+  const pointsEarned = guesses.reduce((sum, g) => sum + g.totalPoints, 0);
+  const pointsPossible = guesses.reduce((sum, g) => sum + g.totalPossiblePoints, 0);
 
-  const coreCategories = CORE_FIELDS.map(({ field, label }) => categoryAccuracy(guesses, field, label));
-  const bonusCategories = BONUS_FIELDS.map(({ field, label }) => categoryAccuracy(guesses, field, label));
+  const categories = [
+    ...CATEGORY_FIELDS.slice(0, 2).map(({ field, label }) => categoryAccuracy(guesses, field, label)),
+    appellationCategoryAccuracy(guesses),
+    ...CATEGORY_FIELDS.slice(2).map(({ field, label }) => categoryAccuracy(guesses, field, label)),
+  ];
 
-  const eligibleCore = coreCategories.filter((c) => c.submitted >= MIN_CATEGORY_SAMPLE);
-  const eligibleBonus = bonusCategories.filter((c) => c.submitted >= MIN_CATEGORY_SAMPLE);
-  const hasSufficientSample = totalSubmittedCalls >= MIN_BLIND_SAMPLE_OVERALL && eligibleCore.length > 0;
+  const eligible = categories.filter((c) => c.submitted >= MIN_CATEGORY_SAMPLE);
+  const hasSufficientSample = totalSubmittedCalls >= MIN_BLIND_SAMPLE_OVERALL && eligible.length > 0;
 
-  let strongestCore: CategoryAccuracy | null = null;
-  let developingCore: CategoryAccuracy | null = null;
-  let bestBonus: CategoryAccuracy | null = null;
+  let strongestCategory: CategoryAccuracy | null = null;
+  let developingCategory: CategoryAccuracy | null = null;
   if (hasSufficientSample) {
-    strongestCore = eligibleCore.reduce((best, c) =>
+    strongestCategory = eligible.reduce((best, c) =>
       (c.accuracyPercent ?? -1) > (best.accuracyPercent ?? -1) ? c : best
     );
-    developingCore = eligibleCore.reduce((worst, c) =>
+    developingCategory = eligible.reduce((worst, c) =>
       (c.accuracyPercent ?? 101) < (worst.accuracyPercent ?? 101) ? c : worst
     );
-    if (eligibleBonus.length > 0) {
-      bestBonus = eligibleBonus.reduce((best, c) => ((c.accuracyPercent ?? -1) > (best.accuracyPercent ?? -1) ? c : best));
-    }
   }
 
   return {
     totalSubmittedCalls,
-    coreAccuracyPercent: corePointsPossible > 0 ? round1((corePointsEarned / corePointsPossible) * 100) : null,
-    overallAccuracyPercent: totalPointsPossible > 0 ? round1((totalPointsEarned / totalPointsPossible) * 100) : null,
-    corePointsEarned,
-    corePointsPossible,
-    totalPointsEarned,
-    totalPointsPossible,
-    coreCategories,
-    bonusCategories,
-    strengths: { strongestCore, developingCore, bestBonus, hasSufficientSample },
+    blindAccuracyPercent: pointsPossible > 0 ? round1((pointsEarned / pointsPossible) * 100) : null,
+    pointsEarned,
+    pointsPossible,
+    categories,
+    strengths: { strongestCategory, developingCategory, hasSufficientSample },
   };
 }
 
@@ -610,6 +632,8 @@ export interface LedgerRow {
   vintage: string;
   region: string;
   country: string;
+  /** Optional, more specific appellation within `region` — see lib/appellations.ts. Undefined when absent. */
+  appellation?: string;
   wineStyle: WineStyle;
   grapeBlend: string;
   personalRating: number | null;
@@ -640,6 +664,7 @@ export function buildLedgerRows(observations: WineObservation[]): LedgerRow[] {
     vintage: o.wine.vintage,
     region: o.wine.region,
     country: o.wine.country,
+    appellation: o.wine.appellation,
     wineStyle: o.wine.wineStyle,
     grapeBlend: o.wine.grapeBlend,
     personalRating: o.personalRating,

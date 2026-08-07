@@ -28,7 +28,12 @@ function AccuracyRow({ category }: { category: CategoryAccuracy }) {
  * See README "Palate Profile" — "Blind palate". Always Full blind +
  * Course-by-course only, independent of the Seen scope toggle — the parent
  * page must pass data computed from extractBlindObservations, never the
- * scope-filtered observation set.
+ * scope-filtered observation set. Spans both scoring versions (see README
+ * "Scoring model") — "Blind accuracy" and the raw points basis are computed
+ * from each guess's own possible-points denominator, so a blend of
+ * legacy_v1 and core_v3_appellation_conditional sessions is never
+ * misleading. There is no bonus category or Producer/Wine-cuvée hit rate
+ * under the current model, so neither appears here.
  */
 export function BlindPalateSection({ data }: { data: BlindPalate }) {
   if (data.totalSubmittedCalls === 0) {
@@ -58,33 +63,22 @@ export function BlindPalateSection({ data }: { data: BlindPalate }) {
 
       <MetricStrip
         figures={[
-          { label: "Core accuracy", value: data.coreAccuracyPercent !== null ? `${data.coreAccuracyPercent}%` : "—" },
           {
-            label: "Overall accuracy",
-            value: data.overallAccuracyPercent !== null ? `${data.overallAccuracyPercent}%` : "—",
+            label: "Blind accuracy",
+            value: data.blindAccuracyPercent !== null ? `${data.blindAccuracyPercent}%` : "—",
           },
           { label: "Blind wine calls submitted", value: String(data.totalSubmittedCalls) },
-          { label: "Core points earned / possible", value: `${data.corePointsEarned} / ${data.corePointsPossible}` },
           {
-            label: "Total points earned / possible",
-            value: `${data.totalPointsEarned} / ${data.totalPointsPossible}`,
+            label: "Points earned / possible",
+            value: `${data.pointsEarned} points from ${data.pointsPossible} possible`,
           },
         ]}
       />
 
       <div>
-        <p className="text-xs font-medium uppercase tracking-[0.1em] text-cellar-gold">Core calls</p>
+        <p className="text-xs font-medium uppercase tracking-[0.1em] text-cellar-gold">Category calls</p>
         <div className="mt-1 divide-y divide-cellar-border">
-          {data.coreCategories.map((category) => (
-            <AccuracyRow key={category.field} category={category} />
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <p className="text-xs font-medium uppercase tracking-[0.1em] text-cellar-gold">Bonus precision</p>
-        <div className="mt-1 divide-y divide-cellar-border">
-          {data.bonusCategories.map((category) => (
+          {data.categories.map((category) => (
             <AccuracyRow key={category.field} category={category} />
           ))}
         </div>
@@ -92,30 +86,22 @@ export function BlindPalateSection({ data }: { data: BlindPalate }) {
 
       <div>
         {strengths.hasSufficientSample ? (
-          <dl className="grid gap-3 sm:grid-cols-3">
-            {strengths.strongestCore && (
+          <dl className="grid gap-3 sm:grid-cols-2">
+            {strengths.strongestCategory && (
               <div>
                 <dt className="text-xs font-medium uppercase tracking-[0.1em] text-cellar-gold">
                   Most confident call
                 </dt>
                 <dd className="mt-1 text-sm text-cellar-text">
-                  {strengths.strongestCore.label} ({strengths.strongestCore.accuracyPercent}%)
+                  {strengths.strongestCategory.label} ({strengths.strongestCategory.accuracyPercent}%)
                 </dd>
               </div>
             )}
-            {strengths.developingCore && (
+            {strengths.developingCategory && (
               <div>
                 <dt className="text-xs font-medium uppercase tracking-[0.1em] text-cellar-gold">Area to explore</dt>
                 <dd className="mt-1 text-sm text-cellar-text">
-                  {strengths.developingCore.label} ({strengths.developingCore.accuracyPercent}%)
-                </dd>
-              </div>
-            )}
-            {strengths.bestBonus && (
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-[0.1em] text-cellar-gold">Bonus precision</dt>
-                <dd className="mt-1 text-sm text-cellar-text">
-                  {strengths.bestBonus.label} ({strengths.bestBonus.accuracyPercent}%)
+                  {strengths.developingCategory.label} ({strengths.developingCategory.accuracyPercent}%)
                 </dd>
               </div>
             )}

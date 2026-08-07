@@ -1,5 +1,5 @@
 import { SupabaseClient } from "@supabase/supabase-js";
-import { SessionStatus, TastingMode } from "@/types/tasting";
+import { ScoringVersion, SessionStatus, TastingMode } from "@/types/tasting";
 import { AccountTastingRecordRow } from "@/lib/supabase/types";
 import { loadTastingReportData } from "./reportData";
 import {
@@ -17,6 +17,7 @@ interface SessionRowWithHost {
   tasting_date: string;
   status: SessionStatus;
   tasting_mode: TastingMode;
+  scoring_version: ScoringVersion;
   created_at: string;
   host_guest_id: string | null;
 }
@@ -57,7 +58,7 @@ export async function loadProfileData(supabase: SupabaseClient): Promise<Profile
   const sessionIds = Array.from(new Set(records.map((r) => r.session_id)));
   const { data: sessionRowsRaw, error: sessionsError } = await supabase
     .from("tasting_sessions")
-    .select("id, public_id, title, tasting_date, status, tasting_mode, created_at, host_guest_id")
+    .select("id, public_id, title, tasting_date, status, tasting_mode, scoring_version, created_at, host_guest_id")
     .in("id", sessionIds);
 
   if (sessionsError || !sessionRowsRaw) {
@@ -79,7 +80,11 @@ export async function loadProfileData(supabase: SupabaseClient): Promise<Profile
       if (!row) return [];
 
       const [reportData, participantCountResult] = await Promise.all([
-        loadTastingReportData(supabase, { id: row.id, tastingMode: row.tasting_mode }),
+        loadTastingReportData(supabase, {
+          id: row.id,
+          tastingMode: row.tasting_mode,
+          scoringVersion: row.scoring_version,
+        }),
         supabase.from("guests").select("id", { count: "exact", head: true }).eq("session_id", row.id),
       ]);
 

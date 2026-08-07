@@ -1,4 +1,5 @@
 import { SeenBottleResult, WINE_STYLE_LABELS } from "@/types/tasting";
+import { compactWineLocationLabel } from "@/lib/appellations";
 import { Card } from "@/components/Card";
 import { Stat } from "@/components/Stat";
 
@@ -40,7 +41,7 @@ export function SeenBottleResultCard({ result, totalWines }: SeenBottleResultCar
           {wine.producer} — {wine.wineName} {wine.vintage}
         </h3>
         <p className="mt-1 text-sm text-cellar-muted">
-          {[wine.country, wine.region, wine.grapeBlend].filter(Boolean).join(" · ")}
+          {[compactWineLocationLabel(wine), wine.grapeBlend].filter(Boolean).join(" · ")}
         </p>
         <p className="mt-1 text-sm text-cellar-muted">
           Style: {WINE_STYLE_LABELS[wine.wineStyle]} · Served {ordinal(wine.tastingOrder)}{" "}

@@ -143,7 +143,7 @@ export default function ArchivePage() {
         getSessionSummary: async (sessionId) => {
           const { data: sessionRow } = await supabase
             .from("tasting_sessions")
-            .select("id, public_id, title, tasting_date, status, tasting_mode, created_at")
+            .select("id, public_id, title, tasting_date, status, tasting_mode, scoring_version, created_at")
             .eq("id", sessionId)
             .maybeSingle();
           if (!sessionRow) return null;
@@ -166,6 +166,7 @@ export default function ArchivePage() {
             tastingDate: sessionRow.tasting_date,
             status: sessionRow.status,
             tastingMode: sessionRow.tasting_mode,
+            scoringVersion: sessionRow.scoring_version,
             createdAt: sessionRow.created_at,
             bottleCount: bottleCount ?? 0,
             participantCount: participantCount ?? 0,

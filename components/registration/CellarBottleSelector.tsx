@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { TextField } from "@/components/TextField";
 import { SelectField } from "@/components/SelectField";
 import { cellarBottleFormatLabel, cellarWineIdentityLabel } from "@/lib/cellar";
+import { compactWineLocationLabel } from "@/lib/appellations";
 import { normalizeText } from "@/lib/normalize";
 import { CellarBottleRow } from "@/lib/supabase/types";
 import { BOTTLE_FORMAT_LABELS, WINE_STYLE_LABELS } from "@/types/tasting";
@@ -48,6 +49,7 @@ export function CellarBottleSelector({ bottles, onSelect }: CellarBottleSelector
         bottle.vintage,
         bottle.country,
         bottle.region,
+        bottle.appellation ?? "",
         bottle.grape_blend,
         bottle.storage_location ?? "",
       ]
@@ -108,7 +110,7 @@ export function CellarBottleSelector({ bottles, onSelect }: CellarBottleSelector
                   {cellarWineIdentityLabel(bottle)}
                 </span>
                 <span className="text-sm text-cellar-muted">
-                  {bottle.region}, {bottle.country} · {WINE_STYLE_LABELS[bottle.wine_style]} ·{" "}
+                  {compactWineLocationLabel(bottle)} · {WINE_STYLE_LABELS[bottle.wine_style]} ·{" "}
                   {cellarBottleFormatLabel(bottle)}
                   {bottle.storage_location && <> · {bottle.storage_location}</>}
                 </span>

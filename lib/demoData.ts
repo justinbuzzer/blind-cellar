@@ -1,4 +1,5 @@
 import {
+  CURRENT_SCORING_VERSION,
   Guest,
   GuestSubmission,
   TastingSession,
@@ -31,6 +32,7 @@ const demoWines: WineAnswerKey[] = [
     contributorName: "Ben",
     country: "Italy",
     region: "Piedmont",
+    appellation: "Barolo",
     grapeBlendMode: "single",
     grapeBlend: "Nebbiolo",
     producer: "Giacomo Conterno",
@@ -59,9 +61,9 @@ const demoWines: WineAnswerKey[] = [
 
 function guess(
   wineId: string,
-  fields: Omit<WineGuess, "wineId" | "selectedGrapes" | "otherGrapesText">
+  fields: Omit<WineGuess, "wineId" | "appellation" | "selectedGrapes" | "otherGrapesText">
 ): WineGuess {
-  return { wineId, selectedGrapes: [], otherGrapesText: "", ...fields };
+  return { wineId, appellation: "", selectedGrapes: [], otherGrapesText: "", ...fields };
 }
 
 const demoGuests: Guest[] = [
@@ -224,6 +226,7 @@ export function buildDemoTasting(): {
     wines: demoWines,
     status: "collecting",
     createdAt: new Date().toISOString(),
+    scoringVersion: CURRENT_SCORING_VERSION,
   };
 
   return {

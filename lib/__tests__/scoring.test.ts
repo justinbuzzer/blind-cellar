@@ -1,12 +1,31 @@
 import { describe, expect, it } from "vitest";
 import {
+  calculateBlindScoreV3,
   scoreBonusTextField,
   scoreCoreTextField,
   scoreGrapeBlend,
   scoreWineGuess,
+  scoreWineGuessCoreV3,
 } from "@/lib/scoring";
 import { combineBlendComponents } from "@/lib/wineReferenceData";
-import { CORE_MAX_POINTS, TOTAL_MAX_POINTS_PER_WINE, WineAnswerKey, WineGuess } from "@/types/tasting";
+import {
+  CORE_MAX_POINTS,
+  CURRENT_SCORING_VERSION,
+  SCORING_VERSIONS,
+  TOTAL_MAX_POINTS_PER_WINE,
+  WineAnswerKey,
+  WineGuess,
+} from "@/types/tasting";
+
+describe("scoring version constants", () => {
+  it("assigns new sessions core_v3_appellation_conditional, never a client-influenced value", () => {
+    expect(CURRENT_SCORING_VERSION).toBe("core_v3_appellation_conditional");
+  });
+
+  it("supports exactly the two scoring versions that have ever actually been deployed", () => {
+    expect(SCORING_VERSIONS).toEqual(["legacy_v1", "core_v3_appellation_conditional"]);
+  });
+});
 
 describe("scoreCoreTextField", () => {
   it("awards 20 points for an exact normalised country match", () => {
@@ -204,6 +223,7 @@ function makeGuess(overrides: Partial<WineGuess> = {}): WineGuess {
     wineId: "wine-1",
     country: "Italy",
     region: "Piedmont",
+    appellation: "",
     grapeBlendMode: "single",
     grapeBlend: "Nebbiolo",
     selectedGrapes: [],
@@ -219,7 +239,7 @@ function makeGuess(overrides: Partial<WineGuess> = {}): WineGuess {
 
 describe("scoreWineGuess", () => {
   it("awards the full 120 points for a perfect guess (100 core + 20 bonus)", () => {
-    const scored = scoreWineGuess("guest-1", "Alice", makeGuess(), answer);
+    const scored = scoreWineGuess("guest-1", "Alice", makeGuess(), answer, "legacy_v1");
     expect(scored.corePoints).toBe(100);
     expect(scored.bonusPoints).toBe(20);
     expect(scored.totalPoints).toBe(120);
@@ -229,8 +249,39 @@ describe("scoreWineGuess", () => {
     expect(scored.overallAccuracyPercent).toBe(100);
   });
 
+  it("appellation guess is never part of fieldScores and never affects the score, whether it matches, mismatches, or is blank", () => {
+    const perfectGuess = makeGuess();
+    const answerWithAppellation: WineAnswerKey = { ...answer, appellation: "Barolo" };
+
+    const withoutGuess = scoreWineGuess("guest-1", "Alice", perfectGuess, answerWithAppellation, "legacy_v1");
+    const withMatchingGuess = scoreWineGuess(
+      "guest-1",
+      "Alice",
+      { ...perfectGuess, appellation: "Barolo" },
+      answerWithAppellation,
+      "legacy_v1"
+    );
+    const withMismatchedGuess = scoreWineGuess(
+      "guest-1",
+      "Alice",
+      { ...perfectGuess, appellation: "Barbaresco" },
+      answerWithAppellation,
+      "legacy_v1"
+    );
+
+    for (const scored of [withoutGuess, withMatchingGuess, withMismatchedGuess]) {
+      expect(scored.totalPoints).toBe(120);
+      expect(scored.corePoints).toBe(100);
+      expect(scored.bonusPoints).toBe(20);
+      expect(scored.fieldScores.some((f) => (f.field as string) === "appellation")).toBe(false);
+    }
+    expect(withMatchingGuess.appellationGuess).toBe("Barolo");
+    expect(withMismatchedGuess.appellationGuess).toBe("Barbaresco");
+    expect(withoutGuess.appellationGuess).toBeUndefined();
+  });
+
   it("caps the core score at 100 and the max per-bottle score at 120", () => {
-    const scored = scoreWineGuess("guest-1", "Alice", makeGuess(), answer);
+    const scored = scoreWineGuess("guest-1", "Alice", makeGuess(), answer, "legacy_v1");
     expect(scored.corePoints).toBeLessThanOrEqual(100);
     expect(scored.totalPoints).toBeLessThanOrEqual(120);
   });
@@ -245,7 +296,7 @@ describe("scoreWineGuess", () => {
       wineName: "Special Cuvee",
       vintage: "2018",
     });
-    const scored = scoreWineGuess("guest-1", "Alice", guess, answer);
+    const scored = scoreWineGuess("guest-1", "Alice", guess, answer, "legacy_v1");
     expect(scored.corePoints).toBe(0);
     expect(scored.bonusPoints).toBe(0);
     expect(scored.totalPoints).toBe(0);
@@ -260,7 +311,7 @@ describe("scoreWineGuess", () => {
       wineName: "Different Wine",
       vintage: "1999",
     });
-    const scored = scoreWineGuess("guest-1", "Alice", guess, answer);
+    const scored = scoreWineGuess("guest-1", "Alice", guess, answer, "legacy_v1");
     expect(scored.corePoints).toBe(50);
     expect(scored.bonusPoints).toBe(0);
     expect(scored.totalPoints).toBe(50);
@@ -269,9 +320,144 @@ describe("scoreWineGuess", () => {
   it("never lets an unrelated extra property on the guess or answer influence the score (price band cannot influence scoring)", () => {
     const guessWithExtra = { ...makeGuess(), priceBand: "400-plus" } as unknown as WineGuess;
     const answerWithExtra = { ...answer, priceBand: "under-100" } as unknown as WineAnswerKey;
-    const plainScore = scoreWineGuess("guest-1", "Alice", makeGuess(), answer);
-    const scoreWithExtra = scoreWineGuess("guest-1", "Alice", guessWithExtra, answerWithExtra);
+    const plainScore = scoreWineGuess("guest-1", "Alice", makeGuess(), answer, "legacy_v1");
+    const scoreWithExtra = scoreWineGuess("guest-1", "Alice", guessWithExtra, answerWithExtra, "legacy_v1");
     expect(scoreWithExtra.totalPoints).toBe(plainScore.totalPoints);
     expect(scoreWithExtra.fieldScores.map((f) => f.field)).not.toContain("priceBand");
+  });
+});
+
+describe("calculateBlindScoreV3 / scoreWineGuessCoreV3 (core_v3_appellation_conditional)", () => {
+  it("awards 20 points for a correct Country", () => {
+    const blind = calculateBlindScoreV3(makeGuess({ country: "Italy" }), answer);
+    expect(blind.countryCorrect).toBe(true);
+    expect(blind.countryPoints).toBe(20);
+  });
+
+  it("awards 20 points for a correct Region", () => {
+    const blind = calculateBlindScoreV3(makeGuess({ region: "Piedmont" }), answer);
+    expect(blind.regionCorrect).toBe(true);
+    expect(blind.regionPoints).toBe(20);
+  });
+
+  it("awards 20 points for a correct Appellation when the actual wine has one", () => {
+    const answerWithAppellation: WineAnswerKey = { ...answer, appellation: "Barolo" };
+    const blind = calculateBlindScoreV3(makeGuess({ appellation: "Barolo" }), answerWithAppellation);
+    expect(blind.appellationApplicable).toBe(true);
+    expect(blind.appellationCorrect).toBe(true);
+    expect(blind.appellationPoints).toBe(20);
+  });
+
+  it("awards 20 points for a correct Grape/blend", () => {
+    const blind = calculateBlindScoreV3(makeGuess({ grapeBlend: "Nebbiolo" }), answer);
+    expect(blind.grapeBlendCorrect).toBe(true);
+    expect(blind.grapeBlendPoints).toBe(20);
+  });
+
+  it("awards 20 points for a correct Vintage", () => {
+    const blind = calculateBlindScoreV3(makeGuess({ vintage: "2016" }), answer);
+    expect(blind.vintageCorrect).toBe(true);
+    expect(blind.vintagePoints).toBe(20);
+  });
+
+  it("totals 100/100 for a fully correct guess when the actual wine has an Appellation", () => {
+    const answerWithAppellation: WineAnswerKey = { ...answer, appellation: "Barolo" };
+    const blind = calculateBlindScoreV3(makeGuess({ appellation: "Barolo" }), answerWithAppellation);
+    expect(blind.corePoints).toBe(100);
+    expect(blind.corePossiblePoints).toBe(100);
+    expect(blind.totalPoints).toBe(100);
+    expect(blind.totalPossiblePoints).toBe(100);
+  });
+
+  it("totals 80/80 for a fully correct guess when the actual wine has no Appellation", () => {
+    const blind = calculateBlindScoreV3(makeGuess(), answer);
+    expect(blind.appellationApplicable).toBe(false);
+    expect(blind.corePoints).toBe(80);
+    expect(blind.corePossiblePoints).toBe(80);
+    expect(blind.totalPoints).toBe(80);
+    expect(blind.totalPossiblePoints).toBe(80);
+  });
+
+  it("marks Appellation not applicable with 0 possible points when the actual wine has none, regardless of the guess", () => {
+    const blind = calculateBlindScoreV3(makeGuess({ appellation: "Barolo" }), answer);
+    expect(blind.appellationApplicable).toBe(false);
+    expect(blind.appellationCorrect).toBeNull();
+    expect(blind.appellationPoints).toBe(0);
+    expect(blind.appellationPossiblePoints).toBe(0);
+  });
+
+  it("never lets a guessed Appellation affect the score when the actual wine has none", () => {
+    const withGuess = calculateBlindScoreV3(makeGuess({ appellation: "Barolo" }), answer);
+    const withoutGuess = calculateBlindScoreV3(makeGuess({ appellation: "" }), answer);
+    expect(withGuess.totalPoints).toBe(withoutGuess.totalPoints);
+    expect(withGuess.corePossiblePoints).toBe(withoutGuess.corePossiblePoints);
+  });
+
+  it("awards Appellation points even when Country and Region are both wrong", () => {
+    const answerWithAppellation: WineAnswerKey = { ...answer, appellation: "Barolo" };
+    const blind = calculateBlindScoreV3(
+      makeGuess({ country: "France", region: "Burgundy", appellation: "Barolo" }),
+      answerWithAppellation
+    );
+    expect(blind.countryCorrect).toBe(false);
+    expect(blind.regionCorrect).toBe(false);
+    expect(blind.appellationCorrect).toBe(true);
+    expect(blind.appellationPoints).toBe(20);
+  });
+
+  it("never awards partial credit for a mismatched Appellation", () => {
+    const answerWithAppellation: WineAnswerKey = { ...answer, appellation: "Barolo" };
+    const blind = calculateBlindScoreV3(makeGuess({ appellation: "Barbaresco" }), answerWithAppellation);
+    expect(blind.appellationCorrect).toBe(false);
+    expect(blind.appellationPoints).toBe(0);
+  });
+
+  it("uses the same safe normalisation (trim/case-insensitive) for Appellation as every other field", () => {
+    const answerWithAppellation: WineAnswerKey = { ...answer, appellation: "Barolo" };
+    const blind = calculateBlindScoreV3(makeGuess({ appellation: "  barolo  " }), answerWithAppellation);
+    expect(blind.appellationCorrect).toBe(true);
+  });
+
+  it("Producer and Wine/cuvée never affect the core_v3 score", () => {
+    const withPrecision = calculateBlindScoreV3(
+      makeGuess({ producer: "Someone Else", wineName: "Different Wine" }),
+      answer
+    );
+    const withoutPrecision = calculateBlindScoreV3(
+      makeGuess({ producer: "", wineName: "" }),
+      answer
+    );
+    expect(withPrecision.totalPoints).toBe(withoutPrecision.totalPoints);
+    expect(withPrecision.totalPossiblePoints).toBe(withoutPrecision.totalPossiblePoints);
+  });
+
+  it("scoreWineGuessCoreV3 never produces a bonus-category FieldScore, and carries producer/wine-cuvée as unscored passthroughs", () => {
+    const scored = scoreWineGuessCoreV3("guest-1", "Alice", makeGuess({ producer: "Someone Else" }), answer);
+    expect(scored.fieldScores.every((f) => f.category === "core")).toBe(true);
+    expect(scored.bonusPoints).toBe(0);
+    expect(scored.bonusPossiblePoints).toBe(0);
+    expect(scored.producerGuess).toBe("Someone Else");
+    expect(scored.scoringVersion).toBe("core_v3_appellation_conditional");
+  });
+
+  it("scoreWineGuessCoreV3's possible score never exceeds 100", () => {
+    const answerWithAppellation: WineAnswerKey = { ...answer, appellation: "Barolo" };
+    const scored = scoreWineGuessCoreV3("guest-1", "Alice", makeGuess({ appellation: "Barolo" }), answerWithAppellation);
+    expect(scored.totalPossiblePoints).toBeLessThanOrEqual(100);
+    expect(scored.totalPossiblePoints).toBe(100);
+  });
+
+  it("dispatches to core_v3 via the shared scoreWineGuess entry point when given that version", () => {
+    const answerWithAppellation: WineAnswerKey = { ...answer, appellation: "Barolo" };
+    const scored = scoreWineGuess(
+      "guest-1",
+      "Alice",
+      makeGuess({ appellation: "Barolo" }),
+      answerWithAppellation,
+      "core_v3_appellation_conditional"
+    );
+    expect(scored.scoringVersion).toBe("core_v3_appellation_conditional");
+    expect(scored.totalPoints).toBe(100);
+    expect(scored.fieldScores.find((f) => f.field === "appellation")?.applicable).toBe(true);
   });
 });

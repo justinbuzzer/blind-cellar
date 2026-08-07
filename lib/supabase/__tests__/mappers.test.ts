@@ -10,6 +10,7 @@ function makeGuessRow(overrides: Partial<RevealedWineGuessRow> = {}): RevealedWi
     guest_id: "guest-1",
     country_guess: "Italy",
     region_guess: "Piedmont",
+    appellation_guess: null,
     grape_style_guess: "Nebbiolo",
     grape_blend_mode: "single",
     producer_guess: "",
@@ -29,7 +30,7 @@ function makeResponse(
   guesses: RevealedBottleResponse["guesses"] = []
 ): RevealedBottleResponse {
   return {
-    session: { publicId: "session-1", status: "collecting" },
+    session: { publicId: "session-1", status: "collecting", scoringVersion: "legacy_v1" },
     wine: {
       id: "wine-1",
       bottleNumber: 3,
@@ -38,6 +39,7 @@ function makeResponse(
       totalBottles: 6,
       country: "Italy",
       region: "Piedmont",
+      appellation: "Barolo",
       grapeBlendMode: "single",
       grapeBlend: "Nebbiolo",
       producer: "Giacomo Conterno",
@@ -58,6 +60,12 @@ describe("buildRevealedBottleResult", () => {
     expect(result.wine.producer).toBe("Giacomo Conterno");
     expect(result.wine.wineStyle).toBe("red");
     expect(result.wine.contributorName).toBe("Alice");
+    expect(result.wine.appellation).toBe("Barolo");
+  });
+
+  it("maps a null appellation to undefined, not the literal string 'null'", () => {
+    const result = buildRevealedBottleResult(makeResponse({ appellation: null }));
+    expect(result.wine.appellation).toBeUndefined();
   });
 
   it("scores a perfect single-variety guess via the existing scoring pipeline (100 core + 20 bonus)", () => {
@@ -67,6 +75,7 @@ describe("buildRevealedBottleResult", () => {
         guestName: "Bob",
         countryGuess: "Italy",
         regionGuess: "Piedmont",
+        appellationGuess: "Barolo",
         grapeBlendMode: "single",
         grapeBlendGuess: "Nebbiolo",
         producerGuess: "Giacomo Conterno",
@@ -84,6 +93,31 @@ describe("buildRevealedBottleResult", () => {
     expect(result.numRatings).toBe(1);
   });
 
+  it("carries the appellation guess through for display without affecting the 120-point total", () => {
+    const response = makeResponse({}, [
+      {
+        guestId: "guest-1",
+        guestName: "Bob",
+        countryGuess: "Italy",
+        regionGuess: "Piedmont",
+        appellationGuess: "Barbaresco",
+        grapeBlendMode: "single",
+        grapeBlendGuess: "Nebbiolo",
+        producerGuess: "Giacomo Conterno",
+        wineCuveeGuess: "Cascina Francia",
+        vintageGuess: "2016",
+        rating: 92,
+        confidence: "high",
+      },
+    ]);
+
+    const result = buildRevealedBottleResult(response);
+    expect(result.guesses[0].appellationGuess).toBe("Barbaresco");
+    // A wrong appellation guess (answer is Barolo) still scores full marks —
+    // appellation is never part of scoring.
+    expect(result.guesses[0].totalPoints).toBe(120);
+  });
+
   it("only includes guesses the server returned — a guest with no locked guess is simply absent, not a fabricated zero score", () => {
     const result = buildRevealedBottleResult(makeResponse());
     expect(result.guesses).toHaveLength(0);
@@ -98,6 +132,7 @@ describe("buildRevealedBottleResult", () => {
         guestName: "Bob",
         countryGuess: "",
         regionGuess: "",
+        appellationGuess: null,
         grapeBlendMode: null,
         grapeBlendGuess: "",
         producerGuess: "",
@@ -111,6 +146,7 @@ describe("buildRevealedBottleResult", () => {
         guestName: "Carol",
         countryGuess: "",
         regionGuess: "",
+        appellationGuess: null,
         grapeBlendMode: null,
         grapeBlendGuess: "",
         producerGuess: "",

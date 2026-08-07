@@ -6,6 +6,7 @@ export function emptyWineGuess(wineId: string): WineGuess {
     wineId,
     country: "",
     region: "",
+    appellation: "",
     grapeBlendMode: "single",
     grapeBlend: "",
     selectedGrapes: [],

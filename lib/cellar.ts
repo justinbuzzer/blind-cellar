@@ -31,6 +31,7 @@ const MAX_PERSONAL_NOTE_LENGTH = 500;
 export const EMPTY_CELLAR_BOTTLE: CellarBottleFormInput = {
   country: "",
   region: "",
+  appellation: "",
   grapeBlendMode: "single",
   grapeBlend: "",
   selectedGrapes: [],
@@ -92,6 +93,7 @@ export function cellarBottleFormInputFromRow(row: CellarBottleRow): CellarBottle
   return {
     country: row.country,
     region: row.region,
+    appellation: row.appellation ?? "",
     grapeBlendMode,
     grapeBlend: row.grape_blend,
     selectedGrapes,
@@ -118,6 +120,7 @@ export function cellarBottleRpcArgs(input: CellarBottleFormInput) {
   return {
     p_country: input.country,
     p_region: input.region,
+    p_appellation: input.appellation.trim() || null,
     p_grape_blend_mode: input.grapeBlendMode || null,
     p_grape_blend: input.grapeBlend,
     p_grape_blend_components: grapeBlendComponentsPayload(input),

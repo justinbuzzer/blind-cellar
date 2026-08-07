@@ -1,11 +1,9 @@
 import {
-  BONUS_MAX_POINTS,
-  CORE_MAX_POINTS,
   FieldScore,
-  TOTAL_MAX_POINTS_PER_WINE,
   WINE_STYLE_LABELS,
   WineResult,
 } from "@/types/tasting";
+import { compactWineLocationLabel } from "@/lib/appellations";
 import { Card } from "@/components/Card";
 import { MatchBadge } from "@/components/MatchBadge";
 import { Stat } from "@/components/Stat";
@@ -13,6 +11,7 @@ import { Stat } from "@/components/Stat";
 const FIELD_LABELS: Record<string, string> = {
   country: "Country",
   region: "Region",
+  appellation: "Appellation",
   grapeBlend: "Grape / blend",
   vintage: "Vintage",
   producer: "Producer",
@@ -42,6 +41,8 @@ function ordinal(n: number): string {
 
 export function WineResultCard({ result, rank, totalWines }: WineResultCardProps) {
   const { wine } = result;
+  const isCoreV3 = result.scoringVersion === "core_v3_appellation_conditional";
+  const bottlePossiblePoints = result.guesses[0]?.totalPossiblePoints;
 
   return (
     <Card className="flex flex-col gap-4">
@@ -53,7 +54,7 @@ export function WineResultCard({ result, rank, totalWines }: WineResultCardProps
           {wine.producer} — {wine.wineName} {wine.vintage}
         </h3>
         <p className="mt-1 text-sm text-cellar-muted">
-          {[wine.country, wine.region, wine.grapeBlend].filter(Boolean).join(" · ")}
+          {[compactWineLocationLabel(wine), wine.grapeBlend].filter(Boolean).join(" · ")}
         </p>
         <p className="mt-1 text-sm text-cellar-muted">
           Style: {WINE_STYLE_LABELS[wine.wineStyle]} · Served {ordinal(wine.tastingOrder)}{" "}
@@ -84,7 +85,8 @@ export function WineResultCard({ result, rank, totalWines }: WineResultCardProps
             Top taster{result.topTasters.length > 1 ? "s" : ""} for this wine:
           </span>{" "}
           {result.topTasters.map((t) => t.guestName).join(", ")} (
-          {result.topTasters[0].totalPoints} pts)
+          {result.topTasters[0].totalPoints}
+          {bottlePossiblePoints !== undefined ? `/${bottlePossiblePoints}` : ""} pts)
         </p>
       )}
 
@@ -115,7 +117,7 @@ export function WineResultCard({ result, rank, totalWines }: WineResultCardProps
                     )}
                   </span>
                   <span className="text-cellar-muted">
-                    {guess.totalPoints}/{TOTAL_MAX_POINTS_PER_WINE} pts
+                    {guess.totalPoints}/{guess.totalPossiblePoints} pts
                     {guess.rating !== null ? ` · rated ${guess.rating}` : ""}
                   </span>
                 </summary>
@@ -124,20 +126,44 @@ export function WineResultCard({ result, rank, totalWines }: WineResultCardProps
                     heading="Core categories"
                     fields={coreFields}
                   />
-                  <FieldScoreTable
-                    heading="Bonus categories"
-                    fields={bonusFields}
-                  />
+                  {!isCoreV3 && (
+                    <AppellationComparison
+                      guessedAppellation={guess.appellationGuess}
+                      actualAppellation={wine.appellation}
+                    />
+                  )}
+                  {!isCoreV3 && (
+                    <FieldScoreTable
+                      heading="Bonus categories"
+                      fields={bonusFields}
+                    />
+                  )}
+                  {isCoreV3 && (
+                    <PersonalPrecisionComparison
+                      producerGuess={guess.producerGuess}
+                      producerAnswer={wine.producer}
+                      wineCuveeGuess={guess.wineCuveeGuess}
+                      wineCuveeAnswer={wine.wineName}
+                    />
+                  )}
                   <div className="flex flex-wrap gap-x-4 gap-y-1 rounded-sm bg-cellar-bg-deep px-3 py-2 text-sm font-medium text-cellar-text">
-                    <span>
-                      Core: {guess.corePoints}/{CORE_MAX_POINTS}
-                    </span>
-                    <span>
-                      Bonus: {guess.bonusPoints}/{BONUS_MAX_POINTS}
-                    </span>
-                    <span className="text-cellar-maroon">
-                      Total: {guess.totalPoints}/{TOTAL_MAX_POINTS_PER_WINE}
-                    </span>
+                    {isCoreV3 ? (
+                      <span className="text-cellar-maroon">
+                        Total: {guess.totalPoints}/{guess.totalPossiblePoints}
+                      </span>
+                    ) : (
+                      <>
+                        <span>
+                          Core: {guess.corePoints}/{guess.corePossiblePoints}
+                        </span>
+                        <span>
+                          Bonus: {guess.bonusPoints}/{guess.bonusPossiblePoints}
+                        </span>
+                        <span className="text-cellar-maroon">
+                          Total: {guess.totalPoints}/{guess.totalPossiblePoints}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
               </details>
@@ -146,6 +172,86 @@ export function WineResultCard({ result, rank, totalWines }: WineResultCardProps
         </div>
       )}
     </Card>
+  );
+}
+
+/**
+ * Non-scored appellation comparison — legacy_v1 only (see README "Region and
+ * Appellation" — "Blind-guess Appellation"). Under core_v3_appellation_conditional,
+ * Appellation is instead a genuine scored FieldScore inside FieldScoreTable.
+ * Deliberately outside FieldScoreTable: there is no FieldScore for
+ * appellation under legacy_v1 (no correctness, no points, no badge), so this
+ * renders as its own small block, hidden entirely when neither side has a
+ * value. Shared by the final report (here) and the course_reveal per-bottle
+ * reveal screen.
+ */
+export function AppellationComparison({
+  guessedAppellation,
+  actualAppellation,
+}: {
+  guessedAppellation?: string;
+  actualAppellation?: string;
+}) {
+  if (!guessedAppellation && !actualAppellation) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-xs font-semibold uppercase tracking-wide text-cellar-muted">
+        Appellation
+      </p>
+      <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-sm">
+        <span className="text-cellar-text">
+          Guess: <span className="text-cellar-muted">{guessedAppellation || "—"}</span>
+        </span>
+        <span className="text-cellar-text">
+          Wine: <span className="text-cellar-muted">{actualAppellation || "—"}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Non-scored Producer / Wine-cuvée comparison — core_v3_appellation_conditional
+ * only (see README "Scoring model"). There is no bonus category under this
+ * model, so these two fields are shown purely for personal-note comparison,
+ * never with a correct/incorrect badge or points. Hidden entirely when
+ * neither side has any value for either field. Shared by the final report
+ * (here) and the course_reveal per-bottle reveal screen.
+ */
+export function PersonalPrecisionComparison({
+  producerGuess,
+  producerAnswer,
+  wineCuveeGuess,
+  wineCuveeAnswer,
+}: {
+  producerGuess?: string;
+  producerAnswer?: string;
+  wineCuveeGuess?: string;
+  wineCuveeAnswer?: string;
+}) {
+  const rows = [
+    { label: "Producer", guess: producerGuess, answer: producerAnswer },
+    { label: "Wine / cuvée", guess: wineCuveeGuess, answer: wineCuveeAnswer },
+  ].filter((r) => r.guess || r.answer);
+  if (rows.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-xs font-semibold uppercase tracking-wide text-cellar-muted">
+        Personal precision calls
+      </p>
+      {rows.map((r) => (
+        <div key={r.label} className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 text-sm">
+          <span className="w-28 shrink-0 text-cellar-muted">{r.label}</span>
+          <span className="text-cellar-text">
+            Guess: <span className="text-cellar-muted">{r.guess || "—"}</span>
+          </span>
+          <span className="text-cellar-text">
+            Wine: <span className="text-cellar-muted">{r.answer || "—"}</span>
+          </span>
+        </div>
+      ))}
+      <p className="text-xs text-cellar-muted">Not scored under this tasting&rsquo;s scoring model.</p>
+    </div>
   );
 }
 
@@ -168,23 +274,34 @@ function FieldScoreTable({
         <span>Actual</span>
         <span />
       </div>
-      {fields.map((fieldScore) => (
-        <div
-          key={fieldScore.field}
-          className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 text-sm"
-        >
-          <span className="text-cellar-muted">
-            {FIELD_LABELS[fieldScore.field]}
-          </span>
-          <span className="truncate text-cellar-text">
-            {fieldScore.guessedValue}
-          </span>
-          <span className="truncate text-cellar-muted">
-            {fieldScore.answerValue}
-          </span>
-          <MatchBadge correct={fieldScore.correct} />
-        </div>
-      ))}
+      {fields.map((fieldScore) =>
+        fieldScore.applicable === false ? (
+          <div
+            key={fieldScore.field}
+            className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 text-sm"
+          >
+            <span className="text-cellar-muted">{FIELD_LABELS[fieldScore.field]}</span>
+            <span className="col-span-2 italic text-cellar-muted">Not applicable</span>
+            <span />
+          </div>
+        ) : (
+          <div
+            key={fieldScore.field}
+            className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 text-sm"
+          >
+            <span className="text-cellar-muted">
+              {FIELD_LABELS[fieldScore.field]}
+            </span>
+            <span className="truncate text-cellar-text">
+              {fieldScore.guessedValue}
+            </span>
+            <span className="truncate text-cellar-muted">
+              {fieldScore.answerValue}
+            </span>
+            <MatchBadge correct={fieldScore.correct} />
+          </div>
+        )
+      )}
     </div>
   );
 }

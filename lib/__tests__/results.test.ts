@@ -40,6 +40,7 @@ function makeWineResult(overrides: Partial<WineResult>): WineResult {
     ratingSpread: null,
     guesses: [],
     topTasters: [],
+    scoringVersion: "legacy_v1",
     ...overrides,
   };
 }
@@ -58,6 +59,7 @@ function makeTasterResult(overrides: Partial<TasterResult>): TasterResult {
     overallAccuracyPercent: 0,
     coreAccuracyPercent: 0,
     exactCoreMatches: 0,
+    submittedGuessCount: 0,
     averageRatingGiven: null,
     ...overrides,
   };
@@ -136,6 +138,7 @@ describe("calculateTasterResults ranking", () => {
     status: "revealed",
     createdAt: "2026-01-01T00:00:00Z",
     wines: [makeWine("w1", "Wine A")],
+    scoringVersion: "legacy_v1",
   };
 
   function submission(
@@ -155,6 +158,7 @@ describe("calculateTasterResults ranking", () => {
           wineId: "w1",
           country: overrides.country ?? "France",
           region: overrides.region ?? "",
+          appellation: "",
           grapeBlendMode: "single",
           grapeBlend: overrides.grapeBlend ?? "",
           selectedGrapes: [],
@@ -201,6 +205,7 @@ describe("calculateTasterResults ranking", () => {
             wineId: "w1",
             country: "France",
             region: "Burgundy",
+            appellation: "",
             grapeBlendMode: "single",
             selectedGrapes: [],
             otherGrapesText: "",
@@ -224,6 +229,7 @@ describe("calculateTasterResults ranking", () => {
             wineId: "w1",
             country: "",
             region: "",
+            appellation: "",
             grapeBlendMode: "single",
             selectedGrapes: [],
             otherGrapesText: "",
@@ -273,6 +279,7 @@ describe("calculateTasterResults ranking", () => {
             wineId: "w1",
             country: "",
             region: "Burgundy",
+            appellation: "",
             grapeBlendMode: "single",
             selectedGrapes: [],
             otherGrapesText: "",
@@ -287,6 +294,7 @@ describe("calculateTasterResults ranking", () => {
             wineId: "w2",
             country: "",
             region: "",
+            appellation: "",
             grapeBlendMode: "single",
             selectedGrapes: [],
             otherGrapesText: "",
@@ -310,6 +318,7 @@ describe("calculateTasterResults ranking", () => {
             wineId: "w1",
             country: "France",
             region: "",
+            appellation: "",
             grapeBlendMode: "single",
             selectedGrapes: [],
             otherGrapesText: "",
@@ -324,6 +333,7 @@ describe("calculateTasterResults ranking", () => {
             wineId: "w2",
             country: "France",
             region: "",
+            appellation: "",
             grapeBlendMode: "single",
             selectedGrapes: [],
             otherGrapesText: "",
@@ -357,6 +367,7 @@ describe("calculateTasterResults ranking", () => {
         wineId: "w1",
         country: "France",
         region: "",
+        appellation: "",
         grapeBlendMode: "single",
         selectedGrapes: [],
         otherGrapesText: "",
@@ -408,6 +419,182 @@ describe("calculateTasterResults ranking", () => {
   });
 });
 
+describe("calculateTasterResults ranking (core_v3_appellation_conditional)", () => {
+  function v3Wine(id: string, code: string, appellation?: string): WineAnswerKey {
+    return {
+      id,
+      code,
+      country: "Italy",
+      region: "Piedmont",
+      appellation,
+      grapeBlendMode: "single",
+      grapeBlend: "Nebbiolo",
+      producer: "Producer",
+      wineName: "Cuvee",
+      vintage: "2018",
+      wineStyle: "red",
+      tastingOrder: 1,
+    };
+  }
+
+  function v3Guess(wineId: string, overrides: Partial<WineAnswerKey> = {}): GuestSubmission["guesses"][number] {
+    return {
+      wineId,
+      country: overrides.country ?? "Italy",
+      region: overrides.region ?? "Piedmont",
+      appellation: overrides.appellation ?? "",
+      grapeBlendMode: "single",
+      grapeBlend: overrides.grapeBlend ?? "Nebbiolo",
+      selectedGrapes: [],
+      otherGrapesText: "",
+      producer: "",
+      wineName: "",
+      vintage: overrides.vintage ?? "2018",
+      rating: 90,
+      confidence: "medium",
+    };
+  }
+
+  it("ranks by percentage accuracy, not raw points: a taster who only saw an 80-point wine and aced it outranks one who scored 90/100 on a 100-point wine", () => {
+    const session: TastingSession = {
+      id: "s1",
+      code: "MAROON-1",
+      title: "Mixed Denominator Tasting",
+      date: "2026-01-01",
+      status: "revealed",
+      createdAt: "2026-01-01T00:00:00Z",
+      scoringVersion: "core_v3_appellation_conditional",
+      wines: [v3Wine("w1", "Bottle 1"), v3Wine("w2", "Bottle 2", "Barolo")],
+    };
+    const submissions: GuestSubmission[] = [
+      {
+        id: "a",
+        guestId: "a",
+        guestName: "Alice",
+        sessionCode: session.code,
+        locked: true,
+        // Only guesses the 80-point wine, fully correct: 80/80 = 100%.
+        guesses: [v3Guess("w1")],
+      },
+      {
+        id: "b",
+        guestId: "b",
+        guestName: "Ben",
+        sessionCode: session.code,
+        locked: true,
+        // Guesses the 100-point wine, wrong on Appellation only: 80/100 = 80%.
+        guesses: [v3Guess("w2", { appellation: "Barbaresco" })],
+      },
+    ];
+
+    const results = calculateTasterResults(session, submissions);
+    const alice = results.find((r) => r.guestId === "a")!;
+    const ben = results.find((r) => r.guestId === "b")!;
+
+    expect(alice.totalPoints).toBe(80);
+    expect(alice.totalPossible).toBe(80);
+    expect(alice.overallAccuracyPercent).toBe(100);
+    expect(ben.totalPoints).toBe(80);
+    expect(ben.totalPossible).toBe(100);
+    expect(ben.overallAccuracyPercent).toBe(80);
+    expect(alice.rank).toBe(1);
+    expect(ben.rank).toBe(2);
+  });
+
+  it("excludes bottles the taster never submitted a guess for from both the earned and possible totals", () => {
+    const session: TastingSession = {
+      id: "s1",
+      code: "MAROON-1",
+      title: "Partial Participation",
+      date: "2026-01-01",
+      status: "revealed",
+      createdAt: "2026-01-01T00:00:00Z",
+      scoringVersion: "core_v3_appellation_conditional",
+      wines: [v3Wine("w1", "Bottle 1"), v3Wine("w2", "Bottle 2", "Barolo")],
+    };
+    const submissions: GuestSubmission[] = [
+      {
+        id: "a",
+        guestId: "a",
+        guestName: "Alice",
+        sessionCode: session.code,
+        locked: true,
+        guesses: [v3Guess("w1")], // never guessed w2
+      },
+    ];
+    const results = calculateTasterResults(session, submissions);
+    expect(results[0].totalPossible).toBe(80);
+    expect(results[0].submittedGuessCount).toBe(1);
+  });
+
+  it("displays raw totals and possible totals accurately alongside the percentage", () => {
+    const session: TastingSession = {
+      id: "s1",
+      code: "MAROON-1",
+      title: "Display Check",
+      date: "2026-01-01",
+      status: "revealed",
+      createdAt: "2026-01-01T00:00:00Z",
+      scoringVersion: "core_v3_appellation_conditional",
+      wines: [v3Wine("w1", "Bottle 1", "Barolo")],
+    };
+    const submissions: GuestSubmission[] = [
+      {
+        id: "a",
+        guestId: "a",
+        guestName: "Alice",
+        sessionCode: session.code,
+        locked: true,
+        guesses: [v3Guess("w1", { appellation: "Barolo" })],
+      },
+    ];
+    const results = calculateTasterResults(session, submissions);
+    expect(results[0].totalPoints).toBe(100);
+    expect(results[0].totalPossible).toBe(100);
+    expect(results[0].overallAccuracyPercent).toBe(100);
+  });
+
+  it("breaks a percentage tie using raw points earned, then submitted-guess count", () => {
+    const session: TastingSession = {
+      id: "s1",
+      code: "MAROON-1",
+      title: "Tie Break",
+      date: "2026-01-01",
+      status: "revealed",
+      createdAt: "2026-01-01T00:00:00Z",
+      scoringVersion: "core_v3_appellation_conditional",
+      wines: [v3Wine("w1", "Bottle 1"), v3Wine("w2", "Bottle 2")],
+    };
+    const submissions: GuestSubmission[] = [
+      {
+        // 100% on one bottle only: 80/80.
+        id: "a",
+        guestId: "a",
+        guestName: "Alice",
+        sessionCode: session.code,
+        locked: true,
+        guesses: [v3Guess("w1")],
+      },
+      {
+        // 100% on both bottles: 160/160 — same percentage, more raw points and more submitted guesses.
+        id: "b",
+        guestId: "b",
+        guestName: "Ben",
+        sessionCode: session.code,
+        locked: true,
+        guesses: [v3Guess("w1"), v3Guess("w2")],
+      },
+    ];
+    const results = calculateTasterResults(session, submissions);
+    const alice = results.find((r) => r.guestId === "a")!;
+    const ben = results.find((r) => r.guestId === "b")!;
+    expect(alice.overallAccuracyPercent).toBe(100);
+    expect(ben.overallAccuracyPercent).toBe(100);
+    expect(ben.rank).toBe(1);
+    expect(alice.rank).toBe(2);
+  });
+});
+
 describe("buildTastingReport empty state", () => {
   it("produces empty leaderboard and no superlatives when nobody submitted", () => {
     const session: TastingSession = {
@@ -418,6 +605,7 @@ describe("buildTastingReport empty state", () => {
       status: "revealed",
       createdAt: "2026-01-01T00:00:00Z",
       wines: [makeWine("w1", "Wine A")],
+      scoringVersion: "legacy_v1",
     };
     const report = buildTastingReport(session, []);
     expect(report.tasterResults).toEqual([]);

@@ -3,6 +3,7 @@ import {
   CellarBottleStatus,
   Confidence,
   GrapeBlendMode,
+  ScoringVersion,
   SessionStatus,
   TastingMode,
   WineStyle,
@@ -20,6 +21,8 @@ export interface SessionRow {
   created_at: string;
   updated_at: string;
   tasting_mode: TastingMode;
+  /** Immutable, assigned at creation — see ScoringVersion. */
+  scoring_version: ScoringVersion;
 }
 
 export interface GuestRow {
@@ -65,6 +68,8 @@ export interface GuestVisibleWineRow {
   contributor_guest_id: string | null;
   wine_style: WineStyle | null;
   tasting_order: number;
+  /** Masked the same way as region/country — null until the session is revealed. See README "Region and Appellation". */
+  appellation: string | null;
 }
 
 export interface RevealedWineGuessRow {
@@ -74,6 +79,8 @@ export interface RevealedWineGuessRow {
   guest_id: string;
   country_guess: string;
   region_guess: string;
+  /** Optional appellation guess, same curated map as actual-wine appellation — never scored. See README "Region and Appellation". */
+  appellation_guess: string | null;
   /** Physical column name kept for migration safety; holds the grape/blend guess text. */
   grape_style_guess: string;
   grape_blend_mode: GrapeBlendMode | null;
@@ -136,6 +143,8 @@ export interface HostSessionResponse {
     createdAt: string;
     hostGuestId: string | null;
     tastingMode: TastingMode;
+    /** Immutable, assigned at creation — see ScoringVersion. */
+    scoringVersion: ScoringVersion;
   };
   wines: HostBottleDTO[];
   guests: HostGuestDTO[];
@@ -157,6 +166,8 @@ export interface GuestGuessDTO {
   wineId: string;
   countryGuess: string;
   regionGuess: string;
+  /** Optional appellation guess — see README "Region and Appellation". Never scored. */
+  appellationGuess: string | null;
   grapeBlendMode: GrapeBlendMode | null;
   grapeBlendGuess: string;
   /** Blend mode only: curated grapes picked from the multi-select. */
@@ -185,6 +196,8 @@ export interface GuestSessionStateResponse {
     tastingDate: string;
     status: SessionStatus;
     tastingMode: TastingMode;
+    /** Immutable, assigned at creation — see ScoringVersion. */
+    scoringVersion: ScoringVersion;
     /** Internal session id — needed to query the post-reveal report views (see lib/supabase/reportData.ts). */
     id: string;
     createdAt: string;
@@ -207,6 +220,7 @@ export interface MyBottleDTO {
   bottleNumber: number;
   country: string;
   region: string;
+  appellation: string | null;
   grapeBlendMode: GrapeBlendMode | null;
   grapeBlend: string;
   /** Blend mode only: curated grapes picked from the multi-select. */
@@ -269,6 +283,8 @@ export interface RevealedBottleGuessDTO {
   guestName: string;
   countryGuess: string;
   regionGuess: string;
+  /** Optional appellation guess — see README "Region and Appellation". Never scored. */
+  appellationGuess: string | null;
   grapeBlendMode: GrapeBlendMode | null;
   grapeBlendGuess: string;
   producerGuess: string;
@@ -286,6 +302,7 @@ export interface RevealedBottleWineDTO {
   totalBottles: number;
   country: string;
   region: string;
+  appellation: string | null;
   grapeBlendMode: GrapeBlendMode | null;
   grapeBlend: string;
   producer: string;
@@ -296,7 +313,7 @@ export interface RevealedBottleWineDTO {
 }
 
 export interface RevealedBottleResponse {
-  session: { publicId: string; status: SessionStatus };
+  session: { publicId: string; status: SessionStatus; scoringVersion: ScoringVersion };
   wine: RevealedBottleWineDTO;
   guesses: RevealedBottleGuessDTO[];
 }
@@ -318,6 +335,7 @@ export interface SeenBottleDTO {
   wineStyle: WineStyle;
   country: string;
   region: string;
+  appellation: string | null;
   grapeBlendMode: GrapeBlendMode | null;
   grapeBlend: string;
   producer: string;
@@ -353,6 +371,7 @@ export interface CellarBottleRow {
   wine_style: WineStyle;
   country: string;
   region: string;
+  appellation: string | null;
   grape_blend_mode: GrapeBlendMode | null;
   grape_blend: string;
   grape_blend_components: { selectedGrapes?: string[]; otherGrapesText?: string } | null;
@@ -406,6 +425,7 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   invalid_grape_blend_mode: "Choose single variety or blend for the grape/blend.",
   invalid_grape_blend_components: "That blend selection couldn't be saved — please review the grapes you picked and try again.",
   invalid_wine_style: "Choose a wine style.",
+  invalid_appellation: "Select an appellation from the available options.",
   invalid_reorder_payload: "That tasting order couldn't be saved — please refresh and try again.",
   no_bottles_registered: "At least one bottle must be registered before starting the tasting.",
   bottle_not_found: "That bottle couldn't be found, or isn't yours to edit.",

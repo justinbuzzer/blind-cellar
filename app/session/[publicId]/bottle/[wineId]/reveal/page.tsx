@@ -17,15 +17,9 @@ import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { getRevealedBottle } from "@/lib/supabase/guestActions";
 import { buildRevealedBottleResult } from "@/lib/supabase/mappers";
+import { AppellationComparison, PersonalPrecisionComparison } from "@/components/report/WineResultCard";
 import { RevealedBottleWineDTO } from "@/lib/supabase/types";
-import {
-  BONUS_MAX_POINTS,
-  CORE_MAX_POINTS,
-  FieldScore,
-  TOTAL_MAX_POINTS_PER_WINE,
-  WINE_STYLE_LABELS,
-  WineResult,
-} from "@/types/tasting";
+import { FieldScore, WINE_STYLE_LABELS, WineResult } from "@/types/tasting";
 import { getGuestToken } from "@/lib/deviceStorage";
 
 type LoadState = "loading" | "no-config" | "invalid-token" | "not-revealed-yet" | "ready";
@@ -33,6 +27,7 @@ type LoadState = "loading" | "no-config" | "invalid-token" | "not-revealed-yet" 
 const FIELD_LABELS: Record<string, string> = {
   country: "Country",
   region: "Region",
+  appellation: "Appellation",
   grapeBlend: "Grape / blend",
   vintage: "Vintage",
   producer: "Producer",
@@ -147,6 +142,7 @@ export default function BottleRevealPage() {
         <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
           <AnswerRow label="Country" value={wine.country} />
           <AnswerRow label="Region" value={wine.region} />
+          <AnswerRow label="Appellation" value={wine.appellation} />
           <AnswerRow label="Grape / blend" value={wine.grapeBlend} />
           <AnswerRow label="Vintage" value={wine.vintage} />
           <AnswerRow label="Producer" value={wine.producer} />
@@ -178,6 +174,7 @@ export default function BottleRevealPage() {
         ) : (
           <div className="flex flex-col gap-2">
             {result.guesses.map((guess) => {
+              const isCoreV3 = guess.scoringVersion === "core_v3_appellation_conditional";
               const coreFields = guess.fieldScores.filter((f) => f.category === "core");
               const bonusFields = guess.fieldScores.filter((f) => f.category === "bonus");
               return (
@@ -185,23 +182,45 @@ export default function BottleRevealPage() {
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-sm px-3 py-2 text-sm font-medium text-cellar-text hover:bg-cellar-bg">
                     <span>{guess.guestName}</span>
                     <span className="text-cellar-muted">
-                      {guess.totalPoints}/{TOTAL_MAX_POINTS_PER_WINE} pts
+                      {guess.totalPoints}/{guess.totalPossiblePoints} pts
                       {guess.rating !== null ? ` · rated ${guess.rating}` : ""}
                     </span>
                   </summary>
                   <div className="flex flex-col gap-4 border-t border-cellar-border px-3 py-3">
                     <FieldScoreTable heading="Core categories" fields={coreFields} />
-                    <FieldScoreTable heading="Bonus categories" fields={bonusFields} />
+                    {!isCoreV3 && (
+                      <AppellationComparison
+                        guessedAppellation={guess.appellationGuess}
+                        actualAppellation={wine.appellation}
+                      />
+                    )}
+                    {!isCoreV3 && <FieldScoreTable heading="Bonus categories" fields={bonusFields} />}
+                    {isCoreV3 && (
+                      <PersonalPrecisionComparison
+                        producerGuess={guess.producerGuess}
+                        producerAnswer={wine.producer}
+                        wineCuveeGuess={guess.wineCuveeGuess}
+                        wineCuveeAnswer={wine.wineName}
+                      />
+                    )}
                     <div className="flex flex-wrap gap-x-4 gap-y-1 rounded-sm bg-cellar-bg-deep px-3 py-2 text-sm font-medium text-cellar-text">
-                      <span>
-                        Core: {guess.corePoints}/{CORE_MAX_POINTS}
-                      </span>
-                      <span>
-                        Bonus: {guess.bonusPoints}/{BONUS_MAX_POINTS}
-                      </span>
-                      <span className="text-cellar-maroon">
-                        Total: {guess.totalPoints}/{TOTAL_MAX_POINTS_PER_WINE}
-                      </span>
+                      {isCoreV3 ? (
+                        <span className="text-cellar-maroon">
+                          Total: {guess.totalPoints}/{guess.totalPossiblePoints}
+                        </span>
+                      ) : (
+                        <>
+                          <span>
+                            Core: {guess.corePoints}/{guess.corePossiblePoints}
+                          </span>
+                          <span>
+                            Bonus: {guess.bonusPoints}/{guess.bonusPossiblePoints}
+                          </span>
+                          <span className="text-cellar-maroon">
+                            Total: {guess.totalPoints}/{guess.totalPossiblePoints}
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                 </details>
@@ -249,17 +268,28 @@ function FieldScoreTable({ heading, fields }: { heading: string; fields: FieldSc
         <span>Actual</span>
         <span />
       </div>
-      {fields.map((fieldScore) => (
-        <div
-          key={fieldScore.field}
-          className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 text-sm"
-        >
-          <span className="text-cellar-muted">{FIELD_LABELS[fieldScore.field]}</span>
-          <span className="truncate text-cellar-text">{fieldScore.guessedValue}</span>
-          <span className="truncate text-cellar-muted">{fieldScore.answerValue}</span>
-          <MatchBadge correct={fieldScore.correct} />
-        </div>
-      ))}
+      {fields.map((fieldScore) =>
+        fieldScore.applicable === false ? (
+          <div
+            key={fieldScore.field}
+            className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 text-sm"
+          >
+            <span className="text-cellar-muted">{FIELD_LABELS[fieldScore.field]}</span>
+            <span className="col-span-2 italic text-cellar-muted">Not applicable</span>
+            <span />
+          </div>
+        ) : (
+          <div
+            key={fieldScore.field}
+            className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 text-sm"
+          >
+            <span className="text-cellar-muted">{FIELD_LABELS[fieldScore.field]}</span>
+            <span className="truncate text-cellar-text">{fieldScore.guessedValue}</span>
+            <span className="truncate text-cellar-muted">{fieldScore.answerValue}</span>
+            <MatchBadge correct={fieldScore.correct} />
+          </div>
+        )
+      )}
     </div>
   );
 }

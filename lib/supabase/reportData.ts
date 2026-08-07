@@ -1,5 +1,5 @@
 import { SupabaseClient } from "@supabase/supabase-js";
-import { SeenTastingReport, TastingMode, TastingReport, TastingSession } from "@/types/tasting";
+import { ScoringVersion, SeenTastingReport, TastingMode, TastingReport, TastingSession } from "@/types/tasting";
 import { buildSeenTastingReport, SeenRatingRow } from "@/lib/seenResults";
 import { buildTastingReport } from "@/lib/results";
 import {
@@ -12,6 +12,8 @@ import {
 export interface ReportSessionRef {
   id: string;
   tastingMode: TastingMode;
+  /** Immutable, assigned at creation — see ScoringVersion. Ignored entirely for seen sessions, which have no scoring. */
+  scoringVersion: ScoringVersion;
 }
 
 export type ReportData =
@@ -72,6 +74,7 @@ export async function loadTastingReportData(
     status: "revealed",
     createdAt: "",
     wines,
+    scoringVersion: session.scoringVersion,
   };
 
   const submissions =

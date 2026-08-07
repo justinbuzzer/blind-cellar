@@ -23,6 +23,7 @@ import {
 import { ReportData } from "@/lib/supabase/reportData";
 import { AccountTastingRecordRow } from "@/lib/supabase/types";
 import { ScoredGuess, SeenBottleResult, TastingReport, WineAnswerKey } from "@/types/tasting";
+import { scoreWineGuessCoreV3, scoreWineGuessLegacyV1 } from "@/lib/scoring";
 
 function wine(overrides: Partial<WineAnswerKey> = {}): WineAnswerKey {
   return {
@@ -73,9 +74,14 @@ function scoredGuess(overrides: Partial<ScoredGuess> = {}, correctFields: string
     guestName: "Alice",
     wineId: "wine-1",
     fieldScores,
+    scoringVersion: "legacy_v1",
+    appellationApplicable: false,
     corePoints,
     bonusPoints,
     totalPoints: corePoints + bonusPoints,
+    corePossiblePoints: 100,
+    bonusPossiblePoints: 20,
+    totalPossiblePoints: 120,
     coreAccuracyPercent: (corePoints / 100) * 100,
     overallAccuracyPercent: ((corePoints + bonusPoints) / 120) * 100,
     rating: 88,
@@ -87,7 +93,14 @@ function scoredGuess(overrides: Partial<ScoredGuess> = {}, correctFields: string
 function standardReport(wineResults: TastingReport["wineResults"]): ReportData {
   return {
     kind: "standard",
-    report: { wineResults, tasterResults: [], wineOfTheNight: [], bestTaster: [], mostDivisiveWine: [] },
+    report: {
+      wineResults,
+      tasterResults: [],
+      wineOfTheNight: [],
+      bestTaster: [],
+      mostDivisiveWine: [],
+      scoringVersion: "legacy_v1",
+    },
   };
 }
 
@@ -208,8 +221,8 @@ describe("buildWineObservationsForSession", () => {
     const wineWithGuess = wine({ id: "wine-1" });
     const wineWithoutGuess = wine({ id: "wine-2", producer: "Other" });
     const report = standardReport([
-      { wine: wineWithGuess, averageRating: 85, numRatings: 2, lowestRating: 80, highestRating: 90, ratingSpread: 10, guesses: [scoredGuess({ guestId: "guest-1", wineId: "wine-1" })], topTasters: [] },
-      { wine: wineWithoutGuess, averageRating: null, numRatings: 0, lowestRating: null, highestRating: null, ratingSpread: null, guesses: [], topTasters: [] },
+      { wine: wineWithGuess, averageRating: 85, numRatings: 2, lowestRating: 80, highestRating: 90, ratingSpread: 10, guesses: [scoredGuess({ guestId: "guest-1", wineId: "wine-1" })], topTasters: [], scoringVersion: "legacy_v1" },
+      { wine: wineWithoutGuess, averageRating: null, numRatings: 0, lowestRating: null, highestRating: null, ratingSpread: null, guesses: [], topTasters: [], scoringVersion: "legacy_v1" },
     ]);
 
     const observations = buildWineObservationsForSession(meta, report, "guest-1", "participant");
@@ -221,7 +234,7 @@ describe("buildWineObservationsForSession", () => {
   it("marks contributedByYou only when the wine's contributorGuestId matches the engagement guest", () => {
     const mine = wine({ id: "wine-1", contributorGuestId: "guest-1" });
     const report = standardReport([
-      { wine: mine, averageRating: 85, numRatings: 1, lowestRating: 85, highestRating: 85, ratingSpread: 0, guesses: [scoredGuess({ guestId: "guest-1", wineId: "wine-1" })], topTasters: [] },
+      { wine: mine, averageRating: 85, numRatings: 1, lowestRating: 85, highestRating: 85, ratingSpread: 0, guesses: [scoredGuess({ guestId: "guest-1", wineId: "wine-1" })], topTasters: [], scoringVersion: "legacy_v1" },
     ]);
     const observations = buildWineObservationsForSession(meta, report, "guest-1", "participant");
     expect(observations[0].contributedByYou).toBe(true);
@@ -272,16 +285,16 @@ describe("computeAtAGlance", () => {
 });
 
 describe("computeBlindPalate and scope independence", () => {
-  it("computes core/overall accuracy from earned vs. possible points across submitted guesses", () => {
+  it("computes blind accuracy from earned vs. possible points across submitted guesses", () => {
     const obs = [
-      observation({ scoredGuess: scoredGuess({}, ["country", "region"]) }), // 50 core / 50 overall
-      observation({ scoredGuess: scoredGuess({}, ["country", "region", "grapeBlend", "vintage", "producer", "wineName"]) }), // 100 core / 120 overall
+      observation({ scoredGuess: scoredGuess({}, ["country", "region"]) }), // 50/120
+      observation({ scoredGuess: scoredGuess({}, ["country", "region", "grapeBlend", "vintage", "producer", "wineName"]) }), // 120/120
     ];
     const result = computeBlindPalate(obs);
     expect(result.totalSubmittedCalls).toBe(2);
-    expect(result.corePointsEarned).toBe(150);
-    expect(result.corePointsPossible).toBe(200);
-    expect(result.coreAccuracyPercent).toBe(75);
+    expect(result.pointsEarned).toBe(170);
+    expect(result.pointsPossible).toBe(240);
+    expect(result.blindAccuracyPercent).toBe(70.8);
   });
 
   it("excludes bottles without a submitted guess (scoredGuess: null) from the denominator", () => {
@@ -295,15 +308,103 @@ describe("computeBlindPalate and scope independence", () => {
     const result = computeBlindPalate(obs);
     expect(result.totalSubmittedCalls).toBe(9);
     expect(result.strengths.hasSufficientSample).toBe(false);
-    expect(result.strengths.strongestCore).toBeNull();
+    expect(result.strengths.strongestCategory).toBeNull();
   });
 
   it("declares strengths once the 10-call and 5-per-category thresholds are met", () => {
     const obs = Array.from({ length: 10 }, () => observation({ scoredGuess: scoredGuess({}, ["country", "region"]) }));
     const result = computeBlindPalate(obs);
     expect(result.strengths.hasSufficientSample).toBe(true);
-    expect(result.strengths.strongestCore?.field).toBe("country");
-    expect(result.strengths.developingCore?.accuracyPercent).toBe(0);
+    expect(result.strengths.strongestCategory?.field).toBe("country");
+    expect(result.strengths.developingCategory?.accuracyPercent).toBe(0);
+  });
+
+  it("includes Appellation as a category only among core_v3_appellation_conditional guesses where the actual wine had one", () => {
+    const applicableCorrect: ScoredGuess = {
+      ...scoredGuess({}, ["country"]),
+      scoringVersion: "core_v3_appellation_conditional",
+      appellationApplicable: true,
+      fieldScores: [
+        ...scoredGuess({}, ["country"]).fieldScores,
+        { field: "appellation", category: "core", guessedValue: "Barolo", answerValue: "Barolo", correct: true, points: 20, pointsAvailable: 20 },
+      ],
+    };
+    const applicableWrong: ScoredGuess = {
+      ...scoredGuess({}, []),
+      scoringVersion: "core_v3_appellation_conditional",
+      appellationApplicable: true,
+      fieldScores: [
+        ...scoredGuess({}, []).fieldScores,
+        { field: "appellation", category: "core", guessedValue: "Barbaresco", answerValue: "Barolo", correct: false, points: 0, pointsAvailable: 20 },
+      ],
+    };
+    const notApplicable: ScoredGuess = {
+      ...scoredGuess({}, ["country"]),
+      scoringVersion: "core_v3_appellation_conditional",
+      appellationApplicable: false,
+    };
+    const legacyGuess = scoredGuess({}, ["country"]); // legacy_v1 — never contributes to Appellation
+
+    const result = computeBlindPalate([
+      observation({ scoredGuess: applicableCorrect }),
+      observation({ scoredGuess: applicableWrong }),
+      observation({ scoredGuess: notApplicable }),
+      observation({ scoredGuess: legacyGuess }),
+    ]);
+
+    const appellation = result.categories.find((c) => c.field === "appellation")!;
+    expect(appellation.submitted).toBe(2);
+    expect(appellation.correct).toBe(1);
+    expect(appellation.accuracyPercent).toBe(50);
+  });
+
+  it("mixes a legacy_v1 session and a core_v3_appellation_conditional session correctly, using each guess's own possible-points denominator", () => {
+    const legacyAnswer: WineAnswerKey = {
+      id: "w1",
+      code: "Bottle 1",
+      country: "France",
+      region: "Burgundy",
+      grapeBlendMode: "single",
+      grapeBlend: "Pinot Noir",
+      producer: "Domaine A",
+      wineName: "Cuvee A",
+      vintage: "2019",
+      wineStyle: "red",
+      tastingOrder: 1,
+    };
+    const legacyGuessInput = {
+      wineId: "w1",
+      country: "France",
+      region: "Burgundy",
+      appellation: "",
+      grapeBlendMode: "single" as const,
+      grapeBlend: "Pinot Noir",
+      selectedGrapes: [],
+      otherGrapesText: "",
+      producer: "Domaine A",
+      wineName: "Cuvee A",
+      vintage: "2019",
+      rating: 90,
+      confidence: "medium" as const,
+    };
+    const legacyScored = scoreWineGuessLegacyV1("guest-1", "Alice", legacyGuessInput, legacyAnswer);
+    expect(legacyScored.totalPoints).toBe(120);
+    expect(legacyScored.totalPossiblePoints).toBe(120);
+
+    const v3Answer: WineAnswerKey = { ...legacyAnswer, id: "w2", country: "Italy", region: "Piedmont" };
+    const v3GuessInput = { ...legacyGuessInput, wineId: "w2", country: "Spain", region: "Piedmont" }; // wrong country only
+    const v3Scored = scoreWineGuessCoreV3("guest-1", "Alice", v3GuessInput, v3Answer);
+    expect(v3Scored.totalPoints).toBe(60); // 80 possible minus the 20 for country
+    expect(v3Scored.totalPossiblePoints).toBe(80);
+
+    const result = computeBlindPalate([
+      observation({ scoredGuess: legacyScored, wine: legacyAnswer }),
+      observation({ scoredGuess: v3Scored, wine: v3Answer, sessionId: "session-2" }),
+    ]);
+
+    expect(result.pointsEarned).toBe(180); // 120 + 60
+    expect(result.pointsPossible).toBe(200); // 120 + 80
+    expect(result.blindAccuracyPercent).toBe(90);
   });
 
   it("never changes when the caller's scope-filtered observation set changes — only extractBlindObservations governs it", () => {

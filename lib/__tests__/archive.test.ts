@@ -51,6 +51,7 @@ function standardReport(overrides: Partial<TastingReport> = {}): ReportData {
       wineOfTheNight: [],
       bestTaster: [],
       mostDivisiveWine: [],
+      scoringVersion: "legacy_v1",
       ...overrides,
     },
   };
@@ -95,6 +96,7 @@ function hostSession(overrides: Partial<HostSessionResponse["session"]> = {}): H
       createdAt: "2026-08-01T10:00:00.000Z",
       hostGuestId: "guest-host",
       tastingMode: "full_blind",
+      scoringVersion: "legacy_v1",
       ...overrides,
     },
     wines: [
@@ -122,6 +124,7 @@ function guestSession(
       tastingDate: "2026-08-14",
       status: "revealed",
       tastingMode: "full_blind",
+      scoringVersion: "legacy_v1",
       createdAt: "2026-08-01T10:00:00.000Z",
       participantCount: 2,
       ...overrides,
@@ -144,7 +147,7 @@ describe("resolveArchiveEntries — host references", () => {
   it("returns a ready entry for a valid host token on a revealed session", async () => {
     const deps = depsWith({
       getHostSession: async () => hostSession(),
-      loadReport: async () => standardReport({ wineOfTheNight: [{ wine: wine(), averageRating: 94, numRatings: 3, lowestRating: 90, highestRating: 97, ratingSpread: 7, guesses: [], topTasters: [] }] }),
+      loadReport: async () => standardReport({ wineOfTheNight: [{ wine: wine(), averageRating: 94, numRatings: 3, lowestRating: 90, highestRating: 97, ratingSpread: 7, guesses: [], topTasters: [], scoringVersion: "legacy_v1" as const }] }),
     });
 
     const [result] = await resolveArchiveEntries(
@@ -487,6 +490,7 @@ function sessionSummary(overrides: Partial<AccountSessionSummary> = {}): Account
     tastingDate: "2026-08-14",
     status: "revealed",
     tastingMode: "full_blind",
+    scoringVersion: "legacy_v1",
     createdAt: "2026-08-01T10:00:00.000Z",
     bottleCount: 2,
     participantCount: 2,
@@ -510,7 +514,7 @@ describe("resolveAccountEntries", () => {
       loadReport: async () =>
         standardReport({
           wineOfTheNight: [
-            { wine: wine(), averageRating: 94, numRatings: 3, lowestRating: 90, highestRating: 97, ratingSpread: 7, guesses: [], topTasters: [] },
+            { wine: wine(), averageRating: 94, numRatings: 3, lowestRating: 90, highestRating: 97, ratingSpread: 7, guesses: [], topTasters: [], scoringVersion: "legacy_v1" as const },
           ],
         }),
     });
@@ -552,6 +556,7 @@ describe("resolveAccountEntries", () => {
               overallAccuracyPercent: 83.3,
               coreAccuracyPercent: 83.3,
               exactCoreMatches: 10,
+              submittedGuessCount: 3,
               averageRatingGiven: 90,
             },
           ],
@@ -582,6 +587,7 @@ describe("resolveAccountEntries", () => {
               overallAccuracyPercent: 69.4,
               coreAccuracyPercent: 66.7,
               exactCoreMatches: 7,
+              submittedGuessCount: 3,
               averageRatingGiven: 88,
             },
           ],

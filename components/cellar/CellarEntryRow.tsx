@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Button } from "@/components/Button";
 import { StatusChip } from "@/components/StatusChip";
 import { cellarBottleFormatLabel, cellarWineIdentityLabel } from "@/lib/cellar";
+import { compactWineLocationLabel } from "@/lib/appellations";
 import { CellarBottleRow } from "@/lib/supabase/types";
 import { WINE_STYLE_LABELS } from "@/types/tasting";
 
@@ -55,7 +56,7 @@ export function CellarEntryRow({ row, session, onEdit, onReturn, onConsume }: Ce
       </h3>
 
       <p className="text-sm text-cellar-muted">
-        {row.region}, {row.country}
+        {compactWineLocationLabel(row)}
         {row.storage_location && <> · {row.storage_location}</>}
       </p>
 

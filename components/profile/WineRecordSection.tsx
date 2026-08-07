@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { RankedCount, RankedRating, RevisitedWine, StandoutBottle, TastingScope, WineRecord } from "@/lib/profile";
+import { compactWineLocationLabel } from "@/lib/appellations";
 import { WINE_STYLE_LABELS } from "@/types/tasting";
 
 function formatDate(iso: string): string {
@@ -54,7 +55,7 @@ function StandoutBottleRow({ bottle }: { bottle: StandoutBottle }) {
         <p className="text-sm font-semibold text-cellar-maroon-dark">{bottle.personalRating}</p>
       </div>
       <p className="text-xs text-cellar-muted">
-        {bottle.wine.region}, {bottle.wine.country} · {WINE_STYLE_LABELS[bottle.wine.wineStyle]} ·{" "}
+        {compactWineLocationLabel(bottle.wine)} · {WINE_STYLE_LABELS[bottle.wine.wineStyle]} ·{" "}
         {formatDate(bottle.tastingDate)}
       </p>
       <Link

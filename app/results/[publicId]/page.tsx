@@ -100,6 +100,7 @@ export default function ResultsPage() {
     const data = await loadTastingReportData(supabase, {
       id: session.id,
       tastingMode: session.tasting_mode,
+      scoringVersion: session.scoring_version,
     });
 
     if (data.kind === "seen") {
@@ -121,7 +122,7 @@ export default function ResultsPage() {
       const { data } = await supabase
         .from("tasting_sessions")
         .select(
-          "id, public_id, join_code, title, tasting_date, status, created_at, updated_at, tasting_mode"
+          "id, public_id, join_code, title, tasting_date, status, created_at, updated_at, tasting_mode, scoring_version"
         )
         .eq("public_id", params.publicId)
         .maybeSingle();

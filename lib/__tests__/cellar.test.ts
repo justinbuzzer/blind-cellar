@@ -35,6 +35,7 @@ function makeCellarRow(overrides: Partial<CellarBottleRow> = {}): CellarBottleRo
     wine_style: "red",
     country: "France",
     region: "Burgundy",
+    appellation: null,
     grape_blend_mode: "single",
     grape_blend: "Pinot Noir",
     grape_blend_components: null,
@@ -144,6 +145,18 @@ describe("cellarBottleFormInputFromRow", () => {
     const input = cellarBottleFormInputFromRow(row);
     expect(input.grapeBlendMode).toBe("single");
   });
+
+  it("defaults a null appellation to an empty string", () => {
+    const row = makeCellarRow({ appellation: null });
+    const input = cellarBottleFormInputFromRow(row);
+    expect(input.appellation).toBe("");
+  });
+
+  it("preserves an existing appellation", () => {
+    const row = makeCellarRow({ region: "Burgundy", appellation: "Chablis" });
+    const input = cellarBottleFormInputFromRow(row);
+    expect(input.appellation).toBe("Chablis");
+  });
 });
 
 describe("cellarBottleRpcArgs", () => {
@@ -183,6 +196,18 @@ describe("cellarBottleRpcArgs", () => {
     );
     expect(args.p_storage_location).toBe("Wine fridge");
     expect(args.p_personal_note).toBe("Check cork");
+  });
+
+  it("sends null for a blank appellation", () => {
+    const args = cellarBottleRpcArgs(makeCellarBottle({ appellation: "   " }));
+    expect(args.p_appellation).toBeNull();
+  });
+
+  it("sends a trimmed appellation when present", () => {
+    const args = cellarBottleRpcArgs(
+      makeCellarBottle({ region: "Burgundy", appellation: "Chablis" })
+    );
+    expect(args.p_appellation).toBe("Chablis");
   });
 });
 

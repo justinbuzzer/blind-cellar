@@ -35,7 +35,11 @@ export function TastingReportView({ report }: TastingReportViewProps) {
           <Highlight
             label="Best Taster"
             title={joinNames(bestTaster.map((t) => t.guestName))}
-            detail={`${bestTaster[0].totalPoints} / ${bestTaster[0].totalPossible} total points, including ${bestTaster[0].bonusPoints} bonus points`}
+            detail={
+              report.scoringVersion === "core_v3_appellation_conditional"
+                ? `${bestTaster[0].overallAccuracyPercent.toFixed(1)}% accuracy · ${bestTaster[0].totalPoints} / ${bestTaster[0].totalPossible} points`
+                : `${bestTaster[0].totalPoints} / ${bestTaster[0].totalPossible} total points, including ${bestTaster[0].bonusPoints} bonus points`
+            }
             tie={bestTaster.length > 1}
           />
         )}
@@ -65,7 +69,7 @@ export function TastingReportView({ report }: TastingReportViewProps) {
 
       <section className="flex flex-col gap-3">
         <SectionEyebrow>Taster leaderboard</SectionEyebrow>
-        <TasterLeaderboard results={tasterResults} />
+        <TasterLeaderboard results={tasterResults} scoringVersion={report.scoringVersion} />
       </section>
 
       <ImageBand image={resultsImage} className="hidden h-48 rounded-sm sm:block" />

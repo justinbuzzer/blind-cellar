@@ -364,6 +364,114 @@ Every mutation — add, edit, reserve-via-registration, return, consume — happ
 
 An earlier sketch of this schema made these three columns nullable. They're `not null` (`region`/`grape_blend` defaulting to `''`, matching `wines`' own columns exactly; `vintage` required) instead, because every add/edit RPC already requires them non-blank in practice — the same validation the tasting bottle form enforces. Making them nullable at the column level would only invite the two tables' wine-identity shapes to drift apart over time, for no real flexibility gained.
 
+## Migrating for Region and Appellation
+
+Builds on everything above — requires the base schema (`wines`) and, if you've applied it, Personal Cellar (`cellar_bottles`) already in place. Re-running the full `supabase/schema.sql` brings an existing project up to date; every statement here is additive and safe to re-run.
+
+### 1. Run the SQL (in this order — already correct if you paste the whole file)
+
+1. **`wines.appellation`** is added (`alter table wines add column if not exists appellation text;`), plus a length check constraint `wines_appellation_length` (`appellation is null or length(appellation) <= 200`), added via a guarded `do $$ ... $$` block so re-running is safe.
+2. **`cellar_bottles.appellation`** is added the same way, if you've applied Personal Cellar v1 — no-op otherwise.
+3. **`is_valid_appellation(p_country text, p_region text, p_appellation text)`** is created — a plain (non-`SECURITY DEFINER`) function holding a server-side jsonb copy of the curated country/region/appellation map in `lib/appellations.ts`. A blank appellation is always valid; a non-blank one must exactly match (case-insensitively) an entry for that country/region pair, so an unsupported pair or a mismatched value both fail identically.
+4. **`register_bottle` and `update_bottle` are modified** — same functions, one new trailing `p_appellation text` parameter, calling `is_valid_appellation` before insert/update. The old 11-/12-parameter overloads are explicitly dropped first (see the existing `drop function if exists` lines) so they can't be called with stale semantics.
+5. **`add_cellar_bottle` and `update_cellar_bottle` are modified** the same way, if Personal Cellar v1 is present.
+6. **`register_bottle_from_cellar` is modified** to copy `appellation` from the cellar row into the new `wines` row it creates — no new parameter, since it's copied server-side from already-owned data.
+7. **`guest_visible_wines` view** gains a trailing masked `appellation` column (`case when s.status = 'revealed' then w.appellation else null end`), appended at the end for the same `CREATE OR REPLACE VIEW` column-ordering reason as `grape_blend_mode`/`wine_style` before it.
+8. **`get_registration_state`, `get_revealed_bottle`, and `get_seen_tasting_state`** each gain an `'appellation', ...` key in their existing jsonb bottle objects — all three already return the caller's own or already-revealed wine identity, so no new gating logic was needed.
+9. **Grants**: the existing `register_bottle`/`update_bottle`/`add_cellar_bottle`/`update_cellar_bottle` grant lines are updated to match their new parameter-type lists.
+
+### 2. Verification queries
+
+```sql
+-- appellation columns exist
+select table_name, column_name from information_schema.columns
+where column_name = 'appellation' and table_name in ('wines', 'cellar_bottles');
+
+-- is_valid_appellation exists
+select routine_name from information_schema.routines where routine_name = 'is_valid_appellation';
+
+-- guest_visible_wines exposes appellation
+select column_name from information_schema.columns where table_name = 'guest_visible_wines';
+```
+
+### RLS summary
+
+No RLS policy changed. `appellation` is an additive column on two tables whose existing policies already govern it correctly:
+
+| Table | Pre-reveal | Post-reveal |
+|---|---|---|
+| `wines` (via `guest_visible_wines`) | `null` (masked, same as region/country) | Real value, same visibility as region/country |
+| `cellar_bottles` | Owner-only (`auth.uid() = owner_user_id`) | Owner-only, unchanged — cellar data is never tasting-scoped |
+
+Server-side validation happens inside the four bottle-identity RPCs (`register_bottle`, `update_bottle`, `add_cellar_bottle`, `update_cellar_bottle`), never via a new table policy — matching how country/region/grape validation already worked before this feature.
+
+### Adding a new supported region/appellation pair
+
+1. Add the region to `REGIONS_BY_COUNTRY` in `lib/wineReferenceData.ts`, if it isn't already there.
+2. Add the country/region/appellation-list entry to `APPELLATIONS_BY_COUNTRY_REGION` in `lib/appellations.ts`.
+3. Add the **identical** entry to the `v_map` jsonb literal inside `is_valid_appellation` in `supabase/schema.sql`, and re-run that one function's `create or replace function` statement (or the whole file) against your project.
+4. Both copies must match exactly — a mismatch only ever produces an annoying false-rejection (client shows the option, server rejects it), never a security gap, but keeping them in sync avoids that friction.
+
+## Migrating for Blind-guess Appellation
+
+Builds on "Migrating for Region and Appellation" above — requires `is_valid_appellation` (and the curated map behind it) already in place. Re-running the full `supabase/schema.sql` brings an existing project up to date; every statement here is additive and safe to re-run.
+
+### 1. Run the SQL (in this order — already correct if you paste the whole file)
+
+1. **`wine_guesses.appellation_guess`** is added (`alter table wine_guesses add column if not exists appellation_guess text;`), plus a length check constraint `wine_guesses_appellation_guess_length` (`appellation_guess is null or length(appellation_guess) <= 200`), added via a guarded `do $$ ... $$` block so re-running is safe.
+2. **`upsert_wine_guess` is modified** — one new trailing `p_appellation_guess text` parameter, validated for length and then against the *same* `is_valid_appellation` function the actual-wine RPCs already call (no second validator). The prior-arity overload is explicitly dropped first (see the existing `drop function if exists` lines) so it can't be called with stale semantics.
+3. **`get_guest_session_state`, `get_active_bottle_state`, and `get_revealed_bottle`** each gain an `'appellationGuess', ...` key in their existing jsonb guess objects — all three already return only the caller's own draft or an already-locked/revealed guess, so no new gating logic was needed.
+4. **`revealed_wine_guesses` view needs no change** — it's defined later in the same file as `select g.* from wine_guesses g ...`, so it picks up the new column automatically once step 1 has run.
+5. **Grant**: the existing `upsert_wine_guess` grant line is updated to match its new parameter-type list.
+
+### 2. Verification queries
+
+```sql
+-- appellation_guess column exists
+select column_name from information_schema.columns
+where table_name = 'wine_guesses' and column_name = 'appellation_guess';
+
+-- upsert_wine_guess has the new 14-parameter signature
+select routine_name, data_type from information_schema.parameters
+where specific_name = (
+  select specific_name from information_schema.routines
+  where routine_name = 'upsert_wine_guess'
+) order by ordinal_position;
+```
+
+### RLS summary
+
+No RLS policy changed. `appellation_guess` is an additive column on `wine_guesses`, whose existing policies already govern it correctly — a participant may create/read/update only their own guess row (by guest token, checked inside `upsert_wine_guess` and every guess-reading RPC), exactly as every other guess field already worked. Pre-reveal secrecy is unaffected: `get_guest_session_state`/`get_active_bottle_state` only ever return the caller's own guess, and `get_revealed_bottle`/`revealed_wine_guesses` only ever surface guesses once the bottle (or session) is revealed — the same rules that already governed `country_guess`/`region_guess`. Server-side validation reuses `is_valid_appellation` from "Migrating for Region and Appellation" above, so an unsupported country/region pair or a mismatched value is rejected identically to the actual-wine field, never trusting the client's dropdown.
+
+## Migrating for the scoring model replacement
+
+This replaces the scoring model entirely for **new** sessions while leaving every historic session's scoring completely untouched — see README "Scoring model" for the full rules. Re-running the full `supabase/schema.sql` brings an existing project up to date; every statement here is additive and safe to re-run.
+
+### 1. Run the SQL (in this order — already correct if you paste the whole file)
+
+1. **`tasting_sessions.scoring_version`** is added (`alter table tasting_sessions add column if not exists scoring_version text;`), then **every existing row is backfilled to `'legacy_v1'`** (`update tasting_sessions set scoring_version = 'legacy_v1' where scoring_version is null;`) — this is the one-time, one-directional backfill that preserves every historic session's original scoring forever. The column is then set `not null`, and a check constraint restricts it to exactly `('legacy_v1', 'core_v3_appellation_conditional')`.
+2. **`create_tasting_session` is modified** to insert the literal `'core_v3_appellation_conditional'` for `scoring_version` on every new session — hardcoded in the function body, **not** a new parameter. There is no client-supplied scoring-version input anywhere in this app; a host cannot choose or influence it at creation or afterward.
+3. **`get_host_session` and `get_guest_session_state`** each gain a `'scoringVersion', v_session.scoring_version` key in their existing session jsonb objects.
+4. **`get_revealed_bottle`** gains the same `'scoringVersion', v_session.scoring_version` key in its (narrower) session jsonb object — this is the course-reveal per-bottle screen, which computes a real score mid-tasting and therefore needs to know which model to use just as much as the final report does.
+5. **Grant**: the anon-readable column list on `tasting_sessions` is extended to include `scoring_version` (alongside the existing `tasting_mode`) — this is non-sensitive session metadata, exactly like `tasting_mode` already is, and is what the results page, archive, and profile loader all read directly.
+6. **No score data is persisted anywhere.** This app has never stored a computed score row — every report has always been recalculated live from raw guesses (`wine_guesses`) and answer keys (`wines`) on every load (see "Multi-device architecture" above). That architecture is unchanged; the only new persisted fact is the one-word `scoring_version` tag that tells the existing live-calculation pipeline (`lib/scoring.ts`, `lib/results.ts`) which rules to apply for this particular session.
+
+### 2. Verification queries
+
+```sql
+-- scoring_version column exists and is backfilled with no nulls
+select scoring_version, count(*) from tasting_sessions group by scoring_version;
+
+-- create_tasting_session's new sessions always get the current version
+-- (create a test session via the app, then:)
+select scoring_version from tasting_sessions order by created_at desc limit 1;
+-- expect: core_v3_appellation_conditional
+```
+
+### RLS summary
+
+No RLS policy changed. `scoring_version` is an additive column on `tasting_sessions`, read through the same anon-readable column grant `tasting_mode` already used — no new table-level access. It is written exactly once, at creation, inside `create_tasting_session` (a `SECURITY DEFINER` function that already fully owns session creation) as a hardcoded literal — there is no RPC parameter, no update path, and no other function that ever writes this column, so a client cannot choose, negotiate, or later change a session's scoring version under any circumstance. Score values themselves are still never persisted or trusted from the client: every report figure is recalculated server/pure-function-side on each load from the caller's already-authorized guess/wine rows, through the exact same `SECURITY DEFINER` RPCs and views (`get_host_session`, `get_guest_session_state`, `get_revealed_bottle`, `guest_visible_wines`, `revealed_wine_guesses`) that already governed pre-reveal secrecy — none of their gating logic changed.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):
@@ -385,6 +493,7 @@ Every tasting workflow (hosting, joining, registering bottles, guessing, rating,
 - **The Tasting Archive (`/archive`, `app/api/archive/lookup`) introduces no new privilege at all** — it's a thin, bounded batch wrapper around `get_host_session`/`get_guest_session_state`, the same two token-validating RPCs the host control and guest tasting pages already call one at a time. It never accepts a bare session id with no token attached, never queries "every revealed session," and never returns a raw token in its response — only a minimized per-session summary (title, date, mode, counts, Wine of the Night, and the caller's own accuracy where applicable) for references the request already proved ownership of.
 - **Account-linked tasting records (`public.account_tasting_records`, `claim_account_tasting_record`) also introduce no new privilege** — see "Migrating for account-linked tasting records" above for the full schema. The short version: the only write path re-validates the exact same host/guest token every other RPC already does, `auth.uid()` (never a client-supplied user id) decides whose row gets written, and the table has no insert/update/delete policy for any role at all — a signed-in user who merely knows or guesses a session id, with no valid token for it, can never create a link. Reading is plain RLS (`auth.uid() = user_id`), so "Your record" needs no token round trip at all — ownership of the *row* is what's being checked there, not ownership of a token.
 - **The Palate Profile (`/profile`, `/api/profile`, `/api/profile/ledger`) introduces no new privilege either** — see "Migrating for the Palate Profile" above. Both Route Handlers use the cookie-aware client (so every query runs as the caller's own `authenticated` role, not an elevated one), read `account_tasting_records` under its existing RLS (`auth.uid() = user_id`, no exceptions), and re-derive every session's report through the same `loadTastingReportData` pipeline the archive and results page already call — there is no separate, broader "get all my data" query path, and no aggregate figure is ever computed from another user's rows.
+- **Region and Appellation (`wines.appellation`, `cellar_bottles.appellation`) also introduces no new privilege** — see "Migrating for Region and Appellation" above. It's an additive nullable column following the exact same visibility path region/country already had: masked pre-reveal in `guest_visible_wines`, owner-only in `cellar_bottles`. The one new thing is `is_valid_appellation`, a plain SQL function (no elevated privilege of its own) called from inside the already-`SECURITY DEFINER` bottle-identity RPCs to reject a non-curated value server-side rather than trusting the client's `<select>` alone.
 - **Personal Cellar (`cellar_bottles` and its five RPCs) is the strictest privacy boundary in this app** — see "Migrating for Personal Cellar v1" above. Unlike every other table, there is no direct-client write path at all, not even an "owner may update their own row" policy: add/edit/reserve/return/consume all go through a `SECURITY DEFINER` RPC that re-validates `auth.uid()` and ownership independently, every time. `wines.cellar_bottle_id` carries no `anon`/`authenticated` column grant, so cellar provenance is structurally invisible to the host, other participants, and reports — not just hidden by convention.
 - **Bug fixed in this revision**: the `guest_visible_wines` and `revealed_wine_guesses` views were previously declared with `security_invoker = true`. Combined with `wines`/`wine_guesses` having Row Level Security enabled but no SELECT policy for `anon`, that setting would have made these views return **zero rows for anon on a real Supabase project** — a security_invoker view evaluates RLS as the calling role, and anon was never granted any row-visibility on those tables directly. The fix is to not set `security_invoker` (the default, `false`, runs the view as its owner), so the view's own `CASE`/`WHERE` masking logic — not the caller's RLS — is what decides what anon sees. This was never caught before because the app had not yet been tested against a live Supabase project.
 

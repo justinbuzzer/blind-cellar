@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Button } from "@/components/Button";
 import { SeenBottleDTO } from "@/lib/supabase/types";
+import { compactWineLocationLabel } from "@/lib/appellations";
 import { WINE_STYLE_LABELS } from "@/types/tasting";
 
 interface SeenBottleCardProps {
@@ -27,7 +28,7 @@ export function SeenBottleCard({ publicId, bottle }: SeenBottleCardProps) {
           {bottle.producer} — {bottle.wineCuvee} {bottle.vintage}
         </h3>
         <p className="mt-1 text-sm text-cellar-muted">
-          {[bottle.country, bottle.region, bottle.grapeBlend].filter(Boolean).join(" · ")}
+          {[compactWineLocationLabel(bottle), bottle.grapeBlend].filter(Boolean).join(" · ")}
         </p>
         <p className="mt-1 text-sm text-cellar-muted">
           Style: {WINE_STYLE_LABELS[bottle.wineStyle]}

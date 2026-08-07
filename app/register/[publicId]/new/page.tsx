@@ -16,6 +16,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { BottleFormInput, registerBottle } from "@/lib/supabase/guestActions";
 import { registerBottleFromCellar } from "@/lib/supabase/cellarActions";
 import { cellarBottleFormatLabel, cellarWineIdentityLabel } from "@/lib/cellar";
+import { compactWineLocationLabel } from "@/lib/appellations";
 import { CellarBottleRow, friendlyRpcError } from "@/lib/supabase/types";
 import { hasBottleFormErrors, validateBottleForm } from "@/lib/validation";
 import { bottleLabel } from "@/lib/codes";
@@ -26,6 +27,7 @@ import { WINE_STYLE_LABELS } from "@/types/tasting";
 const EMPTY_BOTTLE: BottleFormInput = {
   country: "",
   region: "",
+  appellation: "",
   grapeBlendMode: "single",
   grapeBlend: "",
   selectedGrapes: [],
@@ -262,7 +264,7 @@ export default function AddBottlePage() {
             {cellarWineIdentityLabel(selectedCellarBottle)}
           </h3>
           <p className="text-sm text-cellar-muted">
-            {selectedCellarBottle.region}, {selectedCellarBottle.country} ·{" "}
+            {compactWineLocationLabel(selectedCellarBottle)} ·{" "}
             {WINE_STYLE_LABELS[selectedCellarBottle.wine_style]} · {cellarBottleFormatLabel(selectedCellarBottle)}
           </p>
           <p className="text-sm text-cellar-text">

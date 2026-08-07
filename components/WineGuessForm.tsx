@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { WineGuess } from "@/types/tasting";
 import {
   COUNTRY_OPTIONS,
   regionOptionsForCountry,
   resetRegionIfInvalid,
 } from "@/lib/wineReferenceData";
+import { getAppellations, hasAppellations } from "@/lib/appellations";
 import { Card } from "./Card";
 import { TextField } from "./TextField";
 import { SelectField } from "./SelectField";
@@ -16,6 +18,8 @@ import { SectionEyebrow } from "./SectionEyebrow";
 
 const WINE_CUVEE_HINT =
   "Add the specific wine name, vineyard, cru, or appellation where relevant — e.g. Nuits-Saint-Georges, Margaux, or Santa Rita Hills.";
+const APPELLATION_HINT = "Optional. Select an appellation if you have a specific call.";
+const APPELLATION_CLEARED_MESSAGE = "Appellation cleared because the region changed.";
 
 interface WineGuessFormProps {
   wineCode: string;
@@ -32,21 +36,41 @@ export function WineGuessForm({
   ratingError,
   blendError,
 }: WineGuessFormProps) {
+  const [clearedMessage, setClearedMessage] = useState("");
+
   function set<K extends keyof WineGuess>(key: K, fieldValue: WineGuess[K]) {
     onChange({ ...value, [key]: fieldValue });
   }
 
+  function announceAppellationClearedIfNeeded(hadAppellation: string) {
+    setClearedMessage(hadAppellation.trim() ? APPELLATION_CLEARED_MESSAGE : "");
+  }
+
   function setCountry(nextCountry: string) {
+    const nextRegion = resetRegionIfInvalid(nextCountry, value.region);
     onChange({
       ...value,
       country: nextCountry,
-      region: resetRegionIfInvalid(nextCountry, value.region),
+      region: nextRegion,
+      appellation: "",
     });
+    announceAppellationClearedIfNeeded(value.appellation);
+  }
+
+  function setRegion(nextRegion: string) {
+    onChange({ ...value, region: nextRegion, appellation: "" });
+    announceAppellationClearedIfNeeded(value.appellation);
   }
 
   function setGrapeBlend(next: GrapeBlendFormValue) {
     onChange({ ...value, ...next });
   }
+
+  const appellationOptions = getAppellations(value.country, value.region).map((name) => ({
+    value: name,
+    label: name,
+  }));
+  const showAppellation = hasAppellations(value.country, value.region);
 
   return (
     <Card className="flex flex-col gap-0 p-0">
@@ -70,9 +94,22 @@ export function WineGuessForm({
             placeholder={value.country ? "Select region" : "Select country first"}
             disabled={!value.country}
             options={regionOptionsForCountry(value.country)}
-            onChange={(e) => set("region", e.target.value)}
+            onChange={(e) => setRegion(e.target.value)}
           />
         </div>
+        {showAppellation && (
+          <SelectField
+            label="Appellation"
+            value={value.appellation}
+            hint={APPELLATION_HINT}
+            placeholder="Select an appellation"
+            options={appellationOptions}
+            onChange={(e) => set("appellation", e.target.value)}
+          />
+        )}
+        <p role="status" aria-live="polite" className="sr-only">
+          {clearedMessage}
+        </p>
       </div>
 
       <div className="flex flex-col gap-4 border-b border-cellar-border p-5">
@@ -97,12 +134,12 @@ export function WineGuessForm({
         <SectionEyebrow>Precision calls</SectionEyebrow>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <TextField
-            label="Producer — bonus"
+            label="Producer, optional"
             value={value.producer}
             onChange={(e) => set("producer", e.target.value)}
           />
           <TextField
-            label="Wine / cuvée — bonus"
+            label="Wine / cuvée, optional"
             value={value.wineName}
             hint={WINE_CUVEE_HINT}
             onChange={(e) => set("wineName", e.target.value)}

@@ -16,6 +16,7 @@ import {
   TastingScope,
 } from "@/lib/profile";
 import { TASTING_MODE_LABELS, WINE_STYLE_LABELS } from "@/types/tasting";
+import { compactWineLocationLabel } from "@/lib/appellations";
 
 interface TastedWinesLedgerProps {
   scope: TastingScope;
@@ -259,7 +260,7 @@ export function TastedWinesLedger({ scope }: TastedWinesLedgerProps) {
                   </span>
                 </div>
                 <p className="text-sm text-cellar-muted">
-                  {row.region}, {row.country} · {WINE_STYLE_LABELS[row.wineStyle]} · {row.grapeBlend}
+                  {compactWineLocationLabel(row)} · {WINE_STYLE_LABELS[row.wineStyle]} · {row.grapeBlend}
                 </p>
                 <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
                   <span className="text-cellar-text">

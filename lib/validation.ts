@@ -1,5 +1,6 @@
 import { WineIdentityErrors } from "@/components/registration/WineIdentityFields";
 import { combineBlendComponents, isKnownCountry, isValidRegionForCountry } from "@/lib/wineReferenceData";
+import { isValidAppellation } from "@/lib/appellations";
 import { TASTING_MODES, TastingMode, WineGuess, WineIdentityInput } from "@/types/tasting";
 
 /** Type guard for the `tastingMode` field submitted from session creation. */
@@ -55,6 +56,9 @@ export function validateBottleForm(input: WineIdentityInput): WineIdentityErrors
     if (components.length < 2) {
       errors.grapeBlend = BLEND_MIN_GRAPES_MESSAGE;
     }
+  }
+  if (input.appellation.trim() && !isValidAppellation(input.country, input.region, input.appellation)) {
+    errors.appellation = "Select an appellation from the available options.";
   }
   if (!input.producer.trim()) errors.producer = "Producer is required.";
   if (!input.wineName.trim()) errors.wineName = "Wine / cuvée is required.";
