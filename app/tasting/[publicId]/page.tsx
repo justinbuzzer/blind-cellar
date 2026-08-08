@@ -302,6 +302,7 @@ export default function GuestTastingPage() {
       />
 
       <WineGuessForm
+        key={wine.id}
         wineCode={wine.anonymousCode}
         value={guess}
         onChange={(next) => updateGuess(wine.id, next)}

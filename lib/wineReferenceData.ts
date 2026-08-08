@@ -218,48 +218,126 @@ export function resetRegionIfInvalid(nextCountry: string, currentRegion: string)
 // Extend this list freely — nothing elsewhere hard-codes grape names.
 // ---------------------------------------------------------------------------
 
+/**
+ * A standard grape's skin colour — used only for filtering the single-variety
+ * dropdown by wine style (see README "Grape-entry assistance"). Purely a
+ * display/filtering classification: it never affects validation or scoring.
+ * "Other grape" (the free-text fallback) is deliberately never classified —
+ * it isn't a standard grape, so grape-assistance colour clearing never
+ * applies to a custom entry (see lib/grapeAssistance.ts).
+ */
+export type GrapeSkin = "red" | "white";
+
 export interface GrapeVarietyOption {
   value: string;
   label: string;
+  skin: GrapeSkin;
 }
 
 export const GRAPE_VARIETIES: GrapeVarietyOption[] = [
-  { value: "Albariño", label: "Albariño" },
-  { value: "Cabernet Franc", label: "Cabernet Franc" },
-  { value: "Cabernet Sauvignon", label: "Cabernet Sauvignon" },
-  { value: "Carménère", label: "Carménère" },
-  { value: "Chardonnay", label: "Chardonnay" },
-  { value: "Chenin Blanc", label: "Chenin Blanc" },
-  { value: "Gamay", label: "Gamay" },
-  { value: "Gewürztraminer", label: "Gewürztraminer" },
-  { value: "Grenache", label: "Grenache" },
-  { value: "Grüner Veltliner", label: "Grüner Veltliner" },
-  { value: "Malbec", label: "Malbec" },
-  { value: "Marsanne", label: "Marsanne" },
-  { value: "Merlot", label: "Merlot" },
-  { value: "Mourvèdre", label: "Mourvèdre" },
-  { value: "Muscat", label: "Muscat" },
-  { value: "Nebbiolo", label: "Nebbiolo" },
-  { value: "Palomino", label: "Palomino" },
-  { value: "Pinot Blanc", label: "Pinot Blanc" },
-  { value: "Pinot Gris", label: "Pinot Gris / Pinot Grigio" },
-  { value: "Pinot Noir", label: "Pinot Noir" },
-  { value: "Riesling", label: "Riesling" },
-  { value: "Roussanne", label: "Roussanne" },
-  { value: "Sangiovese", label: "Sangiovese" },
-  { value: "Sauvignon Blanc", label: "Sauvignon Blanc" },
-  { value: "Sémillon", label: "Sémillon" },
-  { value: "Syrah", label: "Syrah / Shiraz" },
-  { value: "Tempranillo", label: "Tempranillo" },
-  { value: "Touriga Nacional", label: "Touriga Nacional" },
-  { value: "Viognier", label: "Viognier" },
-  { value: "Zinfandel", label: "Zinfandel / Primitivo" },
+  { value: "Albariño", label: "Albariño", skin: "white" },
+  { value: "Aglianico", label: "Aglianico", skin: "red" },
+  { value: "Alfrocheiro", label: "Alfrocheiro", skin: "red" },
+  { value: "Alicante Bouschet", label: "Alicante Bouschet", skin: "red" },
+  { value: "Aligoté", label: "Aligoté", skin: "white" },
+  { value: "Antão Vaz", label: "Antão Vaz", skin: "white" },
+  { value: "Arinto", label: "Arinto", skin: "white" },
+  { value: "Barbera", label: "Barbera", skin: "red" },
+  { value: "Bical", label: "Bical", skin: "white" },
+  { value: "Braquet", label: "Braquet", skin: "red" },
+  { value: "Brachetto", label: "Brachetto", skin: "red" },
+  { value: "Cabernet Franc", label: "Cabernet Franc", skin: "red" },
+  { value: "Cabernet Sauvignon", label: "Cabernet Sauvignon", skin: "red" },
+  { value: "Caiño Blanco", label: "Caiño Blanco", skin: "white" },
+  { value: "Canaiolo", label: "Canaiolo", skin: "red" },
+  { value: "Carignan", label: "Carignan / Mazuelo / Cariñena", skin: "red" },
+  { value: "Carménère", label: "Carménère", skin: "red" },
+  { value: "Carricante", label: "Carricante", skin: "white" },
+  { value: "Catarratto", label: "Catarratto", skin: "white" },
+  { value: "Chardonnay", label: "Chardonnay", skin: "white" },
+  { value: "Chenin Blanc", label: "Chenin Blanc", skin: "white" },
+  { value: "Cinsault", label: "Cinsault", skin: "red" },
+  { value: "Clairette", label: "Clairette", skin: "white" },
+  { value: "Colorino", label: "Colorino", skin: "red" },
+  { value: "Corvina", label: "Corvina", skin: "red" },
+  { value: "Corvinone", label: "Corvinone", skin: "red" },
+  { value: "Cortese", label: "Cortese", skin: "white" },
+  { value: "Dolcetto", label: "Dolcetto", skin: "red" },
+  { value: "Encruzado", label: "Encruzado", skin: "white" },
+  { value: "Falanghina", label: "Falanghina", skin: "white" },
+  { value: "Fiano", label: "Fiano", skin: "white" },
+  { value: "Folle Noire", label: "Folle Noire", skin: "red" },
+  { value: "Frappato", label: "Frappato", skin: "red" },
+  { value: "Gamay", label: "Gamay", skin: "red" },
+  { value: "Garganega", label: "Garganega", skin: "white" },
+  { value: "Gewürztraminer", label: "Gewürztraminer", skin: "white" },
+  { value: "Glera", label: "Glera", skin: "white" },
+  { value: "Gouveio", label: "Gouveio", skin: "white" },
+  { value: "Graciano", label: "Graciano", skin: "red" },
+  { value: "Grenache", label: "Grenache / Garnacha", skin: "red" },
+  { value: "Grenache Blanc", label: "Grenache Blanc / Garnacha Blanca", skin: "white" },
+  { value: "Greco", label: "Greco", skin: "white" },
+  { value: "Grillo", label: "Grillo", skin: "white" },
+  { value: "Grüner Veltliner", label: "Grüner Veltliner", skin: "white" },
+  { value: "Inzolia", label: "Inzolia", skin: "white" },
+  { value: "Loureira", label: "Loureira", skin: "white" },
+  { value: "Malbec", label: "Malbec", skin: "red" },
+  { value: "Malvasia", label: "Malvasia", skin: "white" },
+  { value: "Malvasia Fina", label: "Malvasia Fina", skin: "white" },
+  { value: "Marsanne", label: "Marsanne", skin: "white" },
+  { value: "Melon de Bourgogne", label: "Melon de Bourgogne", skin: "white" },
+  { value: "Merlot", label: "Merlot", skin: "red" },
+  { value: "Mourvèdre", label: "Mourvèdre / Mataro", skin: "red" },
+  { value: "Muscat", label: "Muscat / Moscato Bianco", skin: "white" },
+  { value: "Nebbiolo", label: "Nebbiolo", skin: "red" },
+  { value: "Nerello Mascalese", label: "Nerello Mascalese", skin: "red" },
+  { value: "Nero d'Avola", label: "Nero d'Avola", skin: "red" },
+  { value: "Palomino", label: "Palomino / Palomino Fino", skin: "white" },
+  { value: "Piedirosso", label: "Piedirosso", skin: "red" },
+  { value: "Pinot Blanc", label: "Pinot Blanc", skin: "white" },
+  { value: "Pinot Gris", label: "Pinot Gris / Pinot Grigio", skin: "white" },
+  { value: "Pinot Noir", label: "Pinot Noir", skin: "red" },
+  { value: "Pinot Meunier", label: "Pinot Meunier", skin: "red" },
+  { value: "Rabigato", label: "Rabigato", skin: "white" },
+  { value: "Riesling", label: "Riesling", skin: "white" },
+  { value: "Rolle", label: "Rolle", skin: "white" },
+  { value: "Rondinella", label: "Rondinella", skin: "red" },
+  { value: "Roupeiro", label: "Roupeiro", skin: "white" },
+  { value: "Roussanne", label: "Roussanne", skin: "white" },
+  { value: "Sangiovese", label: "Sangiovese", skin: "red" },
+  { value: "Sauvignon Blanc", label: "Sauvignon Blanc", skin: "white" },
+  { value: "Sémillon", label: "Sémillon", skin: "white" },
+  { value: "Syrah", label: "Syrah / Shiraz", skin: "red" },
+  { value: "Tempranillo", label: "Tempranillo / Tinta Roriz / Aragonez", skin: "red" },
+  { value: "Touriga Franca", label: "Touriga Franca", skin: "red" },
+  { value: "Touriga Nacional", label: "Touriga Nacional", skin: "red" },
+  { value: "Trebbiano", label: "Trebbiano", skin: "white" },
+  { value: "Trebbiano di Soave", label: "Trebbiano di Soave", skin: "white" },
+  { value: "Treixadura", label: "Treixadura", skin: "white" },
+  { value: "Trincadeira", label: "Trincadeira", skin: "red" },
+  { value: "Vernaccia", label: "Vernaccia", skin: "white" },
+  { value: "Verdelho", label: "Verdelho", skin: "white" },
+  { value: "Viognier", label: "Viognier", skin: "white" },
+  { value: "Viosinho", label: "Viosinho", skin: "white" },
+  { value: "Viura", label: "Viura", skin: "white" },
+  { value: "Zinfandel", label: "Zinfandel / Primitivo", skin: "red" },
 ];
 
 export const GRAPE_VARIETY_OPTIONS: OptionItem[] = GRAPE_VARIETIES.map((g) => ({
   value: g.value,
   label: g.label,
 }));
+
+if (process.env.NODE_ENV !== "production") {
+  const seenGrapeValues = new Set<string>();
+  for (const grape of GRAPE_VARIETIES) {
+    const key = normalizeText(grape.value);
+    if (seenGrapeValues.has(key)) {
+      throw new Error(`wineReferenceData: duplicate GRAPE_VARIETIES value "${grape.value}"`);
+    }
+    seenGrapeValues.add(key);
+  }
+}
 
 /**
  * Alternate spellings that must canonicalise to the same grape for scoring,
@@ -271,6 +349,19 @@ const GRAPE_ALIASES: Record<string, string> = {
   Shiraz: "Syrah",
   "Pinot Grigio": "Pinot Gris",
   Primitivo: "Zinfandel",
+  // Regional synonyms for the same grape, added for grape-entry assistance
+  // (see lib/grapeAssistance.ts) — kept as aliases of one canonical entry
+  // rather than duplicate GRAPE_VARIETIES rows, matching the pattern above.
+  Garnacha: "Grenache",
+  "Garnacha Blanca": "Grenache Blanc",
+  Mazuelo: "Carignan",
+  Cariñena: "Carignan",
+  "Tinta Roriz": "Tempranillo",
+  Aragonez: "Tempranillo",
+  Mataro: "Mourvèdre",
+  "Moscato Bianco": "Muscat",
+  "Muscat Blanc à Petits Grains": "Muscat",
+  "Palomino Fino": "Palomino",
 };
 
 const KNOWN_GRAPE_BY_NORMALIZED_NAME = new Map<string, string>();
@@ -288,6 +379,47 @@ export function isKnownGrapeVariety(value: string): boolean {
 /** Resolves a raw grape name/alias to its canonical *display* form (e.g. "Shiraz" -> "Syrah"), or null if unrecognised. */
 export function resolveKnownGrapeDisplayName(raw: string): string | null {
   return KNOWN_GRAPE_BY_NORMALIZED_NAME.get(normalizeText(raw)) ?? null;
+}
+
+const GRAPE_SKIN_BY_CANONICAL_VALUE = new Map<string, GrapeSkin>(
+  GRAPE_VARIETIES.map((g) => [g.value, g.skin])
+);
+
+/** The skin colour of a known standard grape/alias, or null for an unrecognised (e.g. custom "Other grape") value. */
+export function grapeSkin(raw: string): GrapeSkin | null {
+  const known = resolveKnownGrapeDisplayName(raw);
+  return known ? (GRAPE_SKIN_BY_CANONICAL_VALUE.get(known) ?? null) : null;
+}
+
+/**
+ * Grape-entry assistance (see README "Grape-entry assistance"): the
+ * single-variety dropdown options for a given wine style. White/Red filter
+ * to only that skin colour; every other style (Bubbles, Sweet, Other, or no
+ * style chosen yet) can legitimately use either colour, so both are shown.
+ * "Other grape" is appended separately by GrapeBlendField — it is a UI
+ * fallback, never a standard grape, so it's never part of this list.
+ */
+export function singleGrapeVarietyOptionsForStyle(wineStyle?: string): GrapeVarietyOption[] {
+  if (wineStyle === "white") return GRAPE_VARIETIES.filter((g) => g.skin === "white");
+  if (wineStyle === "red") return GRAPE_VARIETIES.filter((g) => g.skin === "red");
+  return GRAPE_VARIETIES;
+}
+
+/**
+ * True unless `grapeName` is a known standard grape whose skin colour
+ * conflicts with a White/Red wine style — used only to decide whether an
+ * existing single-grape selection must be cleared after a style change (see
+ * lib/grapeAssistance.ts). An unrecognised value (a custom "Other grape"
+ * entry, or blank) has no known colour, so it is always treated as
+ * compatible — this feature never guesses at a custom grape's colour.
+ * Every style other than White/Red allows either colour.
+ */
+export function isGrapeColorCompatibleWithStyle(grapeName: string, wineStyle: string): boolean {
+  const skin = grapeSkin(grapeName);
+  if (!skin) return true;
+  if (wineStyle === "white") return skin === "white";
+  if (wineStyle === "red") return skin === "red";
+  return true;
 }
 
 /**

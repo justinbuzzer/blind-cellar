@@ -1,8 +1,8 @@
 import { GrapeBlendMode } from "@/types/tasting";
 import {
   combineBlendComponents,
-  GRAPE_VARIETY_OPTIONS,
   MAX_OTHER_GRAPE_LENGTH,
+  singleGrapeVarietyOptionsForStyle,
 } from "@/lib/wineReferenceData";
 import { SegmentedControl } from "./SegmentedControl";
 import { SelectField } from "./SelectField";
@@ -23,12 +23,26 @@ interface GrapeBlendFieldProps {
   value: GrapeBlendFormValue;
   onChange: (value: GrapeBlendFormValue) => void;
   error?: string;
+  /**
+   * Filters the single-variety dropdown to that colour's standard grapes
+   * (see README "Grape-entry assistance"). White/Red show only their own
+   * skin colour; every other style (including "" / not yet chosen) can
+   * legitimately be either, so both are shown. Omit entirely for a form
+   * with no wine-style concept (see WineGuessForm) — same as passing "".
+   */
+  wineStyle?: string;
 }
 
 /** Dropdown sentinel for "Other grape" — never persisted; see setSingleGrapeSelection. */
 const OTHER_GRAPE_VALUE = "__other_grape__";
 const OTHER_GRAPE_HINT = "Enter the grape variety.";
-const SINGLE_GRAPE_OPTIONS = [...GRAPE_VARIETY_OPTIONS, { value: OTHER_GRAPE_VALUE, label: "Other grape" }];
+
+function singleGrapeDropdownOptions(wineStyle?: string) {
+  return [
+    ...singleGrapeVarietyOptionsForStyle(wineStyle).map((g) => ({ value: g.value, label: g.label })),
+    { value: OTHER_GRAPE_VALUE, label: "Other grape" },
+  ];
+}
 
 /**
  * Single variety / Blend mode selector. Single variety is a curated
@@ -44,8 +58,9 @@ const SINGLE_GRAPE_OPTIONS = [...GRAPE_VARIETY_OPTIONS, { value: OTHER_GRAPE_VAL
  * so the existing blend scoring (which re-tokenises that same string) needs
  * no changes to understand blends built with this picker.
  */
-export function GrapeBlendField({ value, onChange, error }: GrapeBlendFieldProps) {
+export function GrapeBlendField({ value, onChange, error, wineStyle }: GrapeBlendFieldProps) {
   const mode = value.grapeBlendMode || "single";
+  const singleGrapeOptions = singleGrapeDropdownOptions(wineStyle);
 
   function selectMode(next: GrapeBlendMode) {
     onChange({
@@ -104,7 +119,7 @@ export function GrapeBlendField({ value, onChange, error }: GrapeBlendFieldProps
             value={value.otherGrapeSelected ? OTHER_GRAPE_VALUE : value.grapeBlend}
             onChange={(e) => setSingleGrapeSelection(e.target.value)}
             placeholder="Select grape variety"
-            options={SINGLE_GRAPE_OPTIONS}
+            options={singleGrapeOptions}
             error={value.otherGrapeSelected ? undefined : error}
           />
           {value.otherGrapeSelected && (

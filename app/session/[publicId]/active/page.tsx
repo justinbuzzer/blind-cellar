@@ -348,6 +348,7 @@ export default function ActiveBottlePage() {
       />
 
       <WineGuessForm
+        key={activeBottle.id}
         wineCode={activeBottle.anonymousCode}
         value={guess}
         onChange={updateGuess}

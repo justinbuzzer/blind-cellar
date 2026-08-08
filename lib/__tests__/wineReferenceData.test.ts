@@ -4,8 +4,11 @@ import {
   canonicalizeGrapeToken,
   combineBlendComponents,
   COUNTRIES,
+  GRAPE_VARIETIES,
+  grapeSkin,
   hasMultiVarietyDelimiter,
   isCustomSingleGrape,
+  isGrapeColorCompatibleWithStyle,
   isKnownCountry,
   isKnownGrapeVariety,
   isValidOtherGrapeName,
@@ -16,6 +19,7 @@ import {
   regionOptionsForCountry,
   resetRegionIfInvalid,
   resolveKnownGrapeDisplayName,
+  singleGrapeVarietyOptionsForStyle,
 } from "@/lib/wineReferenceData";
 
 describe("COUNTRIES", () => {
@@ -306,6 +310,67 @@ describe("isValidOtherGrapeName", () => {
   it("rejects digits and other non-letter characters", () => {
     expect(isValidOtherGrapeName("Grape123")).toBe(false);
     expect(isValidOtherGrapeName("Grape!")).toBe(false);
+  });
+});
+
+describe("grapeSkin / singleGrapeVarietyOptionsForStyle / isGrapeColorCompatibleWithStyle", () => {
+  it("classifies every curated grape as red or white", () => {
+    for (const grape of GRAPE_VARIETIES) {
+      expect(["red", "white"]).toContain(grape.skin);
+    }
+  });
+
+  it("resolves skin through a known alias", () => {
+    expect(grapeSkin("Shiraz")).toBe("red");
+    expect(grapeSkin("Garnacha")).toBe("red");
+    expect(grapeSkin("Garnacha Blanca")).toBe("white");
+  });
+
+  it("returns null for an unrecognised (custom Other grape) value", () => {
+    expect(grapeSkin("Mondeuse Blanche")).toBeNull();
+    expect(grapeSkin("")).toBeNull();
+  });
+
+  it("White style shows only white-skinned grapes", () => {
+    const options = singleGrapeVarietyOptionsForStyle("white");
+    expect(options.length).toBeGreaterThan(0);
+    expect(options.every((g) => g.skin === "white")).toBe(true);
+    expect(options.some((g) => g.value === "Chardonnay")).toBe(true);
+    expect(options.some((g) => g.value === "Pinot Noir")).toBe(false);
+  });
+
+  it("Red style shows only red-skinned grapes", () => {
+    const options = singleGrapeVarietyOptionsForStyle("red");
+    expect(options.every((g) => g.skin === "red")).toBe(true);
+    expect(options.some((g) => g.value === "Pinot Noir")).toBe(true);
+    expect(options.some((g) => g.value === "Chardonnay")).toBe(false);
+  });
+
+  it("Bubbles/Sweet/Other/no style show every grape", () => {
+    for (const style of ["bubbles", "sweet", "other", "", undefined] as const) {
+      const options = singleGrapeVarietyOptionsForStyle(style);
+      expect(options.length).toBe(GRAPE_VARIETIES.length);
+    }
+  });
+
+  it("a White grape is compatible with White and incompatible with Red", () => {
+    expect(isGrapeColorCompatibleWithStyle("Chardonnay", "white")).toBe(true);
+    expect(isGrapeColorCompatibleWithStyle("Chardonnay", "red")).toBe(false);
+  });
+
+  it("a Red grape is compatible with Red and incompatible with White", () => {
+    expect(isGrapeColorCompatibleWithStyle("Pinot Noir", "red")).toBe(true);
+    expect(isGrapeColorCompatibleWithStyle("Pinot Noir", "white")).toBe(false);
+  });
+
+  it("any grape is compatible with a style that allows either colour", () => {
+    expect(isGrapeColorCompatibleWithStyle("Chardonnay", "bubbles")).toBe(true);
+    expect(isGrapeColorCompatibleWithStyle("Pinot Noir", "sweet")).toBe(true);
+  });
+
+  it("an unrecognised (custom) grape is always treated as compatible", () => {
+    expect(isGrapeColorCompatibleWithStyle("Mondeuse Blanche", "white")).toBe(true);
+    expect(isGrapeColorCompatibleWithStyle("Mondeuse Blanche", "red")).toBe(true);
   });
 });
 

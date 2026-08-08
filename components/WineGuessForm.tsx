@@ -6,6 +6,7 @@ import {
   resetRegionIfInvalid,
 } from "@/lib/wineReferenceData";
 import { getAppellations, hasAppellations } from "@/lib/appellations";
+import { useGrapeAssistance } from "@/lib/useGrapeAssistance";
 import { Card } from "./Card";
 import { TextField } from "./TextField";
 import { SelectField } from "./SelectField";
@@ -65,6 +66,26 @@ export function WineGuessForm({
     onChange({ ...value, ...next });
   }
 
+  // No wine-style concept exists for a guess (see types/tasting.ts's
+  // WineGuess — the taster never guesses it) — wineStyle is always "", so
+  // assistance here only ever matches on Country + Region (+ Appellation),
+  // and the single-grape dropdown is never colour-filtered. See
+  // lib/useGrapeAssistance.ts.
+  const { message: grapeAssistanceMessage, handleGrapeBlendChange } = useGrapeAssistance({
+    wineStyle: "",
+    country: value.country,
+    region: value.region,
+    appellation: value.appellation,
+    grapeBlend: {
+      grapeBlendMode: value.grapeBlendMode,
+      grapeBlend: value.grapeBlend,
+      selectedGrapes: value.selectedGrapes,
+      otherGrapesText: value.otherGrapesText,
+      otherGrapeSelected: value.otherGrapeSelected,
+    },
+    onGrapeBlendChange: setGrapeBlend,
+  });
+
   const appellationOptions = getAppellations(value.country, value.region).map((name) => ({
     value: name,
     label: name,
@@ -121,9 +142,14 @@ export function WineGuessForm({
             otherGrapesText: value.otherGrapesText,
             otherGrapeSelected: value.otherGrapeSelected,
           }}
-          onChange={setGrapeBlend}
+          onChange={handleGrapeBlendChange}
           error={blendError}
         />
+        {grapeAssistanceMessage && (
+          <p role="status" aria-live="polite" className="text-xs text-cellar-text/60">
+            {grapeAssistanceMessage}
+          </p>
+        )}
         <VintageField
           value={value.vintage}
           onChange={(next) => set("vintage", next)}

@@ -6,6 +6,7 @@ import {
   resetRegionIfInvalid,
 } from "@/lib/wineReferenceData";
 import { getAppellations, hasAppellations } from "@/lib/appellations";
+import { useGrapeAssistance } from "@/lib/useGrapeAssistance";
 import { TextField } from "@/components/TextField";
 import { SelectField } from "@/components/SelectField";
 import { VintageField } from "@/components/VintageField";
@@ -40,6 +41,21 @@ export function WineIdentityFields({ value, errors, onChange }: WineIdentityFiel
   function set<K extends keyof WineIdentityInput>(key: K, next: WineIdentityInput[K]) {
     onChange({ ...value, [key]: next });
   }
+
+  const { message: grapeAssistanceMessage, handleGrapeBlendChange } = useGrapeAssistance({
+    wineStyle: value.wineStyle,
+    country: value.country,
+    region: value.region,
+    appellation: value.appellation,
+    grapeBlend: {
+      grapeBlendMode: value.grapeBlendMode,
+      grapeBlend: value.grapeBlend,
+      selectedGrapes: value.selectedGrapes,
+      otherGrapesText: value.otherGrapesText,
+      otherGrapeSelected: value.otherGrapeSelected,
+    },
+    onGrapeBlendChange: setGrapeBlend,
+  });
 
   function announceAppellationClearedIfNeeded(hadAppellation: string) {
     setClearedMessage(hadAppellation.trim() ? APPELLATION_CLEARED_MESSAGE : "");
@@ -125,9 +141,15 @@ export function WineIdentityFields({ value, errors, onChange }: WineIdentityFiel
             otherGrapesText: value.otherGrapesText,
             otherGrapeSelected: value.otherGrapeSelected,
           }}
-          onChange={setGrapeBlend}
+          onChange={handleGrapeBlendChange}
           error={errors.grapeBlendMode ?? errors.grapeBlend}
+          wineStyle={value.wineStyle}
         />
+        {grapeAssistanceMessage && (
+          <p role="status" aria-live="polite" className="text-xs text-cellar-text/60">
+            {grapeAssistanceMessage}
+          </p>
+        )}
         <VintageField
           value={value.vintage}
           onChange={(next) => set("vintage", next)}
