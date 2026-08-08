@@ -352,6 +352,7 @@ export default function ActiveBottlePage() {
         wineCode={activeBottle.anonymousCode}
         value={guess}
         onChange={updateGuess}
+        styleHint={activeBottle.styleHint}
         ratingError={ratingError ?? undefined}
         blendError={blendError ?? otherGrapeError ?? undefined}
       />

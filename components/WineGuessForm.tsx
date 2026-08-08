@@ -7,6 +7,7 @@ import {
 } from "@/lib/wineReferenceData";
 import { getAppellations, hasAppellations } from "@/lib/appellations";
 import { useGrapeAssistance } from "@/lib/useGrapeAssistance";
+import { BlindGuessGrapeOptionsHint, styleFilterKeyForHint } from "@/lib/grapeAssistance";
 import { Card } from "./Card";
 import { TextField } from "./TextField";
 import { SelectField } from "./SelectField";
@@ -27,6 +28,14 @@ interface WineGuessFormProps {
   onChange: (value: WineGuess) => void;
   ratingError?: string;
   blendError?: string;
+  /**
+   * Privacy-safe grape-colour hint for this specific bottle (see README
+   * "Grape-entry assistance" — "Blind guess forms") — never the bottle's
+   * actual wine style itself, which this form must never receive, display,
+   * or persist. Optional so an already-locked/reveal-adjacent caller that
+   * doesn't have it can omit it, degrading to unfiltered ("all_skins").
+   */
+  styleHint?: BlindGuessGrapeOptionsHint;
 }
 
 export function WineGuessForm({
@@ -35,6 +44,7 @@ export function WineGuessForm({
   onChange,
   ratingError,
   blendError,
+  styleHint,
 }: WineGuessFormProps) {
   const [clearedMessage, setClearedMessage] = useState("");
 
@@ -66,13 +76,15 @@ export function WineGuessForm({
     onChange({ ...value, ...next });
   }
 
-  // No wine-style concept exists for a guess (see types/tasting.ts's
-  // WineGuess — the taster never guesses it) — wineStyle is always "", so
-  // assistance here only ever matches on Country + Region (+ Appellation),
-  // and the single-grape dropdown is never colour-filtered. See
-  // lib/useGrapeAssistance.ts.
+  // The taster never guesses a wine style (see types/tasting.ts's WineGuess),
+  // but the bottle they're guessing has one — styleHint carries a one-way,
+  // privacy-safe derivation of it (see supabase/schema.sql's
+  // wine_style_grape_options_hint), never the raw style. Converting it back
+  // to the same "white"/"red"/"" vocabulary the non-blind forms use lets
+  // this feed the identical filtering/assistance code paths unchanged.
+  const styleFilterKey = styleFilterKeyForHint(styleHint);
   const { message: grapeAssistanceMessage, handleGrapeBlendChange } = useGrapeAssistance({
-    wineStyle: "",
+    wineStyle: styleFilterKey,
     country: value.country,
     region: value.region,
     appellation: value.appellation,
@@ -144,6 +156,7 @@ export function WineGuessForm({
           }}
           onChange={handleGrapeBlendChange}
           error={blendError}
+          wineStyle={styleFilterKey}
         />
         {grapeAssistanceMessage && (
           <p role="status" aria-live="polite" className="text-xs text-cellar-text/60">

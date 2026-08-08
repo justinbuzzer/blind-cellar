@@ -2,7 +2,7 @@ import { GrapeBlendMode } from "@/types/tasting";
 import {
   combineBlendComponents,
   MAX_OTHER_GRAPE_LENGTH,
-  singleGrapeVarietyOptionsForStyle,
+  singleGrapeVarietyOptionsPreservingCurrent,
 } from "@/lib/wineReferenceData";
 import { SegmentedControl } from "./SegmentedControl";
 import { SelectField } from "./SelectField";
@@ -37,9 +37,12 @@ interface GrapeBlendFieldProps {
 const OTHER_GRAPE_VALUE = "__other_grape__";
 const OTHER_GRAPE_HINT = "Enter the grape variety.";
 
-function singleGrapeDropdownOptions(wineStyle?: string) {
+function singleGrapeDropdownOptions(wineStyle: string | undefined, currentValue: string) {
   return [
-    ...singleGrapeVarietyOptionsForStyle(wineStyle).map((g) => ({ value: g.value, label: g.label })),
+    ...singleGrapeVarietyOptionsPreservingCurrent(wineStyle, currentValue).map((g) => ({
+      value: g.value,
+      label: g.label,
+    })),
     { value: OTHER_GRAPE_VALUE, label: "Other grape" },
   ];
 }
@@ -60,7 +63,7 @@ function singleGrapeDropdownOptions(wineStyle?: string) {
  */
 export function GrapeBlendField({ value, onChange, error, wineStyle }: GrapeBlendFieldProps) {
   const mode = value.grapeBlendMode || "single";
-  const singleGrapeOptions = singleGrapeDropdownOptions(wineStyle);
+  const singleGrapeOptions = singleGrapeDropdownOptions(wineStyle, value.otherGrapeSelected ? "" : value.grapeBlend);
 
   function selectMode(next: GrapeBlendMode) {
     onChange({

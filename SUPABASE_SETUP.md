@@ -569,6 +569,37 @@ select id, status from cellar_bottles where id = '<same id>';
 
 No RLS policy changed — `cellar_bottles` keeps its existing "no insert/update/delete policy at all" posture; `delete_cellar_bottle` is a `SECURITY DEFINER` function, exactly like every other cellar mutation, so it can act on the table past that RLS at all. Nothing about the *existence* of Reserved/Consumed bottles is exposed any more broadly than before — the reserved/consumed-specific error messages are only ever computed from a row already scoped to `owner_user_id = auth.uid()`, so this migration adds no new way for one user to learn anything about another user's cellar.
 
+## Migrating for the privacy-safe blind-guess style hint
+
+Extends Grape-entry assistance (see README "Grape-entry assistance" — "Privacy-safe blind-guess style hint") into Full blind and Course-by-course guess entry — requires the base grape-entry assistance client code already in place (no schema/RPC prerequisite for that half, since it was client-only). Re-running the full `supabase/schema.sql` brings an existing project up to date; every statement below is additive and safe to re-run.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+1. **New `wine_style_grape_options_hint(p_wine_style text) returns text`** — a plain SQL function (not `SECURITY DEFINER`, not granted to any role) that maps `'white'` → `'white_skin_only'`, `'red'` → `'red_skin_only'`, and everything else (Bubbles, Sweet, Other, legacy `null`) → `'all_skins'`. Like `repack_tasting_order`/`validate_grape_blend_components` above, it's callable only from inside another function that already has the privilege to read `wines.wine_style` for the row in question.
+2. **`get_guest_session_state`'s `wines` array gains one new field per bottle, `styleHint`** — `wine_style_grape_options_hint(w.wine_style)`. The raw `wine_style` column itself is still never selected into the response.
+3. **`get_active_bottle_state`'s `activeBottle` object gains the same field, `styleHint`** — `wine_style_grape_options_hint(v_active.wine_style)`, computed only in the branch where an active bottle exists (the "no active bottle left" early-return response has no `activeBottle` object to add it to).
+
+### 2. Verification queries
+
+```sql
+-- wine_style_grape_options_hint exists with the expected single-text signature
+select routine_name, data_type from information_schema.parameters
+where specific_name = (
+  select specific_name from information_schema.routines
+  where routine_name = 'wine_style_grape_options_hint'
+) order by ordinal_position;
+
+-- sanity-check the mapping directly (safe to run with any role — this
+-- function takes a plain text value, not a bottle id)
+select wine_style_grape_options_hint('white'), wine_style_grape_options_hint('red'),
+       wine_style_grape_options_hint('bubbles'), wine_style_grape_options_hint(null);
+-- expect: white_skin_only | red_skin_only | all_skins | all_skins
+```
+
+### RLS and privacy summary
+
+No RLS policy changed and no new table/column was added — `wines.wine_style` keeps its existing grants exactly as they were (still not in the narrow anon/authenticated column grant on `wines`; the raw value is reachable only from inside a `SECURITY DEFINER` function). `styleHint` is exposed exclusively through `get_guest_session_state`/`get_active_bottle_state`, both of which already scope every field they return to the calling guest token's own session/bottles — no new endpoint, no way to request another bottle's or another session's hint, and no raw style value anywhere in either response.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

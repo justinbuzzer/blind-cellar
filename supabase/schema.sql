@@ -1498,6 +1498,26 @@ begin
 end;
 $$;
 
+-- Blind-guess grape-entry assistance (see README "Grape-entry assistance" —
+-- "Blind guess forms"): derives a minimal, non-reversible rendering hint
+-- from a bottle's actual wine_style, so a participant's guess form can
+-- filter/auto-fill its grape dropdown by the real wine's colour without the
+-- raw style value ever reaching the client. Not SECURITY DEFINER and not
+-- granted to anon/authenticated — like repack_tasting_order and
+-- validate_grape_blend_components above, this only ever runs via a direct
+-- call from inside another SECURITY DEFINER function that already has
+-- privilege to read wines.wine_style for the bottle in question.
+create or replace function public.wine_style_grape_options_hint(p_wine_style text) returns text
+language sql
+immutable
+as $$
+  select case p_wine_style
+    when 'white' then 'white_skin_only'
+    when 'red' then 'red_skin_only'
+    else 'all_skins'
+  end;
+$$;
+
 -- Guest: fetch everything the tasting page needs to render/resume, in one call.
 create or replace function get_guest_session_state(
   p_guest_token text
@@ -1543,7 +1563,8 @@ begin
       select jsonb_agg(jsonb_build_object(
         'id', w.id,
         'bottleNumber', w.bottle_number,
-        'anonymousCode', w.anonymous_code
+        'anonymousCode', w.anonymous_code,
+        'styleHint', wine_style_grape_options_hint(w.wine_style)
       ) order by w.tasting_order, w.bottle_number)
       from wines w where w.session_id = v_session.id
     ), '[]'::jsonb),
@@ -1766,7 +1787,8 @@ begin
       'bottleNumber', v_active.bottle_number,
       'anonymousCode', v_active.anonymous_code,
       'position', v_position,
-      'totalBottles', v_total_bottles
+      'totalBottles', v_total_bottles,
+      'styleHint', wine_style_grape_options_hint(v_active.wine_style)
     ),
     'myGuess', case when v_my_guess.id is null then null else jsonb_build_object(
       'wineId', v_my_guess.wine_id,

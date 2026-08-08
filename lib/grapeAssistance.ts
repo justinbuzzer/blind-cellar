@@ -743,3 +743,33 @@ export function evaluateGrapeAssistanceChange(
 
   return { fields: matchToFields(match), source: "auto", message: GRAPE_ASSISTANCE_APPLIED_MESSAGE };
 }
+
+// ---------------------------------------------------------------------------
+// Blind-guess grape assistance (see README "Grape-entry assistance" — "Blind
+// guess forms"): a participant never has a wine-style field to guess, but
+// the bottle they're guessing does have one — the actual wine's colour. A
+// blind-guess RPC (get_guest_session_state, get_active_bottle_state; see
+// supabase/schema.sql's wine_style_grape_options_hint) exposes only this
+// minimal, one-way hint per bottle, never the raw style itself. Deliberately
+// the exact same three values a White/Red/other style already collapses to
+// for both dropdown filtering and mapping-lookup purposes — reusing
+// singleGrapeVarietyOptionsForStyle/getGrapeAssistance unchanged rather than
+// building a second, blind-guess-specific classification or mapping.
+// ---------------------------------------------------------------------------
+
+export type BlindGuessGrapeOptionsHint = "white_skin_only" | "red_skin_only" | "all_skins";
+
+/**
+ * Converts a bottle's privacy-safe hint into the same "white"/"red"/""
+ * style-key vocabulary `GrapeBlendField`'s colour filter and
+ * `getGrapeAssistance`'s `wineStyle` parameter already accept — so blind
+ * guess forms feed the identical filtering/mapping code paths actual-wine
+ * forms use, with no second implementation. `all_skins` (Bubbles/Sweet/
+ * Rosé/Other/unknown) maps to "", matching how those styles already behave
+ * as "no style" for both filtering and mapping in the non-blind forms.
+ */
+export function styleFilterKeyForHint(hint: BlindGuessGrapeOptionsHint | undefined): string {
+  if (hint === "white_skin_only") return "white";
+  if (hint === "red_skin_only") return "red";
+  return "";
+}

@@ -306,6 +306,7 @@ export default function GuestTastingPage() {
         wineCode={wine.anonymousCode}
         value={guess}
         onChange={(next) => updateGuess(wine.id, next)}
+        styleHint={wine.styleHint}
         ratingError={
           ratingErrorWineId === wine.id ? "A rating is required." : undefined
         }

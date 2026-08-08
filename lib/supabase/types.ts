@@ -8,6 +8,7 @@ import {
   TastingMode,
   WineStyle,
 } from "@/types/tasting";
+import { BlindGuessGrapeOptionsHint } from "@/lib/grapeAssistance";
 
 // Raw shapes returned by direct table/view reads (snake_case, PostgREST).
 
@@ -221,6 +222,8 @@ export interface GuestSessionWineDTO {
   id: string;
   bottleNumber: number;
   anonymousCode: string;
+  /** Privacy-safe grape-colour hint derived from this bottle's actual wine style — never the raw style itself. See README "Grape-entry assistance". */
+  styleHint: BlindGuessGrapeOptionsHint;
 }
 
 export interface GuestSessionStateResponse {
@@ -295,6 +298,8 @@ export interface ActiveBottleDTO {
   /** 1-based position in tasting order, e.g. "Bottle 2 of 6". */
   position: number;
   totalBottles: number;
+  /** Privacy-safe grape-colour hint derived from this bottle's actual wine style — never the raw style itself. See README "Grape-entry assistance". */
+  styleHint: BlindGuessGrapeOptionsHint;
 }
 
 export interface ActiveBottleStateResponse {

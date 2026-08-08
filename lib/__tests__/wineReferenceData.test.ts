@@ -20,6 +20,7 @@ import {
   resetRegionIfInvalid,
   resolveKnownGrapeDisplayName,
   singleGrapeVarietyOptionsForStyle,
+  singleGrapeVarietyOptionsPreservingCurrent,
 } from "@/lib/wineReferenceData";
 
 describe("COUNTRIES", () => {
@@ -371,6 +372,43 @@ describe("grapeSkin / singleGrapeVarietyOptionsForStyle / isGrapeColorCompatible
   it("an unrecognised (custom) grape is always treated as compatible", () => {
     expect(isGrapeColorCompatibleWithStyle("Mondeuse Blanche", "white")).toBe(true);
     expect(isGrapeColorCompatibleWithStyle("Mondeuse Blanche", "red")).toBe(true);
+  });
+});
+
+describe("singleGrapeVarietyOptionsPreservingCurrent — blind-guess draft safety net", () => {
+  it("behaves identically to the plain filter when the current value is blank", () => {
+    expect(singleGrapeVarietyOptionsPreservingCurrent("white", "")).toEqual(
+      singleGrapeVarietyOptionsForStyle("white")
+    );
+  });
+
+  it("behaves identically to the plain filter when the current value is already compatible", () => {
+    expect(singleGrapeVarietyOptionsPreservingCurrent("white", "Chardonnay")).toEqual(
+      singleGrapeVarietyOptionsForStyle("white")
+    );
+  });
+
+  it("prepends an otherwise-filtered-out current value rather than dropping it", () => {
+    const options = singleGrapeVarietyOptionsPreservingCurrent("white", "Pinot Noir");
+    expect(options[0].value).toBe("Pinot Noir");
+    expect(options.some((g) => g.skin === "white")).toBe(true);
+  });
+
+  it("never duplicates the current value if it's already present", () => {
+    const options = singleGrapeVarietyOptionsPreservingCurrent("red", "Syrah");
+    expect(options.filter((g) => g.value === "Syrah")).toHaveLength(1);
+  });
+
+  it("ignores an unrecognised current value (e.g. a custom Other-grape draft) rather than inventing an entry for it", () => {
+    expect(singleGrapeVarietyOptionsPreservingCurrent("white", "Mondeuse Blanche")).toEqual(
+      singleGrapeVarietyOptionsForStyle("white")
+    );
+  });
+
+  it("is a no-op for all_skins-equivalent ('' or other) styles, since nothing is filtered out to begin with", () => {
+    expect(singleGrapeVarietyOptionsPreservingCurrent("", "Pinot Noir")).toEqual(
+      singleGrapeVarietyOptionsForStyle("")
+    );
   });
 });
 

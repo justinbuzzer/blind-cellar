@@ -9,6 +9,7 @@ import {
   GrapeValueSource,
   getGrapeAssistance,
   isGrapeValueEmpty,
+  styleFilterKeyForHint,
 } from "@/lib/grapeAssistance";
 import { isKnownGrapeVariety } from "@/lib/wineReferenceData";
 
@@ -373,5 +374,92 @@ describe("evaluateGrapeAssistanceChange — auto-apply state machine", () => {
     const currentGrape = emptyGrape({ grapeBlendMode: "single", grapeBlend: "Tempranillo" });
     const source: GrapeValueSource = "manual";
     expect(evaluateGrapeAssistanceChange(prev, { ...current, ...currentGrape }, source)).toBeNull();
+  });
+});
+
+describe("styleFilterKeyForHint — blind-guess privacy-safe hint adapter", () => {
+  it("maps white_skin_only to the same 'white' style key non-blind forms use", () => {
+    expect(styleFilterKeyForHint("white_skin_only")).toBe("white");
+  });
+
+  it("maps red_skin_only to 'red'", () => {
+    expect(styleFilterKeyForHint("red_skin_only")).toBe("red");
+  });
+
+  it("maps all_skins (Bubbles/Sweet/Rosé/Other/unknown actual style) to '' — the same 'no style' key", () => {
+    expect(styleFilterKeyForHint("all_skins")).toBe("");
+  });
+
+  it("degrades safely to '' when no hint is supplied at all", () => {
+    expect(styleFilterKeyForHint(undefined)).toBe("");
+  });
+});
+
+describe("Blind-guess grape assistance driven by the privacy-safe hint (reuses the same engine, no second mapping)", () => {
+  it("Bordeaux guess + a Red-hinted bottle auto-switches to the red Bordeaux blend", () => {
+    const match = getGrapeAssistance({
+      country: "France",
+      region: "Bordeaux",
+      wineStyle: styleFilterKeyForHint("red_skin_only"),
+    });
+    expect(match).toEqual({ kind: "blend", grapes: ["Cabernet Sauvignon", "Merlot", "Cabernet Franc"] });
+  });
+
+  it("Bordeaux guess + a White-hinted bottle auto-switches to the white Bordeaux blend instead", () => {
+    const match = getGrapeAssistance({
+      country: "France",
+      region: "Bordeaux",
+      wineStyle: styleFilterKeyForHint("white_skin_only"),
+    });
+    expect(match).toEqual({ kind: "blend", grapes: ["Sauvignon Blanc", "Sémillon"] });
+  });
+
+  it("Burgundy guess + a White-hinted bottle auto-selects Chardonnay", () => {
+    const match = getGrapeAssistance({
+      country: "France",
+      region: "Burgundy",
+      wineStyle: styleFilterKeyForHint("white_skin_only"),
+    });
+    expect(match).toEqual({ kind: "single", grapes: ["Chardonnay"] });
+  });
+
+  it("Burgundy guess + a Red-hinted bottle auto-selects Pinot Noir", () => {
+    const match = getGrapeAssistance({
+      country: "France",
+      region: "Burgundy",
+      wineStyle: styleFilterKeyForHint("red_skin_only"),
+    });
+    expect(match).toEqual({ kind: "single", grapes: ["Pinot Noir"] });
+  });
+
+  it("Burgundy guess + an all_skins-hinted bottle (Bubbles/Sweet/Other actual style) applies no region+style mapping", () => {
+    const match = getGrapeAssistance({
+      country: "France",
+      region: "Burgundy",
+      wineStyle: styleFilterKeyForHint("all_skins"),
+    });
+    expect(match).toBeNull();
+  });
+
+  it("a manual guess grape is not overwritten by a later location change, for a fixed bottle hint", () => {
+    // styleHint (and therefore this derived wineStyle key) never changes
+    // during a guess form's lifetime — only the guessed country/region/
+    // appellation do, since there is no participant style control at all.
+    const fixedHint = styleFilterKeyForHint("white_skin_only");
+    const prev = triggers({ country: "France", region: "Bordeaux", wineStyle: fixedHint });
+    const current = triggers({ country: "France", region: "Burgundy", wineStyle: fixedHint });
+    const currentGrape = emptyGrape({ grapeBlendMode: "single", grapeBlend: "Sangiovese" });
+    expect(evaluateGrapeAssistanceChange(prev, { ...current, ...currentGrape }, "manual")).toBeNull();
+  });
+
+  it("the two messages reachable in a blind-guess form never mention style, colour, or the bottle's actual data", () => {
+    // GRAPE_STYLE_CLEARED_MESSAGE is deliberately excluded here — it only
+    // ever fires on a wine-style *change* (see evaluateGrapeAssistanceChange),
+    // which can never happen in a blind-guess form since styleHint is a
+    // fixed, per-bottle constant for the lifetime of that form (there is no
+    // participant wine-style control to change at all).
+    for (const message of [GRAPE_ASSISTANCE_APPLIED_MESSAGE, GRAPE_DETAILS_CLEARED_MESSAGE]) {
+      expect(message.toLowerCase()).not.toMatch(/style|colour|color|white|red grape|based on/);
+    }
   });
 });

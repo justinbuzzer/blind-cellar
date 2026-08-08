@@ -406,6 +406,29 @@ export function singleGrapeVarietyOptionsForStyle(wineStyle?: string): GrapeVari
 }
 
 /**
+ * Same as `singleGrapeVarietyOptionsForStyle`, but never drops a
+ * `currentValue` that's already selected, even if it's the wrong colour for
+ * `wineStyle` — used by a blind guess form's grape dropdown (see README
+ * "Grape-entry assistance" — "Blind guess forms"), where a participant's
+ * prior guess must stay visible/selectable in a native `<select>` and is
+ * never silently cleared just because it doesn't match the (private) actual
+ * wine's colour hint. Prepended rather than inserted in place, since where
+ * it "should" sort among a differently-filtered list is undefined. A no-op
+ * when `currentValue` is blank or already in the filtered list.
+ */
+export function singleGrapeVarietyOptionsPreservingCurrent(
+  wineStyle: string | undefined,
+  currentValue: string
+): GrapeVarietyOption[] {
+  const filtered = singleGrapeVarietyOptionsForStyle(wineStyle);
+  if (!currentValue || filtered.some((g) => g.value === currentValue)) {
+    return filtered;
+  }
+  const preserved = GRAPE_VARIETIES.find((g) => g.value === currentValue);
+  return preserved ? [preserved, ...filtered] : filtered;
+}
+
+/**
  * True unless `grapeName` is a known standard grape whose skin colour
  * conflicts with a White/Red wine style — used only to decide whether an
  * existing single-grape selection must be cleared after a style change (see
