@@ -793,6 +793,8 @@ declare
   v_active_wine wines%rowtype;
   v_active_bottle jsonb := null;
   v_seen_progress jsonb := null;
+  v_wines jsonb;
+  v_seen_eligible_count int;
   v_result jsonb;
 begin
   select * into v_session from tasting_sessions where public_id = p_public_id;
@@ -858,6 +860,59 @@ begin
     end if;
   end if;
 
+  -- Seen-only: the host controls' wine identity + rating-status/reveal
+  -- fields (see README "Seen Host Controls"). Nested under a `seen` key so
+  -- full_blind/course_reveal wines never carry it at all, rather than
+  -- leaving it present-but-null — the DTO shape itself proves mode
+  -- isolation. eligibleCount uses one consistent denominator (every guest in
+  -- the session) for every bottle, matching the existing session-wide
+  -- seenProgress above. groupRating is computed only once that specific
+  -- bottle's ratings_revealed_at is set — never a preview of an unrevealed
+  -- average, even to the host, so a host can't undo/redo their way into
+  -- info this endpoint wasn't designed to leak before the deliberate reveal
+  -- action.
+  if v_session.tasting_mode = 'seen' then
+    select count(*) into v_seen_eligible_count from guests where session_id = v_session.id;
+
+    select coalesce(jsonb_agg(jsonb_build_object(
+      'id', w.id,
+      'bottleNumber', w.bottle_number,
+      'anonymousCode', w.anonymous_code,
+      'wineStyle', w.wine_style,
+      'tastingOrder', w.tasting_order,
+      'revealedAt', w.revealed_at,
+      'seen', jsonb_build_object(
+        'producer', w.producer,
+        'wineCuvee', w.wine_cuvee,
+        'vintage', w.vintage,
+        'country', w.country,
+        'region', w.region,
+        'appellation', w.appellation,
+        'ratingsRevealedAt', w.ratings_revealed_at,
+        'ratedCount', (
+          select count(*) from wine_guesses where wine_id = w.id and rating is not null
+        ),
+        'eligibleCount', v_seen_eligible_count,
+        'groupRating', case when w.ratings_revealed_at is not null then (
+          select round(avg(rating)::numeric, 1) from wine_guesses where wine_id = w.id and rating is not null
+        ) else null end
+      )
+    ) order by w.tasting_order), '[]'::jsonb)
+    into v_wines
+    from wines w where w.session_id = v_session.id;
+  else
+    select coalesce(jsonb_agg(jsonb_build_object(
+      'id', w.id,
+      'bottleNumber', w.bottle_number,
+      'anonymousCode', w.anonymous_code,
+      'wineStyle', w.wine_style,
+      'tastingOrder', w.tasting_order,
+      'revealedAt', w.revealed_at
+    ) order by w.tasting_order), '[]'::jsonb)
+    into v_wines
+    from wines w where w.session_id = v_session.id;
+  end if;
+
   select jsonb_build_object(
     'session', jsonb_build_object(
       'id', v_session.id,
@@ -871,17 +926,7 @@ begin
       'tastingMode', v_session.tasting_mode,
       'scoringVersion', v_session.scoring_version
     ),
-    'wines', coalesce((
-      select jsonb_agg(jsonb_build_object(
-        'id', w.id,
-        'bottleNumber', w.bottle_number,
-        'anonymousCode', w.anonymous_code,
-        'wineStyle', w.wine_style,
-        'tastingOrder', w.tasting_order,
-        'revealedAt', w.revealed_at
-      ) order by w.tasting_order)
-      from wines w where w.session_id = v_session.id
-    ), '[]'::jsonb),
+    'wines', v_wines,
     'guests', coalesce((
       select jsonb_agg(jsonb_build_object(
         'id', g.id,
@@ -1916,6 +1961,13 @@ $$;
 -- 'registration' so a participant can't peek at bottle identities before the
 -- host starts tasting (seen mode's registration stage keeps the same
 -- contributor-only secrecy as every other mode).
+--
+-- groupRating/ratingsRevealedAt (see reveal_seen_ratings above) are the only
+-- per-bottle rating-aggregate fields ever returned here, and only once the
+-- host has revealed that specific bottle — null for every other bottle,
+-- regardless of how many participants have rated it. Never a ratedCount or
+-- eligibleCount here (that stays host-only, in get_host_session) and never
+-- any other participant's individual rating.
 create or replace function get_seen_tasting_state(
   p_guest_token text
 ) returns jsonb
@@ -1968,7 +2020,11 @@ begin
         'contributorName', (select display_name from guests where id = w.contributor_guest_id),
         'myRating', (select rating from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
         'myConfidence', (select confidence from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
-        'myNote', (select tasting_note from wine_guesses where wine_id = w.id and guest_id = v_guest.id)
+        'myNote', (select tasting_note from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
+        'ratingsRevealedAt', w.ratings_revealed_at,
+        'groupRating', case when w.ratings_revealed_at is not null then (
+          select round(avg(rating)::numeric, 1) from wine_guesses where wine_id = w.id and rating is not null
+        ) else null end
       ) order by w.tasting_order)
       from wines w where w.session_id = v_session.id
     ), '[]'::jsonb)
@@ -1985,8 +2041,13 @@ $$;
 -- full_blind/course_reveal's autosave-friendly draft-without-a-rating), and
 -- the existing `rating between 50 and 100` column check enforces the range.
 -- Never restricts which bottle/tasting-order position may be rated, and
--- never locks a rating after saving — both are the defining differences from
--- course_reveal's lock_wine_guess.
+-- never locks a rating after saving on its own — the one exception is the
+-- per-bottle rating lock below, once the host has revealed that specific
+-- bottle's group rating (see reveal_seen_ratings above): the average the
+-- host and other participants already saw must never silently drift, so a
+-- rating can't be added or changed for that bottle after its reveal, even
+-- though the tasting overall is still collecting. This is unrelated to (and
+-- does not reuse) course_reveal's lock_wine_guess.
 create or replace function upsert_seen_rating(
   p_guest_token text,
   p_wine_id uuid,
@@ -2001,6 +2062,7 @@ as $$
 declare
   v_guest guests%rowtype;
   v_session tasting_sessions%rowtype;
+  v_wine wines%rowtype;
 begin
   select * into v_guest from guests where guest_token = p_guest_token;
   if not found then
@@ -2017,8 +2079,12 @@ begin
     raise exception 'rating_required';
   end if;
 
-  if not exists (select 1 from wines where id = p_wine_id and session_id = v_session.id) then
+  select * into v_wine from wines where id = p_wine_id and session_id = v_session.id;
+  if not found then
     raise exception 'wine_not_in_session';
+  end if;
+  if v_wine.ratings_revealed_at is not null then
+    raise exception 'ratings_already_revealed';
   end if;
 
   insert into wine_guesses (session_id, wine_id, guest_id, rating, confidence, tasting_note, submitted_at)
@@ -3104,3 +3170,162 @@ grant execute on function public.update_cellar_bottle(uuid, text, text, text, te
 grant execute on function public.register_bottle_from_cellar(text, uuid) to authenticated;
 grant execute on function public.return_cellar_bottle_to_available(uuid) to authenticated;
 grant execute on function public.mark_cellar_bottle_consumed(uuid) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Seen Host Controls: per-bottle rating reveal — see README "Tasting modes"
+-- — "Seen Host Controls".
+--
+-- Seen tasting previously had only one, session-wide rating reveal
+-- (end_seen_tasting above, unchanged). This adds an independent, per-bottle
+-- reveal the host can trigger in any order during the collecting stage,
+-- without ending the tasting or affecting any other bottle. Deliberately a
+-- separate column from `revealed_at` (course_reveal's identity-reveal
+-- timestamp) rather than reusing it: in seen mode the wine's identity is
+-- already fully visible from the start (see get_seen_tasting_state below),
+-- so this column only ever gates the *rating aggregate*, never identity —
+-- overloading revealed_at here would conflate two unrelated concepts and
+-- risk leaking rating state into course_reveal's identity-reveal logic (and
+-- vice versa). Additive and nullable: every existing bottle (of any mode)
+-- defaults to null/unrevealed, and full_blind/course_reveal bottles never
+-- have this column touched by any function.
+-- ---------------------------------------------------------------------------
+
+alter table wines add column if not exists ratings_revealed_at timestamptz;
+
+-- Host: reveal the group rating for one seen-tasting bottle, independent of
+-- every other bottle and of bottle/tasting order. Idempotent — revealing an
+-- already-revealed bottle succeeds without changing its timestamp, so a
+-- retried request (e.g. a flaky connection) never errors or produces a
+-- different value. Deliberately has no "is every eligible participant rated"
+-- requirement and no active/current-bottle constraint, unlike course_reveal's
+-- reveal_bottle — see README for why seen mode's reveal is unordered by
+-- design.
+create or replace function reveal_seen_ratings(
+  p_public_id uuid,
+  p_host_token text,
+  p_wine_id uuid
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_session tasting_sessions%rowtype;
+  v_wine wines%rowtype;
+  v_revealed_at timestamptz;
+  v_rated_count int;
+  v_eligible_count int;
+  v_group_rating numeric;
+begin
+  select * into v_session from tasting_sessions where public_id = p_public_id for update;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+  if v_session.host_token_hash <> encode(digest(p_host_token, 'sha256'), 'hex') then
+    raise exception 'invalid_host_token';
+  end if;
+  if v_session.tasting_mode <> 'seen' then
+    raise exception 'invalid_tasting_mode';
+  end if;
+  if v_session.status <> 'collecting' then
+    raise exception 'session_not_collecting';
+  end if;
+
+  select * into v_wine from wines where id = p_wine_id and session_id = v_session.id for update;
+  if not found then
+    raise exception 'wine_not_in_session';
+  end if;
+
+  update wines
+  set ratings_revealed_at = coalesce(ratings_revealed_at, now())
+  where id = p_wine_id
+  returning ratings_revealed_at into v_revealed_at;
+
+  select count(*) into v_eligible_count from guests where session_id = v_session.id;
+  select count(*) into v_rated_count
+    from wine_guesses where wine_id = p_wine_id and rating is not null;
+  select round(avg(rating)::numeric, 1) into v_group_rating
+    from wine_guesses where wine_id = p_wine_id and rating is not null;
+
+  return jsonb_build_object(
+    'wineId', p_wine_id,
+    'ratingsRevealedAt', v_revealed_at,
+    'ratedCount', v_rated_count,
+    'eligibleCount', v_eligible_count,
+    'groupRating', v_group_rating
+  );
+end;
+$$;
+
+grant execute on function reveal_seen_ratings(uuid, text, uuid) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Cellar deletion eligibility (see README "Personal Cellar" — "Deleting a
+-- bottle"): a cellar bottle may be permanently deleted only while
+-- status = 'available'. Reserved bottles are linked to an active or pending
+-- tasting and Consumed bottles are permanent cellar-history records in v1 —
+-- neither may ever be deleted, including via a manipulated id or a direct
+-- RPC call bypassing the UI. There is no unlink/cascade/admin-override path:
+-- the existing `return_cellar_bottle_to_available` flow above remains the
+-- only way to make a Reserved bottle eligible again, and a Consumed bottle
+-- can never become eligible.
+-- ---------------------------------------------------------------------------
+
+-- Owner: permanently delete an available cellar bottle. The conditional
+-- `delete ... where ... and status = 'available'` is the actual enforcement
+-- — not merely a pre-check — so this is safe even under concurrent
+-- modification (e.g. a reservation racing this delete): whichever change
+-- commits first determines whether the row still matches, and Postgres's
+-- row-level locking means only one of them can win. `v_deleted` distinguishes
+-- "deleted" from "matched nothing" without a separate existence check.
+--
+-- When nothing was deleted, the second lookup is scoped to
+-- `owner_user_id = v_uid` exactly like every other cellar RPC's ownership
+-- check, so it can only ever reveal a status the caller's own account
+-- already had visibility into via `cellar_bottles_select_own` — never
+-- whether some other user's bottle exists. A bottle that is missing, already
+-- deleted, or owned by someone else all collapse to the same
+-- 'cellar_bottle_not_found' tag already used by update_cellar_bottle for the
+-- identical reasons, so a caller can never distinguish those cases from the
+-- error alone.
+create or replace function public.delete_cellar_bottle(
+  p_cellar_bottle_id uuid
+) returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_deleted_id uuid;
+  v_status text;
+begin
+  if v_uid is null then
+    raise exception 'not_authenticated';
+  end if;
+
+  delete from cellar_bottles
+  where id = p_cellar_bottle_id
+    and owner_user_id = v_uid
+    and status = 'available'
+  returning id into v_deleted_id;
+
+  if v_deleted_id is not null then
+    return;
+  end if;
+
+  select status into v_status
+  from cellar_bottles
+  where id = p_cellar_bottle_id and owner_user_id = v_uid;
+
+  if v_status = 'reserved' then
+    raise exception 'cellar_bottle_reserved';
+  elsif v_status = 'consumed' then
+    raise exception 'cellar_bottle_consumed';
+  else
+    raise exception 'cellar_bottle_not_found';
+  end if;
+end;
+$$;
+
+grant execute on function public.delete_cellar_bottle(uuid) to authenticated;

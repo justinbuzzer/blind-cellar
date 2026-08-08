@@ -51,3 +51,13 @@ export async function returnCellarBottleToAvailable(supabase: SupabaseClient, ce
 export async function markCellarBottleConsumed(supabase: SupabaseClient, cellarBottleId: string) {
   return supabase.rpc("mark_cellar_bottle_consumed", { p_cellar_bottle_id: cellarBottleId });
 }
+
+/**
+ * Permanently deletes an Available cellar bottle (see README "Personal
+ * Cellar" — "Deleting a bottle"). delete_cellar_bottle re-validates
+ * ownership and status = 'available' itself — this wrapper trusts nothing
+ * about the caller's local state, exactly like the other cellar RPC calls.
+ */
+export async function deleteCellarBottle(supabase: SupabaseClient, cellarBottleId: string) {
+  return supabase.rpc("delete_cellar_bottle", { p_cellar_bottle_id: cellarBottleId });
+}

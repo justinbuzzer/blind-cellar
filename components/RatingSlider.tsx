@@ -4,12 +4,13 @@ interface RatingSliderProps {
   value: number | null;
   onChange: (value: number) => void;
   error?: string;
+  disabled?: boolean;
 }
 
 const MIN = 50;
 const MAX = 100;
 
-export function RatingSlider({ value, onChange, error }: RatingSliderProps) {
+export function RatingSlider({ value, onChange, error, disabled }: RatingSliderProps) {
   const fieldId = useId();
   const errorId = `${fieldId}-error`;
   const current = value ?? MIN;
@@ -35,6 +36,7 @@ export function RatingSlider({ value, onChange, error }: RatingSliderProps) {
         max={MAX}
         step={1}
         value={current}
+        disabled={disabled}
         aria-invalid={Boolean(error)}
         aria-describedby={error ? errorId : undefined}
         aria-valuetext={value !== null ? String(value) : "not set"}

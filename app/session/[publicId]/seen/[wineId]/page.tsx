@@ -16,6 +16,7 @@ import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { getSeenTastingState, upsertSeenRating } from "@/lib/supabase/guestActions";
 import { friendlyRpcError, SeenBottleDTO } from "@/lib/supabase/types";
+import { formatSeenGroupRating } from "@/lib/seenHostControls";
 import { Confidence, WINE_STYLE_LABELS } from "@/types/tasting";
 import { getGuestToken } from "@/lib/deviceStorage";
 
@@ -83,7 +84,10 @@ export default function SeenBottleRatingPage() {
     })();
   }, [params.publicId, params.wineId, router]);
 
+  const ratingsRevealed = bottle?.ratingsRevealedAt !== null && bottle?.ratingsRevealedAt !== undefined;
+
   async function handleSave() {
+    if (ratingsRevealed) return;
     if (rating === null) {
       setRatingError("A rating is required.");
       return;
@@ -186,6 +190,13 @@ export default function SeenBottleRatingPage() {
           </p>
         </div>
 
+        {ratingsRevealed && (
+          <div className="flex flex-col gap-1 rounded-sm bg-cellar-bg p-3">
+            <p className="text-sm font-medium text-cellar-text">Ratings revealed</p>
+            <p className="text-sm text-cellar-text">{formatSeenGroupRating(bottle.groupRating)}</p>
+          </div>
+        )}
+
         <RatingSlider
           value={rating}
           onChange={(next) => {
@@ -194,6 +205,7 @@ export default function SeenBottleRatingPage() {
             setSavedJustNow(false);
           }}
           error={ratingError ?? undefined}
+          disabled={ratingsRevealed}
         />
 
         <div className="flex flex-col gap-4 border-t border-cellar-border pt-4">
@@ -203,6 +215,7 @@ export default function SeenBottleRatingPage() {
               setConfidence(next);
               setSavedJustNow(false);
             }}
+            disabled={ratingsRevealed}
           />
 
           <TextAreaField
@@ -213,11 +226,14 @@ export default function SeenBottleRatingPage() {
               setSavedJustNow(false);
             }}
             placeholder="Nose, palate, anything that stood out"
+            disabled={ratingsRevealed}
           />
         </div>
 
         <p className="border-t border-cellar-border pt-3 text-xs text-cellar-muted">
-          You may revise this rating until the host ends the tasting.
+          {ratingsRevealed
+            ? "The host has revealed this wine's group rating, so ratings for it are now locked."
+            : "You may revise this rating until the host ends the tasting."}
         </p>
       </Card>
 
@@ -239,11 +255,13 @@ export default function SeenBottleRatingPage() {
             Back to all bottles
           </Button>
         </Link>
-        <div className="w-1/2">
-          <Button type="button" fullWidth onClick={handleSave} disabled={saving}>
-            {saving ? "Saving…" : "Save rating"}
-          </Button>
-        </div>
+        {!ratingsRevealed && (
+          <div className="w-1/2">
+            <Button type="button" fullWidth onClick={handleSave} disabled={saving}>
+              {saving ? "Saving…" : "Save rating"}
+            </Button>
+          </div>
+        )}
       </div>
     </main>
   );

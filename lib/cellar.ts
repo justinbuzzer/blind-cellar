@@ -1,7 +1,13 @@
 import { WineIdentityErrors } from "@/components/registration/WineIdentityFields";
 import { CellarBottleRow } from "@/lib/supabase/types";
 import { isCustomSingleGrape, reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
-import { BOTTLE_FORMAT_LABELS, BOTTLE_FORMATS, BottleFormat, WineIdentityInput } from "@/types/tasting";
+import {
+  BOTTLE_FORMAT_LABELS,
+  BOTTLE_FORMATS,
+  BottleFormat,
+  CellarBottleStatus,
+  WineIdentityInput,
+} from "@/types/tasting";
 import { validateBottleForm } from "./validation";
 
 // ---------------------------------------------------------------------------
@@ -183,4 +189,17 @@ export function cellarBottleFormatLabel(row: { bottle_format: BottleFormat; bott
     return row.bottle_format_other;
   }
   return BOTTLE_FORMAT_LABELS[row.bottle_format];
+}
+
+/**
+ * Cellar deletion eligibility (see README "Personal Cellar" — "Deleting a
+ * bottle"): only an Available bottle may ever be deleted or edited. Reserved
+ * bottles are linked to an active/pending tasting and Consumed bottles are
+ * permanent cellar-history records in v1 — this is the single source of
+ * truth the UI uses to decide whether to render the Edit/Delete icons at
+ * all, mirrored server-side by delete_cellar_bottle's own status check (see
+ * supabase/schema.sql) so the UI check is never the only enforcement.
+ */
+export function isCellarBottleDeletable(status: CellarBottleStatus): boolean {
+  return status === "available";
 }

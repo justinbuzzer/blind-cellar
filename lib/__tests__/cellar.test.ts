@@ -9,6 +9,7 @@ import {
   cellarBottleFormatLabel,
   cellarBottleRpcArgs,
   cellarWineIdentityLabel,
+  isCellarBottleDeletable,
   isPersonalNoteTooLong,
   isStorageLocationTooLong,
   validateCellarBottleForm,
@@ -331,5 +332,19 @@ describe("cellarBottleFormatLabel", () => {
   it("falls back to the generic 'Other' label if no detail was recorded", () => {
     const row = makeCellarRow({ bottle_format: "other", bottle_format_other: null });
     expect(cellarBottleFormatLabel(row)).toBe("Other");
+  });
+});
+
+describe("isCellarBottleDeletable", () => {
+  it("allows deletion only for 'available'", () => {
+    expect(isCellarBottleDeletable("available")).toBe(true);
+  });
+
+  it("rejects 'reserved'", () => {
+    expect(isCellarBottleDeletable("reserved")).toBe(false);
+  });
+
+  it("rejects 'consumed'", () => {
+    expect(isCellarBottleDeletable("consumed")).toBe(false);
   });
 });

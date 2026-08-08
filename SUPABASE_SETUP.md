@@ -506,6 +506,69 @@ limit 6;
 
 No RLS policy changed, and no new column was added. `cellar_bottles` keeps its existing `select`-only RLS (`auth.uid() = owner_user_id`) and its "no insert/update/delete policy at all" posture — every row created by a quantity-N submission still exists only because `add_cellar_bottle` (a `SECURITY DEFINER` function) inserted it, attributed to `auth.uid()`, exactly as a quantity-1 submission always has. The function independently re-validates ownership and every field regardless of what a caller sends (including clamping `p_quantity` to 1–100 server-side, so a bypassed client can never request zero, a negative count, or an unbounded number of rows), and the client can never supply `status`, `owner_user_id`, or any reservation/consumption field — the insert's column list has no such client-supplied values, only the server's own `v_uid` and the already-validated wine/bottle fields. Each created row is independently governed by the exact same reserve/return/consume RPCs as any other cellar bottle — nothing about creating several rows at once changes their individual authorization story afterward.
 
+## Migrating for Seen Host Controls
+
+Extends seen tasting mode (see README "Tasting modes" — "Seen Host Controls") — requires the "Migrating for seen tasting mode" section above already in place. Re-running the full `supabase/schema.sql` brings an existing project up to date; every statement below is additive and safe to re-run.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+1. **New nullable column**: `alter table wines add column if not exists ratings_revealed_at timestamptz`. Every existing bottle (of any tasting mode) reads as `null` — no backfill, and full_blind/course_reveal bottles never have this column touched by any function. Deliberately separate from the existing `revealed_at` (course_reveal's identity-reveal timestamp): in seen mode the wine's identity is never hidden in the first place, so this column only ever gates the rating *aggregate*.
+2. **New `reveal_seen_ratings(p_public_id, p_host_token, p_wine_id)`** — host-only. Validates the host token, that the session is `seen` and `collecting`, and that the bottle belongs to that session, then sets `ratings_revealed_at = coalesce(ratings_revealed_at, now())` — idempotent, so a retried request never errors or produces a different timestamp. Returns `{wineId, ratingsRevealedAt, ratedCount, eligibleCount, groupRating}`, computed fresh from `wine_guesses` on every call (never a stored/cached average). No sequential or "must be the active bottle" constraint, unlike course_reveal's `reveal_bottle` — any bottle can be revealed in any order, any number of eligible participants rated or not.
+3. **`upsert_seen_rating` gains a per-bottle lock**: fetches the wine row and rejects (`ratings_already_revealed`) if `ratings_revealed_at is not null` for that specific bottle, before writing anything. Every other, still-unrevealed bottle keeps its existing free-to-revise behaviour. This is unrelated to (and does not reuse) course_reveal's `lock_wine_guess`.
+4. **`get_host_session`'s `wines` array gains a nested `seen` object, seen-mode sessions only**: `producer`/`wineCuvee`/`vintage`/`country`/`region`/`appellation` (the wine identity Host Controls now displays), plus `ratingsRevealedAt`/`ratedCount`/`eligibleCount`/`groupRating`. `eligibleCount` is every guest in the session — one consistent denominator for every bottle. `groupRating` is only ever computed once `ratingsRevealedAt` is set; a host can never see a preview of an unrevealed average. full_blind/course_reveal wines are returned exactly as before this migration — no `seen` key at all, not merely a null one, so the response shape itself proves mode isolation.
+5. **`get_seen_tasting_state`'s per-bottle object gains `ratingsRevealedAt`/`groupRating`** — participant-facing, computed the same way, null for every bottle the host hasn't revealed. Never a `ratedCount`/`eligibleCount` here (that stays host-only) and never any other participant's individual rating.
+6. **Grant**: `grant execute on function reveal_seen_ratings(uuid, text, uuid) to anon, authenticated` — same anon/authenticated pairing every other host/guest-token RPC in this file already uses (the token argument is the real authorization check, not the calling role).
+
+### 2. Verification queries
+
+```sql
+-- ratings_revealed_at exists and defaults to null for every existing bottle
+select column_name, data_type, is_nullable
+from information_schema.columns
+where table_name = 'wines' and column_name = 'ratings_revealed_at';
+
+-- after revealing one bottle's ratings in the app, confirm only that bottle changed
+select id, anonymous_code, ratings_revealed_at
+from wines
+where session_id = '<a seen session id>'
+order by tasting_order;
+```
+
+### RLS and privacy summary
+
+No RLS policy changed. `wines`' existing narrow anon/authenticated column grant (`id, session_id, bottle_number, anonymous_code, created_at`) deliberately does **not** include `ratings_revealed_at` — it's reachable only through `reveal_seen_ratings`/`get_host_session`/`get_seen_tasting_state`, never a direct table read. `wine_guesses` (where every rating actually lives) keeps its existing posture unchanged: no anon/authenticated SELECT at all, and it is still excluded from the `supabase_realtime` publication — a rating submission or reveal is picked up by the host and participant UIs via their existing poll-and-refetch-through-a-secure-RPC pattern (see `HostControlClient`'s `SEEN_PROGRESS_POLL_MS` and the seen participant pages' `SEEN_LIST_POLL_MS`), never by broadcasting raw rating rows. `wines` itself is already realtime-published in full (a pre-existing, unrelated characteristic of this schema — see the comment above the `alter publication` block) — a `ratings_revealed_at` update rides along on that same existing broadcast, but since it's just a timestamp (never a rating value or a new identity field), this adds no new sensitive exposure beyond what a Seen session already discloses to its own participants.
+
+## Migrating for Cellar deletion eligibility
+
+Extends Personal Cellar v1 (see README "Personal Cellar" — "Deleting a bottle") — requires the "Migrating for Personal Cellar v1" section above already in place. No column or RLS-policy change at all — this adds exactly one new RPC. Re-running the full `supabase/schema.sql` brings an existing project up to date; the statement below is additive and safe to re-run.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+1. **New `delete_cellar_bottle(p_cellar_bottle_id uuid) returns void`** — owner-only. Permanently deletes a `cellar_bottles` row via a single conditional `delete ... where id = p_cellar_bottle_id and owner_user_id = auth.uid() and status = 'available'` — the conditional delete *is* the enforcement, not a separate pre-check followed by a delete, so it's safe even against a concurrent reservation or consumption racing the same call.
+2. **Distinguishing rejection reasons, scoped to the caller's own bottle only**: if nothing was deleted, a second `select status ... where id = ... and owner_user_id = auth.uid()` (still scoped to the caller's own rows) determines why — `cellar_bottle_reserved` or `cellar_bottle_consumed` if the bottle is the caller's own but in one of those states, otherwise the same generic `cellar_bottle_not_found` tag `update_cellar_bottle` already uses for "missing, already deleted, or owned by someone else." A caller can never use the response to determine whether some other user's bottle exists.
+3. **Grant**: `grant execute on function public.delete_cellar_bottle(uuid) to authenticated` — like every other cellar RPC, `auth.uid()` being required to succeed at all means granting to `anon` would only ever let it raise `not_authenticated`.
+4. **No migration was added to permit deleting a linked Reserved/Consumed bottle** — there is no unlink, cascade, or FK change here at all. The existing `return_cellar_bottle_to_available` flow (see above) remains the only path back to `available` for a Reserved bottle, and a Consumed bottle has no path back to `available` at all.
+
+### 2. Verification queries
+
+```sql
+-- delete_cellar_bottle exists with the expected single-uuid signature
+select routine_name, data_type from information_schema.parameters
+where specific_name = (
+  select specific_name from information_schema.routines
+  where routine_name = 'delete_cellar_bottle'
+) order by ordinal_position;
+
+-- confirm a Reserved or Consumed bottle of your own truly cannot be deleted
+-- (run signed in as its owner; expect an error, and the row still present after)
+select delete_cellar_bottle('<a reserved or consumed cellar_bottle_id you own>');
+select id, status from cellar_bottles where id = '<same id>';
+```
+
+### RLS and privacy summary
+
+No RLS policy changed — `cellar_bottles` keeps its existing "no insert/update/delete policy at all" posture; `delete_cellar_bottle` is a `SECURITY DEFINER` function, exactly like every other cellar mutation, so it can act on the table past that RLS at all. Nothing about the *existence* of Reserved/Consumed bottles is exposed any more broadly than before — the reserved/consumed-specific error messages are only ever computed from a row already scoped to `owner_user_id = auth.uid()`, so this migration adds no new way for one user to learn anything about another user's cellar.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

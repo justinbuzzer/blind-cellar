@@ -97,14 +97,40 @@ export interface RevealedWineGuessRow {
 // Shapes returned by the RPC functions (camelCase jsonb, see supabase/schema.sql).
 
 /** Anonymous-only bottle info the host control page gets — no answer-key fields. */
+/**
+ * Seen mode only — wine identity plus rating-status/reveal fields for Host
+ * Controls (see README "Seen Host Controls"). Present only when the
+ * session's tastingMode is 'seen'; absent (not merely null) for every other
+ * mode, so the DTO shape itself proves mode isolation rather than relying on
+ * UI code to hide it.
+ */
+export interface HostSeenBottleInfo {
+  producer: string;
+  wineCuvee: string;
+  vintage: string;
+  country: string;
+  region: string;
+  appellation: string | null;
+  /** Null until the host reveals this specific bottle's group rating. */
+  ratingsRevealedAt: string | null;
+  /** Eligible participants with a valid submitted rating for this bottle. */
+  ratedCount: number;
+  /** Distinct eligible participants for this session — same denominator for every bottle. */
+  eligibleCount: number;
+  /** Null until ratingsRevealedAt is set; never a preview of an unrevealed average. */
+  groupRating: number | null;
+}
+
 export interface HostBottleDTO {
   id: string;
   bottleNumber: number;
   anonymousCode: string;
   wineStyle: WineStyle;
   tastingOrder: number;
-  /** course_reveal only — always null for full_blind bottles. */
+  /** course_reveal only — always null for full_blind bottles and seen bottles. */
   revealedAt: string | null;
+  /** Seen mode only — see HostSeenBottleInfo. Undefined for full_blind/course_reveal. */
+  seen?: HostSeenBottleInfo;
 }
 
 export interface HostGuestDTO {
@@ -130,6 +156,15 @@ export interface HostSeenProgressDTO {
   totalParticipants: number;
   ratingsSubmitted: number;
   totalPossibleRatings: number;
+}
+
+/** Response from reveal_seen_ratings — see README "Seen Host Controls". */
+export interface RevealSeenRatingsResponse {
+  wineId: string;
+  ratingsRevealedAt: string;
+  ratedCount: number;
+  eligibleCount: number;
+  groupRating: number | null;
 }
 
 export interface HostSessionResponse {
@@ -345,6 +380,10 @@ export interface SeenBottleDTO {
   myRating: number | null;
   myConfidence: Confidence | null;
   myNote: string | null;
+  /** Null until the host reveals this specific bottle's group rating — see README "Seen Host Controls". */
+  ratingsRevealedAt: string | null;
+  /** Null until ratingsRevealedAt is set. Never exposes other participants' individual ratings or a rated/eligible count. */
+  groupRating: number | null;
 }
 
 export interface SeenTastingStateResponse {
@@ -444,6 +483,7 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   guess_already_locked: "Your guess for this bottle is already locked in.",
   bottle_not_revealed: "That bottle hasn't been revealed yet.",
   rating_required: "A rating is required.",
+  ratings_already_revealed: "This wine's group rating has been revealed, so ratings for it are now locked.",
 
   // Personal Cellar (see README "Personal Cellar") — cellar_bottle_unavailable
   // deliberately covers every "can't use this bottle" case (not found, not
@@ -465,6 +505,12 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   bottle_format_detail_too_long: "That bottle format detail is too long — please shorten it.",
   storage_location_too_long: "That storage location is too long — please shorten it.",
   personal_note_too_long: "That note is too long — please shorten it.",
+
+  // Cellar deletion eligibility (see README "Personal Cellar" — "Deleting a
+  // bottle") — delete_cellar_bottle only ever raises one of these three
+  // tags; the first two use the spec's exact required copy verbatim.
+  cellar_bottle_reserved: "This bottle cannot be deleted while it is reserved.",
+  cellar_bottle_consumed: "Consumed bottles remain part of your cellar record.",
 };
 
 /** Turns a Supabase/Postgres error into a friendly, pre-written message when we recognize it. */

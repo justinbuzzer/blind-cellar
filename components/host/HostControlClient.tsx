@@ -11,19 +11,21 @@ import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { StatusChip } from "@/components/StatusChip";
 import { ImageBand } from "@/components/ImageBand";
 import { TastingOrderList } from "@/components/host/TastingOrderList";
+import { SeenHostBottleRow } from "@/components/host/SeenHostBottleRow";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { ArchiveLink } from "@/components/navigation/ArchiveLink";
 import { AccountNav } from "@/components/navigation/AccountNav";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { hostControlImage } from "@/lib/appImages";
 import { WINE_STYLE_LABELS } from "@/types/tasting";
+import { formatSeenRatingStatus } from "@/lib/seenHostControls";
 import {
   friendlyRpcError,
   HostActiveBottleDTO,
   HostBottleDTO,
   HostGuestDTO,
-  HostSeenProgressDTO,
   HostSessionResponse,
+  RevealSeenRatingsResponse,
 } from "@/lib/supabase/types";
 import {
   SessionStatus,
@@ -71,15 +73,14 @@ export function HostControlClient({
   const [activeBottle, setActiveBottle] = useState<HostActiveBottleDTO | null>(
     initialData.activeBottle
   );
-  const [seenProgress, setSeenProgress] = useState<HostSeenProgressDTO | null>(
-    initialData.seenProgress
-  );
   const [showRevealConfirm, setShowRevealConfirm] = useState(false);
   const [showStartConfirm, setShowStartConfirm] = useState(false);
   const [showRevealBottleConfirm, setShowRevealBottleConfirm] = useState(false);
   const [showEndSeenConfirm, setShowEndSeenConfirm] = useState(false);
+  const [confirmingSeenWineId, setConfirmingSeenWineId] = useState<string | null>(null);
   const [revealing, setRevealing] = useState(false);
   const [revealingBottle, setRevealingBottle] = useState(false);
+  const [revealingSeenRatings, setRevealingSeenRatings] = useState(false);
   const [endingSeen, setEndingSeen] = useState(false);
   const [starting, setStarting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -92,6 +93,7 @@ export function HostControlClient({
     () => guests.filter((g) => g.completedAt !== null).length,
     [guests]
   );
+  const confirmingSeenWine = wines.find((w) => w.id === confirmingSeenWineId) ?? null;
 
   useEffect(() => {
     setJoinUrl(`${window.location.origin}/join/${publicId}`);
@@ -144,7 +146,6 @@ export function HostControlClient({
         const data: HostSessionResponse = await response.json();
         setWines(data.wines);
         setActiveBottle(data.activeBottle);
-        setSeenProgress(data.seenProgress);
       } catch {
         // Realtime will retry on the next change; a transient fetch failure
         // here isn't worth surfacing as an error banner.
@@ -227,11 +228,14 @@ export function HostControlClient({
     };
   }, [publicId, hostToken, tastingMode, status]);
 
-  // Polling fallback for seen mode's aggregate rating progress — same
-  // reasoning as the course_reveal poll above: wine_guesses changes aren't
-  // realtime-broadcast at all, and the `wines` table (which the realtime
-  // effect above does listen to) never changes during a seen tasting's
-  // collecting stage, since registration is already locked by then.
+  // Polling fallback for seen mode's aggregate rating progress, and also the
+  // per-bottle rating counts/group ratings shown in the Seen Host Controls
+  // list (see README "Seen Host Controls") — same reasoning as the
+  // course_reveal poll above: wine_guesses changes aren't realtime-broadcast
+  // at all, and a rating submission never touches the `wines` table itself
+  // (which the realtime effect above does listen to), so this is the only
+  // way the host's per-bottle "N of M rated" counts and revealed group
+  // ratings stay current while participants are actively rating.
   useEffect(() => {
     if (tastingMode !== "seen" || status !== "collecting") return;
 
@@ -245,7 +249,9 @@ export function HostControlClient({
         });
         if (!response.ok || cancelled) return;
         const data: HostSessionResponse = await response.json();
-        if (!cancelled) setSeenProgress(data.seenProgress);
+        if (!cancelled) {
+          setWines(data.wines);
+        }
       } catch {
         // Next poll will retry.
       }
@@ -298,18 +304,6 @@ export function HostControlClient({
         }
       }
 
-      // Same "collecting" transition point for seen mode's progress card — no
-      // refetch needed here, unlike course_reveal above, since a
-      // just-started tasting's progress is trivially "0 of everything" and
-      // computable locally from state already on hand.
-      if (tastingMode === "seen") {
-        setSeenProgress({
-          ratersCount: 0,
-          totalParticipants: guests.length,
-          ratingsSubmitted: 0,
-          totalPossibleRatings: wines.length * guests.length,
-        });
-      }
     } catch {
       setActionError(friendlyRpcError(null));
       setStarting(false);
@@ -369,6 +363,46 @@ export function HostControlClient({
     } catch {
       setActionError(friendlyRpcError(null));
       setRevealingBottle(false);
+    }
+  }
+
+  async function handleRevealSeenRatings(wineId: string) {
+    setRevealingSeenRatings(true);
+    setActionError(null);
+    try {
+      const response = await fetch("/api/host/reveal-seen-ratings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicId, hostToken, wineId }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setActionError(data.error ?? "Couldn't reveal ratings for that wine.");
+        setRevealingSeenRatings(false);
+        return;
+      }
+      const revealed = data as RevealSeenRatingsResponse;
+      setWines((prev) =>
+        prev.map((w) =>
+          w.id === wineId && w.seen
+            ? {
+                ...w,
+                seen: {
+                  ...w.seen,
+                  ratingsRevealedAt: revealed.ratingsRevealedAt,
+                  ratedCount: revealed.ratedCount,
+                  eligibleCount: revealed.eligibleCount,
+                  groupRating: revealed.groupRating,
+                },
+              }
+            : w
+        )
+      );
+      setConfirmingSeenWineId(null);
+      setRevealingSeenRatings(false);
+    } catch {
+      setActionError(friendlyRpcError(null));
+      setRevealingSeenRatings(false);
     }
   }
 
@@ -534,30 +568,32 @@ export function HostControlClient({
 
       {status === "collecting" && (
         <>
-          <div className="flex flex-col gap-2">
-            <SectionEyebrow>The table ({wines.length})</SectionEyebrow>
-            <Card className="p-0">
-              <ol className="divide-y divide-cellar-border">
-                {wines.map((wine) => (
-                  <li key={wine.id} className="flex items-center gap-3 px-4 py-3">
-                    <span
-                      aria-hidden="true"
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cellar-maroon/10 text-sm font-semibold text-cellar-maroon"
-                    >
-                      {wine.tastingOrder}
-                    </span>
-                    <span className="text-sm font-medium text-cellar-text">{wine.anonymousCode}</span>
-                    <span className="ml-auto rounded-full border border-cellar-border px-2 py-0.5 text-xs text-cellar-muted">
-                      {WINE_STYLE_LABELS[wine.wineStyle]}
-                    </span>
-                  </li>
-                ))}
-              </ol>
-            </Card>
-            <p className="text-xs text-cellar-muted">
-              Registration is closed and bottle numbers are final.
-            </p>
-          </div>
+          {tastingMode !== "seen" && (
+            <div className="flex flex-col gap-2">
+              <SectionEyebrow>The table ({wines.length})</SectionEyebrow>
+              <Card className="p-0">
+                <ol className="divide-y divide-cellar-border">
+                  {wines.map((wine) => (
+                    <li key={wine.id} className="flex items-center gap-3 px-4 py-3">
+                      <span
+                        aria-hidden="true"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cellar-maroon/10 text-sm font-semibold text-cellar-maroon"
+                      >
+                        {wine.tastingOrder}
+                      </span>
+                      <span className="text-sm font-medium text-cellar-text">{wine.anonymousCode}</span>
+                      <span className="ml-auto rounded-full border border-cellar-border px-2 py-0.5 text-xs text-cellar-muted">
+                        {WINE_STYLE_LABELS[wine.wineStyle]}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              </Card>
+              <p className="text-xs text-cellar-muted">
+                Registration is closed and bottle numbers are final.
+              </p>
+            </div>
+          )}
 
           <Card className="flex flex-col gap-2">
             <SectionEyebrow>Participants ({guests.length})</SectionEyebrow>
@@ -655,24 +691,24 @@ export function HostControlClient({
 
           {tastingMode === "seen" && (
             <>
-              <Card className="flex flex-col gap-2">
-                <p className="text-sm text-cellar-muted">
-                  All bottles are visible. Guests can revise their ratings
-                  until you end the tasting.
-                </p>
-                {seenProgress && (
-                  <div className="grid grid-cols-2 gap-3 rounded-sm bg-cellar-bg p-3 text-center">
-                    <Stat
-                      label="Participants rated ≥1 bottle"
-                      value={`${seenProgress.ratersCount} of ${seenProgress.totalParticipants}`}
-                    />
-                    <Stat
-                      label="Ratings submitted"
-                      value={`${seenProgress.ratingsSubmitted} of ${seenProgress.totalPossibleRatings}`}
-                    />
-                  </div>
-                )}
-              </Card>
+              <p className="text-sm text-cellar-muted">
+                All bottles are visible. Guests can revise their ratings until
+                you end the tasting or you reveal a wine&rsquo;s group rating.
+              </p>
+              <div className="flex flex-col gap-2">
+                <SectionEyebrow>The table ({wines.length})</SectionEyebrow>
+                <Card className="p-0">
+                  <ol className="divide-y divide-cellar-border">
+                    {wines.map((wine) => (
+                      <SeenHostBottleRow
+                        key={wine.id}
+                        wine={wine}
+                        onRevealClick={setConfirmingSeenWineId}
+                      />
+                    ))}
+                  </ol>
+                </Card>
+              </div>
               <div className="flex flex-col gap-3 border-t border-cellar-border pt-5">
                 <SectionEyebrow>Host actions</SectionEyebrow>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -778,6 +814,33 @@ export function HostControlClient({
             </Button>
             <Button onClick={handleRevealBottle} disabled={revealingBottle}>
               {revealingBottle ? "Revealing…" : "Reveal bottle"}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {confirmingSeenWineId && confirmingSeenWine?.seen && (
+        <Modal
+          title="Reveal ratings for this wine?"
+          onClose={() => !revealingSeenRatings && setConfirmingSeenWineId(null)}
+        >
+          <p>Participants will be able to see the group rating for this wine.</p>
+          <p className="mt-2 text-cellar-muted">
+            {formatSeenRatingStatus(confirmingSeenWine.seen.ratedCount, confirmingSeenWine.seen.eligibleCount)}
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setConfirmingSeenWineId(null)}
+              disabled={revealingSeenRatings}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => handleRevealSeenRatings(confirmingSeenWineId)}
+              disabled={revealingSeenRatings}
+            >
+              {revealingSeenRatings ? "Revealing…" : "Reveal ratings"}
             </Button>
           </div>
         </Modal>

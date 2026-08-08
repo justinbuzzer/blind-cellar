@@ -15,7 +15,11 @@ import { ArchiveTabs } from "@/components/archive/ArchiveTabs";
 import { CellarEntryRow, CellarSessionSummary } from "@/components/cellar/CellarEntryRow";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useAuthUser } from "@/lib/supabase/useAuthUser";
-import { markCellarBottleConsumed, returnCellarBottleToAvailable } from "@/lib/supabase/cellarActions";
+import {
+  deleteCellarBottle,
+  markCellarBottleConsumed,
+  returnCellarBottleToAvailable,
+} from "@/lib/supabase/cellarActions";
 import { CellarBottleRow, friendlyRpcError } from "@/lib/supabase/types";
 import { CellarBottleStatus } from "@/types/tasting";
 
@@ -50,6 +54,11 @@ export default function CellarPage() {
   const [consumeTarget, setConsumeTarget] = useState<CellarBottleRow | null>(null);
   const [consuming, setConsuming] = useState(false);
   const [consumeError, setConsumeError] = useState<string | null>(null);
+
+  const [deleteTarget, setDeleteTarget] = useState<CellarBottleRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletedJustNow, setDeletedJustNow] = useState(false);
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -134,6 +143,13 @@ export default function CellarPage() {
     if (tabInitialized && user) refresh();
   }, [tabInitialized, user, refresh]);
 
+  // Transient — like addedCount above, but reset on every tab switch since
+  // a delete only ever happens from the Available tab (see README "Personal
+  // Cellar" — "Deleting a bottle").
+  useEffect(() => {
+    setDeletedJustNow(false);
+  }, [tab]);
+
   async function handleReturn() {
     if (!returnTarget) return;
     const supabase = getSupabaseBrowserClient();
@@ -167,6 +183,25 @@ export default function CellarPage() {
       return;
     }
     setConsumeTarget(null);
+    await refresh();
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+
+    setDeleting(true);
+    setDeleteError(null);
+    const { error } = await deleteCellarBottle(supabase, deleteTarget.id);
+    setDeleting(false);
+
+    if (error) {
+      setDeleteError(friendlyRpcError(error));
+      return;
+    }
+    setDeleteTarget(null);
+    setDeletedJustNow(true);
     await refresh();
   }
 
@@ -211,6 +246,11 @@ export default function CellarPage() {
             {addedCount === 1
               ? "Bottle added to your cellar."
               : `${addedCount} bottles added to your cellar.`}
+          </p>
+        )}
+        {deletedJustNow && (
+          <p role="status" aria-live="polite" className="mt-3 text-sm font-medium text-cellar-success">
+            Bottle deleted from your cellar.
           </p>
         )}
       </div>
@@ -272,6 +312,14 @@ export default function CellarPage() {
                 row={row}
                 session={sessionFor(row)}
                 onEdit={tab === "available" ? () => router.push(`/cellar/${row.id}/edit`) : undefined}
+                onDelete={
+                  tab === "available"
+                    ? () => {
+                        setDeleteError(null);
+                        setDeleteTarget(row);
+                      }
+                    : undefined
+                }
                 onReturn={
                   tab === "reserved"
                     ? () => {
@@ -327,6 +375,25 @@ export default function CellarPage() {
             </Button>
             <Button onClick={handleConsume} disabled={consuming}>
               {consuming ? "Saving…" : "Mark as consumed"}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {deleteTarget && (
+        <Modal title="Delete this bottle?" onClose={() => !deleting && setDeleteTarget(null)}>
+          <p>This will permanently remove it from your cellar.</p>
+          {deleteError && (
+            <p role="alert" className="mt-2 text-sm text-cellar-danger">
+              {deleteError}
+            </p>
+          )}
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={handleDelete} disabled={deleting}>
+              {deleting ? "Deleting…" : "Delete bottle"}
             </Button>
           </div>
         </Modal>

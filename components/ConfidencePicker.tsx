@@ -3,6 +3,7 @@ import { Confidence, CONFIDENCE_LEVELS } from "@/types/tasting";
 interface ConfidencePickerProps {
   value: Confidence;
   onChange: (value: Confidence) => void;
+  disabled?: boolean;
 }
 
 const LABELS: Record<Confidence, string> = {
@@ -11,9 +12,9 @@ const LABELS: Record<Confidence, string> = {
   high: "High",
 };
 
-export function ConfidencePicker({ value, onChange }: ConfidencePickerProps) {
+export function ConfidencePicker({ value, onChange, disabled }: ConfidencePickerProps) {
   return (
-    <fieldset>
+    <fieldset disabled={disabled}>
       <legend className="text-sm font-medium text-cellar-text">Confidence</legend>
       <div className="mt-2 grid grid-cols-3 gap-2" role="radiogroup">
         {CONFIDENCE_LEVELS.map((level) => {
@@ -25,7 +26,7 @@ export function ConfidencePicker({ value, onChange }: ConfidencePickerProps) {
               role="radio"
               aria-checked={selected}
               onClick={() => onChange(level)}
-              className={`rounded-sm border px-3 py-2 text-sm font-medium transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-cellar-gold ${
+              className={`rounded-sm border px-3 py-2 text-sm font-medium transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-cellar-gold disabled:cursor-not-allowed disabled:opacity-50 ${
                 selected
                   ? "border-cellar-maroon bg-cellar-maroon text-white"
                   : "border-cellar-border bg-white text-cellar-text hover:border-cellar-maroon/40"
