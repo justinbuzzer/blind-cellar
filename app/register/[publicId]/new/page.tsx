@@ -32,6 +32,7 @@ const EMPTY_BOTTLE: BottleFormInput = {
   grapeBlend: "",
   selectedGrapes: [],
   otherGrapesText: "",
+  otherGrapeSelected: false,
   producer: "",
   wineName: "",
   vintage: "",

@@ -1,6 +1,6 @@
 import { SupabaseClient } from "@supabase/supabase-js";
 import { Confidence, WineGuess, WineIdentityInput } from "@/types/tasting";
-import { reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
+import { isCustomSingleGrape, reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
 import {
   ActiveBottleStateResponse,
   GuestSessionStateResponse,
@@ -248,6 +248,7 @@ export function bottleFormInputFromDto(bottle: MyBottleDTO): BottleFormInput {
     grapeBlend: bottle.grapeBlend,
     selectedGrapes,
     otherGrapesText,
+    otherGrapeSelected: isCustomSingleGrape(grapeBlendMode, bottle.grapeBlend),
     producer: bottle.producer,
     wineName: bottle.wineCuvee,
     vintage: bottle.vintage,

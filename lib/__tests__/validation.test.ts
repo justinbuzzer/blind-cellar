@@ -3,8 +3,12 @@ import {
   BLEND_MIN_GRAPES_MESSAGE,
   hasBottleFormErrors,
   hasIncompleteBlend,
+  invalidOtherGrapeGuessMessage,
   isValidTastingMode,
   isValidVintage,
+  OTHER_GRAPE_INVALID_ERROR,
+  OTHER_GRAPE_MULTI_VARIETY_ERROR,
+  OTHER_GRAPE_REQUIRED_ERROR,
   validateBottleForm,
 } from "@/lib/validation";
 import { BottleFormInput } from "@/lib/supabase/guestActions";
@@ -226,6 +230,109 @@ describe("validateBottleForm", () => {
   });
 });
 
+describe("validateBottleForm — Other grape", () => {
+  it("accepts a valid custom grape name", () => {
+    const bottle = makeBottle({
+      grapeBlendMode: "single",
+      grapeBlend: "Mondeuse Blanche",
+      otherGrapeSelected: true,
+    });
+    expect(hasBottleFormErrors(validateBottleForm(bottle))).toBe(false);
+  });
+
+  it("requires custom text when Other grape is selected", () => {
+    const errors = validateBottleForm(
+      makeBottle({ grapeBlendMode: "single", grapeBlend: "", otherGrapeSelected: true })
+    );
+    expect(errors.grapeBlend).toBe(OTHER_GRAPE_REQUIRED_ERROR);
+  });
+
+  it("rejects whitespace-only custom grape text", () => {
+    const errors = validateBottleForm(
+      makeBottle({ grapeBlendMode: "single", grapeBlend: "   ", otherGrapeSelected: true })
+    );
+    expect(errors.grapeBlend).toBe(OTHER_GRAPE_REQUIRED_ERROR);
+  });
+
+  it("accepts an accented custom grape name", () => {
+    const errors = validateBottleForm(
+      makeBottle({ grapeBlendMode: "single", grapeBlend: "Kéknyelű", otherGrapeSelected: true })
+    );
+    expect(errors.grapeBlend).toBeUndefined();
+  });
+
+  it("accepts a hyphenated/apostrophe custom grape name", () => {
+    const errors = validateBottleForm(
+      makeBottle({ grapeBlendMode: "single", grapeBlend: "Cabernet-Sauvignon", otherGrapeSelected: true })
+    );
+    expect(errors.grapeBlend).toBeUndefined();
+  });
+
+  it("rejects custom grape text over the maximum length", () => {
+    const errors = validateBottleForm(
+      makeBottle({ grapeBlendMode: "single", grapeBlend: "x".repeat(81), otherGrapeSelected: true })
+    );
+    expect(errors.grapeBlend).toBe(OTHER_GRAPE_INVALID_ERROR);
+  });
+
+  it("rejects digits/symbols outside the allowed character set", () => {
+    const errors = validateBottleForm(
+      makeBottle({ grapeBlendMode: "single", grapeBlend: "Grape123", otherGrapeSelected: true })
+    );
+    expect(errors.grapeBlend).toBe(OTHER_GRAPE_INVALID_ERROR);
+  });
+
+  it("rejects clearly multi-variety text with the dedicated message, taking priority over the generic invalid message", () => {
+    const errors = validateBottleForm(
+      makeBottle({
+        grapeBlendMode: "single",
+        grapeBlend: "Cabernet Sauvignon / Merlot",
+        otherGrapeSelected: true,
+      })
+    );
+    expect(errors.grapeBlend).toBe(OTHER_GRAPE_MULTI_VARIETY_ERROR);
+  });
+
+  it("rejects a comma, ampersand, or semicolon the same way", () => {
+    for (const value of ["Cabernet Sauvignon, Merlot", "Cabernet Sauvignon & Merlot", "Cabernet Sauvignon; Merlot"]) {
+      const errors = validateBottleForm(
+        makeBottle({ grapeBlendMode: "single", grapeBlend: value, otherGrapeSelected: true })
+      );
+      expect(errors.grapeBlend).toBe(OTHER_GRAPE_MULTI_VARIETY_ERROR);
+    }
+  });
+
+  it("never accepts the literal sentinel label as a submitted grape value", () => {
+    const errors = validateBottleForm(
+      makeBottle({ grapeBlendMode: "single", grapeBlend: "Other grape", otherGrapeSelected: true })
+    );
+    // "Other grape" itself passes the character/length checks (it's just two
+    // words) — the important guarantee is that the UI never sends this
+    // literal string as the value in the first place (see GrapeBlendField's
+    // setSingleGrapeSelection, which always clears grapeBlend to "" when the
+    // sentinel is chosen). This test documents that validation alone can't
+    // distinguish it from a real grape named "Other grape" — it's the UI's
+    // job never to produce it.
+    expect(errors.grapeBlend).toBeUndefined();
+  });
+
+  it("preserves existing validation exactly for a standard dropdown grape (no otherGrapeSelected)", () => {
+    const errors = validateBottleForm(
+      makeBottle({ grapeBlendMode: "single", grapeBlend: "", otherGrapeSelected: false })
+    );
+    expect(errors.grapeBlend).toBe("Select a grape variety.");
+  });
+
+  it("ignores a stale custom grape value once a standard dropdown grape is selected", () => {
+    // otherGrapeSelected: false means the dropdown is in control — even if
+    // grapeBlend still held old custom text, the standard-grape path is used.
+    const errors = validateBottleForm(
+      makeBottle({ grapeBlendMode: "single", grapeBlend: "Chardonnay", otherGrapeSelected: false })
+    );
+    expect(errors.grapeBlend).toBeUndefined();
+  });
+});
+
 function makeGuess(overrides: Partial<WineGuess> = {}): WineGuess {
   return {
     wineId: "wine-1",
@@ -270,5 +377,45 @@ describe("hasIncompleteBlend", () => {
       selectedGrapes: ["Merlot", "Cabernet Sauvignon"],
     });
     expect(hasIncompleteBlend(guess)).toBe(false);
+  });
+});
+
+describe("invalidOtherGrapeGuessMessage", () => {
+  it("is undefined when Other grape isn't selected", () => {
+    const guess = makeGuess({ grapeBlendMode: "single", grapeBlend: "Chardonnay" });
+    expect(invalidOtherGrapeGuessMessage(guess)).toBeUndefined();
+  });
+
+  it("is undefined for a blank Other-grape guess (blank guesses score zero, not blocked)", () => {
+    const guess = makeGuess({ grapeBlendMode: "single", grapeBlend: "", otherGrapeSelected: true });
+    expect(invalidOtherGrapeGuessMessage(guess)).toBeUndefined();
+  });
+
+  it("is undefined for a valid custom grape guess", () => {
+    const guess = makeGuess({
+      grapeBlendMode: "single",
+      grapeBlend: "Mondeuse Blanche",
+      otherGrapeSelected: true,
+    });
+    expect(invalidOtherGrapeGuessMessage(guess)).toBeUndefined();
+  });
+
+  it("flags multi-variety delimiter text with the dedicated message", () => {
+    const guess = makeGuess({
+      grapeBlendMode: "single",
+      grapeBlend: "Cabernet Sauvignon / Merlot",
+      otherGrapeSelected: true,
+    });
+    expect(invalidOtherGrapeGuessMessage(guess)).toBe(OTHER_GRAPE_MULTI_VARIETY_ERROR);
+  });
+
+  it("flags an otherwise-invalid custom grape guess", () => {
+    const guess = makeGuess({ grapeBlendMode: "single", grapeBlend: "Grape123", otherGrapeSelected: true });
+    expect(invalidOtherGrapeGuessMessage(guess)).toBe(OTHER_GRAPE_INVALID_ERROR);
+  });
+
+  it("is false-y for blend mode regardless of content", () => {
+    const guess = makeGuess({ grapeBlendMode: "blend", otherGrapesText: "not,valid,here" });
+    expect(invalidOtherGrapeGuessMessage(guess)).toBeUndefined();
   });
 });

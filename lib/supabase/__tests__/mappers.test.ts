@@ -1,6 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { buildCourseRevealSubmissions, buildRevealedBottleResult } from "@/lib/supabase/mappers";
-import { RevealedBottleResponse, RevealedWineGuessRow } from "@/lib/supabase/types";
+import {
+  buildCourseRevealSubmissions,
+  buildRevealedBottleResult,
+  mapGuestGuessDtoToWineGuess,
+} from "@/lib/supabase/mappers";
+import { GuestGuessDTO, RevealedBottleResponse, RevealedWineGuessRow } from "@/lib/supabase/types";
+
+function makeGuessDto(overrides: Partial<GuestGuessDTO> = {}): GuestGuessDTO {
+  return {
+    wineId: "wine-1",
+    countryGuess: "",
+    regionGuess: "",
+    appellationGuess: null,
+    grapeBlendMode: "single",
+    grapeBlendGuess: "",
+    selectedGrapes: [],
+    otherGrapesText: "",
+    producerGuess: "",
+    wineCuveeGuess: "",
+    vintageGuess: "",
+    rating: null,
+    confidence: "medium",
+    tastingNote: null,
+    ...overrides,
+  };
+}
 
 function makeGuessRow(overrides: Partial<RevealedWineGuessRow> = {}): RevealedWineGuessRow {
   return {
@@ -196,5 +220,25 @@ describe("buildCourseRevealSubmissions", () => {
     expect(submissions).toHaveLength(1);
     expect(submissions[0].guesses).toHaveLength(1);
     expect(submissions[0].guesses[0].wineId).toBe("wine-1");
+  });
+});
+
+describe("mapGuestGuessDtoToWineGuess — Other grape", () => {
+  it("restores the Other grape selector and custom text for an unrecognised single-variety draft", () => {
+    const guess = mapGuestGuessDtoToWineGuess(makeGuessDto({ grapeBlendGuess: "Mondeuse Blanche" }));
+    expect(guess.otherGrapeSelected).toBe(true);
+    expect(guess.grapeBlend).toBe("Mondeuse Blanche");
+  });
+
+  it("leaves otherGrapeSelected false for a curated single-variety draft", () => {
+    const guess = mapGuestGuessDtoToWineGuess(makeGuessDto({ grapeBlendGuess: "Chardonnay" }));
+    expect(guess.otherGrapeSelected).toBe(false);
+  });
+
+  it("leaves otherGrapeSelected false for a blend draft", () => {
+    const guess = mapGuestGuessDtoToWineGuess(
+      makeGuessDto({ grapeBlendMode: "blend", grapeBlendGuess: "Cabernet Sauvignon / Merlot" })
+    );
+    expect(guess.otherGrapeSelected).toBe(false);
   });
 });

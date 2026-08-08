@@ -4,9 +4,13 @@ import {
   canonicalizeGrapeToken,
   combineBlendComponents,
   COUNTRIES,
+  hasMultiVarietyDelimiter,
+  isCustomSingleGrape,
   isKnownCountry,
   isKnownGrapeVariety,
+  isValidOtherGrapeName,
   isValidRegionForCountry,
+  MAX_OTHER_GRAPE_LENGTH,
   parseOtherGrapesText,
   reconstructBlendComponentsFromText,
   regionOptionsForCountry,
@@ -258,5 +262,76 @@ describe("reconstructBlendComponentsFromText", () => {
     const result = reconstructBlendComponentsFromText("A field blend of old, unnamed local varieties");
     expect(result.selectedGrapes).toEqual([]);
     expect(result.otherGrapesText).toContain("A field blend of old");
+  });
+});
+
+describe("hasMultiVarietyDelimiter", () => {
+  it("detects a comma, slash, ampersand, or semicolon", () => {
+    expect(hasMultiVarietyDelimiter("Cabernet Sauvignon, Merlot")).toBe(true);
+    expect(hasMultiVarietyDelimiter("Cabernet Sauvignon/Merlot")).toBe(true);
+    expect(hasMultiVarietyDelimiter("Cabernet Sauvignon & Merlot")).toBe(true);
+    expect(hasMultiVarietyDelimiter("Cabernet Sauvignon; Merlot")).toBe(true);
+  });
+
+  it("is false for a plain single grape name, including one with a hyphen", () => {
+    expect(hasMultiVarietyDelimiter("Mondeuse Blanche")).toBe(false);
+    expect(hasMultiVarietyDelimiter("Cabernet-Sauvignon")).toBe(false);
+  });
+});
+
+describe("isValidOtherGrapeName", () => {
+  it("accepts a plausible custom grape name", () => {
+    expect(isValidOtherGrapeName("Mondeuse Blanche")).toBe(true);
+  });
+
+  it("accepts accented characters", () => {
+    expect(isValidOtherGrapeName("Kéknyelű")).toBe(true);
+  });
+
+  it("accepts hyphens and apostrophes", () => {
+    expect(isValidOtherGrapeName("Cabernet-Sauvignon")).toBe(true);
+    expect(isValidOtherGrapeName("O'Malley Grape")).toBe(true);
+  });
+
+  it("rejects a blank or whitespace-only value", () => {
+    expect(isValidOtherGrapeName("")).toBe(false);
+    expect(isValidOtherGrapeName("   ")).toBe(false);
+  });
+
+  it("rejects a value over the maximum length", () => {
+    expect(isValidOtherGrapeName("x".repeat(MAX_OTHER_GRAPE_LENGTH))).toBe(true);
+    expect(isValidOtherGrapeName("x".repeat(MAX_OTHER_GRAPE_LENGTH + 1))).toBe(false);
+  });
+
+  it("rejects digits and other non-letter characters", () => {
+    expect(isValidOtherGrapeName("Grape123")).toBe(false);
+    expect(isValidOtherGrapeName("Grape!")).toBe(false);
+  });
+});
+
+describe("isCustomSingleGrape", () => {
+  it("is false for a curated grape in single mode", () => {
+    expect(isCustomSingleGrape("single", "Chardonnay")).toBe(false);
+  });
+
+  it("is false for a known alias in single mode", () => {
+    expect(isCustomSingleGrape("single", "Shiraz")).toBe(false);
+  });
+
+  it("is true for an unrecognised grape name in single mode", () => {
+    expect(isCustomSingleGrape("single", "Mondeuse Blanche")).toBe(true);
+  });
+
+  it("is false for a blank value", () => {
+    expect(isCustomSingleGrape("single", "")).toBe(false);
+    expect(isCustomSingleGrape("single", "   ")).toBe(false);
+  });
+
+  it("is false in blend mode regardless of content", () => {
+    expect(isCustomSingleGrape("blend", "Mondeuse Blanche")).toBe(false);
+  });
+
+  it("is false when mode is unset", () => {
+    expect(isCustomSingleGrape("", "Mondeuse Blanche")).toBe(false);
   });
 });

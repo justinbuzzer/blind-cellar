@@ -123,6 +123,7 @@ export function WineIdentityFields({ value, errors, onChange }: WineIdentityFiel
             grapeBlend: value.grapeBlend,
             selectedGrapes: value.selectedGrapes,
             otherGrapesText: value.otherGrapesText,
+            otherGrapeSelected: value.otherGrapeSelected,
           }}
           onChange={setGrapeBlend}
           error={errors.grapeBlendMode ?? errors.grapeBlend}

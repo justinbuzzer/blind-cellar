@@ -1,5 +1,9 @@
 import { GrapeBlendMode } from "@/types/tasting";
-import { combineBlendComponents, GRAPE_VARIETY_OPTIONS } from "@/lib/wineReferenceData";
+import {
+  combineBlendComponents,
+  GRAPE_VARIETY_OPTIONS,
+  MAX_OTHER_GRAPE_LENGTH,
+} from "@/lib/wineReferenceData";
 import { SegmentedControl } from "./SegmentedControl";
 import { SelectField } from "./SelectField";
 import { TextField } from "./TextField";
@@ -11,6 +15,8 @@ export interface GrapeBlendFormValue {
   grapeBlend: string;
   selectedGrapes: string[];
   otherGrapesText: string;
+  /** Single mode only — see the identically-named field on WineIdentityInput/WineGuess. */
+  otherGrapeSelected?: boolean;
 }
 
 interface GrapeBlendFieldProps {
@@ -19,15 +25,24 @@ interface GrapeBlendFieldProps {
   error?: string;
 }
 
+/** Dropdown sentinel for "Other grape" — never persisted; see setSingleGrapeSelection. */
+const OTHER_GRAPE_VALUE = "__other_grape__";
+const OTHER_GRAPE_HINT = "Enter the grape variety.";
+const SINGLE_GRAPE_OPTIONS = [...GRAPE_VARIETY_OPTIONS, { value: OTHER_GRAPE_VALUE, label: "Other grape" }];
+
 /**
- * Single variety / Blend mode selector. Single variety is unchanged: a
- * curated dropdown storing one canonical grape name in `grapeBlend`. Blend
- * mode uses a multi-select of the same curated list plus an optional
- * free-text field for varieties not on it — `grapeBlend` is *derived* from
- * those two (via `combineBlendComponents`) into a canonical, alphabetised,
- * "/"-joined display/storage string any time either changes, so the
- * existing blend scoring (which re-tokenises that same string) needs no
- * changes to understand blends built with this picker.
+ * Single variety / Blend mode selector. Single variety is a curated
+ * dropdown storing one canonical grape name in `grapeBlend`, plus a final
+ * "Other grape" option that reveals a free-text input for a variety not on
+ * the list — the typed name is stored directly in `grapeBlend` (never the
+ * literal "Other grape" label); `otherGrapeSelected` is UI-only state that
+ * decides which control is shown and never affects scoring or storage. Blend
+ * mode is unrelated and unchanged: a multi-select of the same curated list
+ * plus an optional free-text field for varieties not on it — `grapeBlend` is
+ * *derived* from those two (via `combineBlendComponents`) into a canonical,
+ * alphabetised, "/"-joined display/storage string any time either changes,
+ * so the existing blend scoring (which re-tokenises that same string) needs
+ * no changes to understand blends built with this picker.
  */
 export function GrapeBlendField({ value, onChange, error }: GrapeBlendFieldProps) {
   const mode = value.grapeBlendMode || "single";
@@ -38,11 +53,21 @@ export function GrapeBlendField({ value, onChange, error }: GrapeBlendFieldProps
       grapeBlend: "",
       selectedGrapes: [],
       otherGrapesText: "",
+      otherGrapeSelected: false,
     });
   }
 
-  function setSingleGrape(next: string) {
-    onChange({ ...value, grapeBlend: next });
+  /** Dropdown onChange for single-variety mode: either a curated grape, or the "Other grape" sentinel. */
+  function setSingleGrapeSelection(selected: string) {
+    if (selected === OTHER_GRAPE_VALUE) {
+      onChange({ ...value, grapeBlend: "", otherGrapeSelected: true });
+    } else {
+      onChange({ ...value, grapeBlend: selected, otherGrapeSelected: false });
+    }
+  }
+
+  function setOtherGrapeText(next: string) {
+    onChange({ ...value, grapeBlend: next, otherGrapeSelected: true });
   }
 
   function setSelectedGrapes(next: string[]) {
@@ -73,14 +98,26 @@ export function GrapeBlendField({ value, onChange, error }: GrapeBlendFieldProps
         onChange={selectMode}
       />
       {mode === "single" ? (
-        <SelectField
-          label="Grape variety"
-          value={value.grapeBlend}
-          onChange={(e) => setSingleGrape(e.target.value)}
-          placeholder="Select grape variety"
-          options={GRAPE_VARIETY_OPTIONS}
-          error={error}
-        />
+        <div className="flex flex-col gap-2">
+          <SelectField
+            label="Grape variety"
+            value={value.otherGrapeSelected ? OTHER_GRAPE_VALUE : value.grapeBlend}
+            onChange={(e) => setSingleGrapeSelection(e.target.value)}
+            placeholder="Select grape variety"
+            options={SINGLE_GRAPE_OPTIONS}
+            error={value.otherGrapeSelected ? undefined : error}
+          />
+          {value.otherGrapeSelected && (
+            <TextField
+              label="Grape variety"
+              hint={OTHER_GRAPE_HINT}
+              value={value.grapeBlend}
+              maxLength={MAX_OTHER_GRAPE_LENGTH}
+              onChange={(e) => setOtherGrapeText(e.target.value)}
+              error={error}
+            />
+          )}
+        </div>
       ) : (
         <div className="flex flex-col gap-3">
           <GrapeMultiSelect

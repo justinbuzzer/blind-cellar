@@ -22,7 +22,7 @@ import {
 import { friendlyRpcError, ActiveBottleDTO } from "@/lib/supabase/types";
 import { mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
 import { emptyWineGuess } from "@/lib/guess";
-import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend } from "@/lib/validation";
+import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend, invalidOtherGrapeGuessMessage } from "@/lib/validation";
 import { getGuestToken } from "@/lib/deviceStorage";
 import { waitingToRevealImage } from "@/lib/appImages";
 import { WineGuess } from "@/types/tasting";
@@ -54,6 +54,7 @@ export default function ActiveBottlePage() {
   const [guess, setGuess] = useState<WineGuess | null>(null);
   const [ratingError, setRatingError] = useState<string | null>(null);
   const [blendError, setBlendError] = useState<string | null>(null);
+  const [otherGrapeError, setOtherGrapeError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [lockError, setLockError] = useState<string | null>(null);
   const [locking, setLocking] = useState(false);
@@ -207,6 +208,7 @@ export default function ActiveBottlePage() {
     scheduleSave(next.wineId, next);
     setRatingError(null);
     setBlendError(null);
+    setOtherGrapeError(null);
   }
 
   async function handleLockGuess() {
@@ -217,6 +219,11 @@ export default function ActiveBottlePage() {
     }
     if (hasIncompleteBlend(guess)) {
       setBlendError(BLEND_MIN_GRAPES_MESSAGE);
+      return;
+    }
+    const otherGrapeMessage = invalidOtherGrapeGuessMessage(guess);
+    if (otherGrapeMessage) {
+      setOtherGrapeError(otherGrapeMessage);
       return;
     }
 
@@ -345,7 +352,7 @@ export default function ActiveBottlePage() {
         value={guess}
         onChange={updateGuess}
         ratingError={ratingError ?? undefined}
-        blendError={blendError ?? undefined}
+        blendError={blendError ?? otherGrapeError ?? undefined}
       />
 
       <SavingIndicator state={saveState} />

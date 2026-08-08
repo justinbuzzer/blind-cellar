@@ -56,6 +56,16 @@ export interface WineIdentityInput {
   selectedGrapes: string[];
   /** Blend mode only: raw free text for varieties not on the curated list. Empty/unused in single mode. */
   otherGrapesText: string;
+  /**
+   * Single mode only: true when "Other grape" is the selected dropdown
+   * option (see GrapeBlendField) — client/UI state only, never persisted.
+   * The actual typed grape name still lives in `grapeBlend`; this only
+   * distinguishes "blank because untouched" from "blank because Other grape
+   * was chosen but no text was entered yet" for validation/display purposes.
+   * Optional so every pre-existing WineIdentityInput literal in the codebase
+   * stays valid untouched; undefined is treated identically to false.
+   */
+  otherGrapeSelected?: boolean;
   producer: string;
   wineName: string;
   vintage: string;
@@ -219,6 +229,8 @@ export interface WineGuess {
   selectedGrapes: string[];
   /** Blend mode only: raw free text for varieties not on the curated list. Empty/unused in single mode. */
   otherGrapesText: string;
+  /** Single mode only: see the identically-named field on WineIdentityInput. */
+  otherGrapeSelected?: boolean;
   producer: string;
   wineName: string;
   vintage: string;

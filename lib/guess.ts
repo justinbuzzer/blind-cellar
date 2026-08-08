@@ -11,6 +11,7 @@ export function emptyWineGuess(wineId: string): WineGuess {
     grapeBlend: "",
     selectedGrapes: [],
     otherGrapesText: "",
+    otherGrapeSelected: false,
     producer: "",
     wineName: "",
     vintage: "",

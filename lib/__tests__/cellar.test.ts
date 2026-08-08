@@ -220,6 +220,28 @@ describe("cellarBottleFormInputFromRow", () => {
     const input = cellarBottleFormInputFromRow(row);
     expect(input.appellation).toBe("Chablis");
   });
+
+  it("sets otherGrapeSelected and preserves the custom text when the stored grape isn't on the curated list", () => {
+    const row = makeCellarRow({ grape_blend_mode: "single", grape_blend: "Mondeuse Blanche" });
+    const input = cellarBottleFormInputFromRow(row);
+    expect(input.otherGrapeSelected).toBe(true);
+    expect(input.grapeBlend).toBe("Mondeuse Blanche");
+  });
+
+  it("leaves otherGrapeSelected false for a curated single-variety grape", () => {
+    const row = makeCellarRow({ grape_blend_mode: "single", grape_blend: "Pinot Noir" });
+    const input = cellarBottleFormInputFromRow(row);
+    expect(input.otherGrapeSelected).toBe(false);
+  });
+
+  it("leaves otherGrapeSelected false in blend mode regardless of content", () => {
+    const row = makeCellarRow({
+      grape_blend_mode: "blend",
+      grape_blend: "Cabernet Sauvignon / Merlot",
+    });
+    const input = cellarBottleFormInputFromRow(row);
+    expect(input.otherGrapeSelected).toBe(false);
+  });
 });
 
 describe("cellarBottleRpcArgs", () => {
@@ -276,6 +298,15 @@ describe("cellarBottleRpcArgs", () => {
   it("never includes quantity — update_cellar_bottle has no such parameter, so it's added separately only for the add call (see lib/supabase/cellarActions.ts)", () => {
     const args = cellarBottleRpcArgs(makeCellarBottle({ quantity: 6 }));
     expect(args).not.toHaveProperty("p_quantity");
+  });
+
+  it("sends the custom grape text directly as p_grape_blend, with no separate otherGrapeSelected/sentinel field", () => {
+    const args = cellarBottleRpcArgs(
+      makeCellarBottle({ grapeBlendMode: "single", grapeBlend: "Mondeuse Blanche", otherGrapeSelected: true })
+    );
+    expect(args.p_grape_blend).toBe("Mondeuse Blanche");
+    expect(args).not.toHaveProperty("otherGrapeSelected");
+    expect(args).not.toHaveProperty("p_other_grape_selected");
   });
 });
 

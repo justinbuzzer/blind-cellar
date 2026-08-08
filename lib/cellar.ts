@@ -1,6 +1,6 @@
 import { WineIdentityErrors } from "@/components/registration/WineIdentityFields";
 import { CellarBottleRow } from "@/lib/supabase/types";
-import { reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
+import { isCustomSingleGrape, reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
 import { BOTTLE_FORMAT_LABELS, BOTTLE_FORMATS, BottleFormat, WineIdentityInput } from "@/types/tasting";
 import { validateBottleForm } from "./validation";
 
@@ -50,6 +50,7 @@ export const EMPTY_CELLAR_BOTTLE: CellarBottleFormInput = {
   grapeBlend: "",
   selectedGrapes: [],
   otherGrapesText: "",
+  otherGrapeSelected: false,
   producer: "",
   wineName: "",
   vintage: "",
@@ -128,6 +129,7 @@ export function cellarBottleFormInputFromRow(row: CellarBottleRow): CellarBottle
     grapeBlend: row.grape_blend,
     selectedGrapes,
     otherGrapesText,
+    otherGrapeSelected: isCustomSingleGrape(grapeBlendMode, row.grape_blend),
     producer: row.producer,
     wineName: row.wine_cuvee,
     vintage: row.vintage,

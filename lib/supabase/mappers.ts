@@ -1,5 +1,5 @@
 import { GuestSubmission, TastingSession, WineAnswerKey, WineGuess, WineResult } from "@/types/tasting";
-import { reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
+import { isCustomSingleGrape, reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
 import { calculateWineResults } from "@/lib/results";
 import {
   GuestGuessDTO,
@@ -72,6 +72,7 @@ export function mapGuestGuessDtoToWineGuess(dto: GuestGuessDTO): WineGuess {
     grapeBlend: dto.grapeBlendGuess,
     selectedGrapes,
     otherGrapesText,
+    otherGrapeSelected: isCustomSingleGrape(grapeBlendMode, dto.grapeBlendGuess),
     producer: dto.producerGuess,
     wineName: dto.wineCuveeGuess,
     vintage: dto.vintageGuess,

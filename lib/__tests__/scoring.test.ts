@@ -159,6 +159,27 @@ describe("scoreGrapeBlend", () => {
     const result = scoreGrapeBlend("single", "Grenache", "", "Grenache blend");
     expect(result.correct).toBe(false);
   });
+
+  it("awards full points for a matching custom (Other grape) single-variety value on both sides — no scoring changes needed for custom grapes", () => {
+    const result = scoreGrapeBlend("single", "Mondeuse Blanche", "single", "Mondeuse Blanche");
+    expect(result.correct).toBe(true);
+    expect(result.points).toBe(30);
+  });
+
+  it("is case/whitespace-insensitive for a matching custom grape, same as any other text field", () => {
+    expect(scoreGrapeBlend("single", "  mondeuse blanche  ", "single", "Mondeuse Blanche").correct).toBe(true);
+  });
+
+  it("awards zero points for two different custom grapes — never treats unknown grapes as automatically correct", () => {
+    const result = scoreGrapeBlend("single", "Mondeuse Blanche", "single", "Trousseau");
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+
+  it("does not crash or special-case a custom guess against a curated actual grape (and vice versa)", () => {
+    expect(scoreGrapeBlend("single", "Mondeuse Blanche", "single", "Chardonnay").correct).toBe(false);
+    expect(scoreGrapeBlend("single", "Chardonnay", "single", "Mondeuse Blanche").correct).toBe(false);
+  });
 });
 
 describe("scoreGrapeBlend via the structured picker's derived text (combineBlendComponents)", () => {

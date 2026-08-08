@@ -21,7 +21,7 @@ import {
 import { friendlyRpcError, GuestSessionWineDTO } from "@/lib/supabase/types";
 import { mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
 import { emptyWineGuess } from "@/lib/guess";
-import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend } from "@/lib/validation";
+import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend, invalidOtherGrapeGuessMessage } from "@/lib/validation";
 import { getGuestToken } from "@/lib/deviceStorage";
 import { WineGuess } from "@/types/tasting";
 
@@ -44,6 +44,7 @@ export default function GuestTastingPage() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [ratingErrorWineId, setRatingErrorWineId] = useState<string | null>(null);
   const [blendErrorWineId, setBlendErrorWineId] = useState<string | null>(null);
+  const [otherGrapeErrorWineId, setOtherGrapeErrorWineId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -165,6 +166,7 @@ export default function GuestTastingPage() {
     scheduleSave(wineId, next);
     setRatingErrorWineId(null);
     setBlendErrorWineId(null);
+    setOtherGrapeErrorWineId(null);
   }
 
   async function goToIndex(index: number) {
@@ -192,6 +194,17 @@ export default function GuestTastingPage() {
       const incompleteIndex = wines.findIndex((w) => w.id === incompleteBlendWine.id);
       setCurrentIndex(incompleteIndex);
       setBlendErrorWineId(incompleteBlendWine.id);
+      return;
+    }
+
+    const invalidOtherGrapeWine = wines.find((wine) => {
+      const guess = guesses.find((g) => g.wineId === wine.id);
+      return guess && invalidOtherGrapeGuessMessage(guess) !== undefined;
+    });
+    if (invalidOtherGrapeWine) {
+      const invalidIndex = wines.findIndex((w) => w.id === invalidOtherGrapeWine.id);
+      setCurrentIndex(invalidIndex);
+      setOtherGrapeErrorWineId(invalidOtherGrapeWine.id);
       return;
     }
 
@@ -295,7 +308,13 @@ export default function GuestTastingPage() {
         ratingError={
           ratingErrorWineId === wine.id ? "A rating is required." : undefined
         }
-        blendError={blendErrorWineId === wine.id ? BLEND_MIN_GRAPES_MESSAGE : undefined}
+        blendError={
+          blendErrorWineId === wine.id
+            ? BLEND_MIN_GRAPES_MESSAGE
+            : otherGrapeErrorWineId === wine.id
+              ? invalidOtherGrapeGuessMessage(guess)
+              : undefined
+        }
       />
 
       <SavingIndicator state={saveState} />

@@ -119,6 +119,7 @@ export function WineGuessForm({
             grapeBlend: value.grapeBlend,
             selectedGrapes: value.selectedGrapes,
             otherGrapesText: value.otherGrapesText,
+            otherGrapeSelected: value.otherGrapeSelected,
           }}
           onChange={setGrapeBlend}
           error={blendError}

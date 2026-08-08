@@ -380,6 +380,61 @@ export function combineBlendComponents(
   return result.sort((a, b) => a.localeCompare(b));
 }
 
+// ---------------------------------------------------------------------------
+// "Other grape" — free-text single-variety entry for a grape not on the
+// curated GRAPE_VARIETIES list. A custom value is still exactly one variety
+// (never split/blended) — this is deliberately unrelated to the blend-mode
+// free text path above (parseOtherGrapesText/combineBlendComponents).
+// ---------------------------------------------------------------------------
+
+export const MAX_OTHER_GRAPE_LENGTH = 80;
+
+// Comma/slash/ampersand/semicolon signal an attempt to enter more than one
+// grape into the single-variety field — the contributor should use Blend
+// mode instead (see lib/validation.ts's OTHER_GRAPE_MULTI_VARIETY_ERROR).
+const MULTI_VARIETY_DELIMITER_REGEX = /[,/&;]/;
+
+// Plain Latin letters plus the Latin-1 Supplement/Latin Extended-A accented
+// range (covers French/German/Italian/Spanish/Portuguese/Hungarian/Czech/
+// Polish etc. grape names, e.g. "Mondeuse Blanche" or "Kéknyelű") and
+// combining marks (decomposed accents, matching lib/normalize.ts), plus
+// spaces, hyphens, and straight/curly apostrophes — deliberately not an
+// ASCII-only pattern. No `u` flag: this tsconfig's default target predates
+// Unicode property escape support.
+const OTHER_GRAPE_NAME_REGEX = /^[A-Za-zÀ-ſ̀-ͯ'’ -]+$/;
+
+export function hasMultiVarietyDelimiter(value: string): boolean {
+  return MULTI_VARIETY_DELIMITER_REGEX.test(value);
+}
+
+/**
+ * True for a plausible single custom grape name: non-blank, within the
+ * length cap, letters/spaces/hyphens/apostrophes only. Does not check for
+ * multi-variety delimiters — see `hasMultiVarietyDelimiter`, checked
+ * separately so its more specific error message can take priority.
+ */
+export function isValidOtherGrapeName(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    trimmed.length > 0 &&
+    trimmed.length <= MAX_OTHER_GRAPE_LENGTH &&
+    OTHER_GRAPE_NAME_REGEX.test(trimmed)
+  );
+}
+
+/**
+ * True when a single-variety grape value should be presented as "Other
+ * grape" in the UI (dropdown shows that sentinel option, with a custom text
+ * input showing this value) rather than as a curated dropdown selection —
+ * i.e. it's non-blank and not one of GRAPE_VARIETIES or its aliases. Shared
+ * by every place that loads a stored/drafted single-variety value into
+ * editable form state (bottle registration, cellar, guess drafts) so the
+ * derivation can never drift between them.
+ */
+export function isCustomSingleGrape(mode: string, grapeBlend: string): boolean {
+  return mode === "single" && grapeBlend.trim() !== "" && !isKnownGrapeVariety(grapeBlend);
+}
+
 /**
  * Best-effort reconstruction of the structured multi-select state from a
  * flattened blend string that has no structured `grape_blend_components`

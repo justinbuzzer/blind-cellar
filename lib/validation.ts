@@ -1,5 +1,11 @@
 import { WineIdentityErrors } from "@/components/registration/WineIdentityFields";
-import { combineBlendComponents, isKnownCountry, isValidRegionForCountry } from "@/lib/wineReferenceData";
+import {
+  combineBlendComponents,
+  hasMultiVarietyDelimiter,
+  isKnownCountry,
+  isValidOtherGrapeName,
+  isValidRegionForCountry,
+} from "@/lib/wineReferenceData";
 import { isValidAppellation } from "@/lib/appellations";
 import { TASTING_MODES, TastingMode, WineGuess, WineIdentityInput } from "@/types/tasting";
 
@@ -13,6 +19,13 @@ const FOUR_DIGIT_YEAR = /^\d{4}$/;
 /** Shared with guess-entry's final-submit check, so the guidance is worded identically everywhere it appears. */
 export const BLEND_MIN_GRAPES_MESSAGE =
   "Select at least two grapes for a blend, or choose Single variety instead.";
+
+/** Shown under the custom grape text input when "Other grape" is selected but left blank. */
+export const OTHER_GRAPE_REQUIRED_ERROR = "Enter a grape variety.";
+/** Shown when the custom grape text is too long or contains characters outside the allowed set. */
+export const OTHER_GRAPE_INVALID_ERROR = "Enter a valid grape variety.";
+/** Shown when the custom grape text contains a comma/slash/ampersand/semicolon, suggesting more than one grape. */
+export const OTHER_GRAPE_MULTI_VARIETY_ERROR = "Use Blend for more than one grape.";
 
 /** A bottle's vintage must be a plausible four-digit year, or "NV" (non-vintage). */
 export function isValidVintage(value: string): boolean {
@@ -48,7 +61,16 @@ export function validateBottleForm(input: WineIdentityInput): WineIdentityErrors
   if (!input.grapeBlendMode) {
     errors.grapeBlendMode = "Choose single variety or blend.";
   } else if (input.grapeBlendMode === "single") {
-    if (!input.grapeBlend.trim()) {
+    const trimmedGrape = input.grapeBlend.trim();
+    if (input.otherGrapeSelected) {
+      if (!trimmedGrape) {
+        errors.grapeBlend = OTHER_GRAPE_REQUIRED_ERROR;
+      } else if (hasMultiVarietyDelimiter(trimmedGrape)) {
+        errors.grapeBlend = OTHER_GRAPE_MULTI_VARIETY_ERROR;
+      } else if (!isValidOtherGrapeName(trimmedGrape)) {
+        errors.grapeBlend = OTHER_GRAPE_INVALID_ERROR;
+      }
+    } else if (!trimmedGrape) {
       errors.grapeBlend = "Select a grape variety.";
     }
   } else {
@@ -90,4 +112,21 @@ export function hasIncompleteBlend(guess: WineGuess): boolean {
   if (guess.grapeBlendMode !== "blend") return false;
   const components = combineBlendComponents(guess.selectedGrapes, guess.otherGrapesText);
   return components.length === 1;
+}
+
+/**
+ * Same leniency principle as `hasIncompleteBlend`: a guest who never typed a
+ * custom grape (blank Other-grape text) simply guesses zero for that field —
+ * not a validation error. But once they *have* typed something, it must be a
+ * plausible single variety before final submit/lock, same as a blend needs
+ * at least two grapes. Returns the specific error message to show, or
+ * undefined when there's nothing to block.
+ */
+export function invalidOtherGrapeGuessMessage(guess: WineGuess): string | undefined {
+  if (guess.grapeBlendMode !== "single" || !guess.otherGrapeSelected) return undefined;
+  const trimmed = guess.grapeBlend.trim();
+  if (!trimmed) return undefined;
+  if (hasMultiVarietyDelimiter(trimmed)) return OTHER_GRAPE_MULTI_VARIETY_ERROR;
+  if (!isValidOtherGrapeName(trimmed)) return OTHER_GRAPE_INVALID_ERROR;
+  return undefined;
 }
