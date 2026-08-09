@@ -13,6 +13,7 @@ import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { ArchiveLink } from "@/components/navigation/ArchiveLink";
+import { ResultsLink } from "@/components/navigation/ResultsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   completeSubmission,
@@ -321,6 +322,7 @@ export default function GuestTastingPage() {
         <div className="flex items-center gap-2">
           <HomeLink />
           <HostControlsLink sessionPublicId={params.publicId} />
+          <ResultsLink href={`/tasting/${params.publicId}/results`} />
           <ArchiveLink />
         </div>
         <div className="w-full border-t border-cellar-gold/40 pt-5">
@@ -352,6 +354,7 @@ export default function GuestTastingPage() {
           confirmBeforeLeave
           hasUnsavedChanges={saveState === "saving"}
         />
+        <ResultsLink href={`/tasting/${params.publicId}/results`} />
       </div>
       <div>
         <SectionEyebrow>Blind tasting</SectionEyebrow>

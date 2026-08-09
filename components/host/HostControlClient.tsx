@@ -12,6 +12,7 @@ import { StatusChip } from "@/components/StatusChip";
 import { ImageBand } from "@/components/ImageBand";
 import { TastingOrderList } from "@/components/host/TastingOrderList";
 import { SeenHostBottleRow } from "@/components/host/SeenHostBottleRow";
+import { FullBlindHostBottleRow } from "@/components/host/FullBlindHostBottleRow";
 import { BottleProgressControl } from "@/components/host/BottleProgressControl";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { ArchiveLink } from "@/components/navigation/ArchiveLink";
@@ -21,12 +22,14 @@ import { hostControlImage } from "@/lib/appImages";
 import { WINE_STYLE_LABELS } from "@/types/tasting";
 import { formatSeenRatingStatus } from "@/lib/seenHostControls";
 import { formatGuessProgressTitle, formatProgressAccessibleLabel } from "@/lib/hostProgress";
+import { bottleLabel } from "@/lib/codes";
 import {
   friendlyRpcError,
   HostActiveBottleDTO,
   HostBottleDTO,
   HostGuestDTO,
   HostSessionResponse,
+  RevealFullBlindBottleResponse,
   RevealSeenRatingsResponse,
 } from "@/lib/supabase/types";
 import {
@@ -75,13 +78,13 @@ export function HostControlClient({
   const [activeBottle, setActiveBottle] = useState<HostActiveBottleDTO | null>(
     initialData.activeBottle
   );
-  const [showRevealConfirm, setShowRevealConfirm] = useState(false);
   const [showStartConfirm, setShowStartConfirm] = useState(false);
   const [showRevealBottleConfirm, setShowRevealBottleConfirm] = useState(false);
   const [showEndSeenConfirm, setShowEndSeenConfirm] = useState(false);
   const [confirmingSeenWineId, setConfirmingSeenWineId] = useState<string | null>(null);
-  const [revealing, setRevealing] = useState(false);
+  const [confirmingFullBlindWineId, setConfirmingFullBlindWineId] = useState<string | null>(null);
   const [revealingBottle, setRevealingBottle] = useState(false);
+  const [revealingFullBlindBottle, setRevealingFullBlindBottle] = useState(false);
   const [revealingSeenRatings, setRevealingSeenRatings] = useState(false);
   const [endingSeen, setEndingSeen] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -96,6 +99,7 @@ export function HostControlClient({
     [guests]
   );
   const confirmingSeenWine = wines.find((w) => w.id === confirmingSeenWineId) ?? null;
+  const confirmingFullBlindWine = wines.find((w) => w.id === confirmingFullBlindWineId) ?? null;
 
   useEffect(() => {
     setJoinUrl(`${window.location.origin}/join/${publicId}`);
@@ -312,30 +316,6 @@ export function HostControlClient({
     }
   }
 
-  async function handleReveal() {
-    setRevealing(true);
-    setActionError(null);
-    try {
-      const response = await fetch("/api/host/reveal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ publicId, hostToken }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setActionError(data.error ?? "Couldn't reveal results.");
-        setRevealing(false);
-        return;
-      }
-      setStatus("revealed");
-      setShowRevealConfirm(false);
-      setRevealing(false);
-    } catch {
-      setActionError(friendlyRpcError(null));
-      setRevealing(false);
-    }
-  }
-
   async function handleRevealBottle() {
     if (!activeBottle) return;
     setRevealingBottle(true);
@@ -365,6 +345,36 @@ export function HostControlClient({
     } catch {
       setActionError(friendlyRpcError(null));
       setRevealingBottle(false);
+    }
+  }
+
+  async function handleRevealFullBlindBottle(wineId: string) {
+    setRevealingFullBlindBottle(true);
+    setActionError(null);
+    try {
+      const response = await fetch("/api/host/reveal-full-blind-bottle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicId, hostToken, wineId }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setActionError(data.error ?? "Couldn't reveal that bottle.");
+        setRevealingFullBlindBottle(false);
+        return;
+      }
+      const revealed = data as RevealFullBlindBottleResponse;
+      setWines((prev) =>
+        prev.map((w) => (w.id === wineId ? { ...w, revealedAt: revealed.revealedAt } : w))
+      );
+      if (revealed.sessionRevealed) {
+        setStatus("revealed");
+      }
+      setConfirmingFullBlindWineId(null);
+      setRevealingFullBlindBottle(false);
+    } catch {
+      setActionError(friendlyRpcError(null));
+      setRevealingFullBlindBottle(false);
     }
   }
 
@@ -644,9 +654,27 @@ export function HostControlClient({
 
           {tastingMode === "full_blind" && (
             <>
-              <Card className="text-sm text-cellar-muted">
-                All bottles remain hidden until the final reveal.
-              </Card>
+              <div className="flex flex-col gap-2">
+                <SectionEyebrow>Results reveal</SectionEyebrow>
+                <p className="text-sm text-cellar-muted">
+                  Reveal each bottle whenever you&rsquo;re ready, in any order.
+                  A bottle&rsquo;s wine details and participant scores stay
+                  private until you reveal it.
+                </p>
+                <Card className="p-0">
+                  <ol className="divide-y divide-cellar-border">
+                    {wines.map((wine) => (
+                      <FullBlindHostBottleRow
+                        key={wine.id}
+                        wine={wine}
+                        publicId={publicId}
+                        hostToken={hostToken}
+                        onRevealClick={setConfirmingFullBlindWineId}
+                      />
+                    ))}
+                  </ol>
+                </Card>
+              </div>
               <div className="flex flex-col gap-3 border-t border-cellar-border pt-5">
                 <SectionEyebrow>Host actions</SectionEyebrow>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -655,9 +683,11 @@ export function HostControlClient({
                       Enter my guesses
                     </Button>
                   </Link>
-                  <Button fullWidth onClick={() => setShowRevealConfirm(true)}>
-                    Reveal results
-                  </Button>
+                  <Link href={`/host/${publicId}/leaderboard?token=${encodeURIComponent(hostToken)}`}>
+                    <Button variant="secondary" fullWidth>
+                      View leaderboard
+                    </Button>
+                  </Link>
                 </div>
               </div>
             </>
@@ -686,6 +716,34 @@ export function HostControlClient({
                   Every bottle has been revealed.
                 </Card>
               )}
+
+              {wines.some((w) => w.revealedAt !== null) && (
+                <div className="flex flex-col gap-2">
+                  <SectionEyebrow>Revealed bottles</SectionEyebrow>
+                  <Card className="p-0">
+                    <ol className="divide-y divide-cellar-border">
+                      {wines
+                        .filter((w) => w.revealedAt !== null)
+                        .map((wine) => (
+                          <li
+                            key={wine.id}
+                            className="flex items-center justify-between gap-3 px-4 py-3"
+                          >
+                            <span className="text-sm font-medium text-cellar-text">
+                              {wine.anonymousCode}
+                            </span>
+                            <Link
+                              href={`/host/${publicId}/bottle/${wine.id}/result?token=${encodeURIComponent(hostToken)}`}
+                            >
+                              <Button variant="secondary">View results</Button>
+                            </Link>
+                          </li>
+                        ))}
+                    </ol>
+                  </Card>
+                </div>
+              )}
+
               <div className="flex flex-col gap-3 border-t border-cellar-border pt-5">
                 <SectionEyebrow>Host actions</SectionEyebrow>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -699,6 +757,11 @@ export function HostControlClient({
                       Reveal {activeBottle.anonymousCode}
                     </Button>
                   )}
+                  <Link href={`/host/${publicId}/leaderboard?token=${encodeURIComponent(hostToken)}`}>
+                    <Button variant="secondary" fullWidth>
+                      View leaderboard
+                    </Button>
+                  </Link>
                 </div>
               </div>
             </>
@@ -787,30 +850,6 @@ export function HostControlClient({
         </Modal>
       )}
 
-      {showRevealConfirm && (
-        <Modal
-          title="Reveal all wines and scores?"
-          onClose={() => !revealing && setShowRevealConfirm(false)}
-        >
-          <p>
-            Guests will immediately be able to see the answer key and
-            results. This cannot be undone.
-          </p>
-          <div className="mt-4 flex justify-end gap-2">
-            <Button
-              variant="ghost"
-              onClick={() => setShowRevealConfirm(false)}
-              disabled={revealing}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleReveal} disabled={revealing}>
-              {revealing ? "Revealing…" : "Reveal"}
-            </Button>
-          </div>
-        </Modal>
-      )}
-
       {showRevealBottleConfirm && activeBottle && (
         <Modal
           title={`Reveal ${activeBottle.anonymousCode}?`}
@@ -831,6 +870,33 @@ export function HostControlClient({
             </Button>
             <Button onClick={handleRevealBottle} disabled={revealingBottle}>
               {revealingBottle ? "Revealing…" : "Reveal bottle"}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {confirmingFullBlindWineId && confirmingFullBlindWine && (
+        <Modal
+          title={`Reveal ${bottleLabel(confirmingFullBlindWine.bottleNumber)}?`}
+          onClose={() => !revealingFullBlindBottle && setConfirmingFullBlindWineId(null)}
+        >
+          <p>
+            This will make this bottle&rsquo;s wine details and participant
+            scores available to eligible participants.
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setConfirmingFullBlindWineId(null)}
+              disabled={revealingFullBlindBottle}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => handleRevealFullBlindBottle(confirmingFullBlindWineId)}
+              disabled={revealingFullBlindBottle}
+            >
+              {revealingFullBlindBottle ? "Revealing…" : "Reveal results"}
             </Button>
           </div>
         </Modal>

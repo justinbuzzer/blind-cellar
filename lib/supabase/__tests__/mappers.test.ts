@@ -73,6 +73,7 @@ function makeResponse(
       contributorName: "Alice",
       ...overrides,
     },
+    submitted: guesses.length > 0,
     guesses,
   };
 }

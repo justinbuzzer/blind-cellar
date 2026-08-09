@@ -14,6 +14,7 @@ import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { ImageBand } from "@/components/ImageBand";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
+import { ResultsLink } from "@/components/navigation/ResultsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   getActiveBottleState,
@@ -310,6 +311,7 @@ export default function ActiveBottlePage() {
         <div className="flex items-center gap-2">
           <HomeLink />
           <HostControlsLink sessionPublicId={params.publicId} />
+          <ResultsLink href={`/session/${params.publicId}/results`} />
         </div>
         <div className="relative flex flex-1 flex-col items-center justify-center gap-4 overflow-hidden rounded-sm px-6 py-16 text-center">
           <ImageBand image={waitingToRevealImage} className="absolute inset-0" />
@@ -335,6 +337,7 @@ export default function ActiveBottlePage() {
         <div className="flex items-center gap-2">
           <HomeLink />
           <HostControlsLink sessionPublicId={params.publicId} />
+          <ResultsLink href={`/session/${params.publicId}/results`} />
         </div>
         <div className="relative flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden rounded-sm px-6 py-16 text-center">
           <ImageBand image={waitingToRevealImage} className="absolute inset-0" />
@@ -373,6 +376,7 @@ export default function ActiveBottlePage() {
           confirmBeforeLeave
           hasUnsavedChanges={saveState === "saving"}
         />
+        <ResultsLink href={`/session/${params.publicId}/results`} />
       </div>
       <div>
         <SectionEyebrow>Blind tasting</SectionEyebrow>

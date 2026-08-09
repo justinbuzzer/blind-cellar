@@ -10,6 +10,7 @@ import {
   RegisterBottleResponse,
   RegistrationStateResponse,
   RevealedBottleResponse,
+  RevealedBottlesSummaryResponse,
   SeenTastingStateResponse,
 } from "./types";
 
@@ -137,6 +138,17 @@ export async function getRevealedBottle(
     p_wine_id: wineId,
   });
   return { data: data as RevealedBottleResponse | null, error };
+}
+
+/** Participant-facing results hub list — see README "Results reveal". */
+export async function getRevealedBottlesSummary(
+  supabase: SupabaseClient,
+  guestToken: string
+) {
+  const { data, error } = await supabase.rpc("get_revealed_bottles_summary", {
+    p_guest_token: guestToken,
+  });
+  return { data: data as RevealedBottlesSummaryResponse | null, error };
 }
 
 // --- seen only ---

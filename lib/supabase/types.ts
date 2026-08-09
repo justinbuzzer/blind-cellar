@@ -128,8 +128,10 @@ export interface HostBottleDTO {
   anonymousCode: string;
   wineStyle: WineStyle;
   tastingOrder: number;
-  /** course_reveal only — always null for full_blind bottles and seen bottles. */
+  /** full_blind and course_reveal only — see reveal_full_blind_bottle/reveal_bottle in supabase/schema.sql. Always null for seen bottles (see HostSeenBottleInfo.ratingsRevealedAt instead). */
   revealedAt: string | null;
+  /** full_blind/course_reveal only — same safe, never-secret label participants already see during guessing (see README "Bottle-order contributor labels"). Undefined for seen bottles (nested under `seen` instead). */
+  contributorName?: string | null;
   /** Seen mode only — see HostSeenBottleInfo. Undefined for full_blind/course_reveal. */
   seen?: HostSeenBottleInfo;
 }
@@ -392,7 +394,113 @@ export interface RevealedBottleWineDTO {
 export interface RevealedBottleResponse {
   session: { publicId: string; status: SessionStatus; scoringVersion: ScoringVersion };
   wine: RevealedBottleWineDTO;
+  /** Whether the caller (this guest) has a submitted guess for this bottle — see README "Results reveal". False means `guesses` is empty; never a partial/draft guess. */
+  submitted: boolean;
+  /** The caller's own guess only — 0 or 1 elements. See README "Results reveal" for why this is no longer every guest's guess. */
   guesses: RevealedBottleGuessDTO[];
+}
+
+// --- Results reveal (see README "Results reveal") ---
+
+/** Response from reveal_full_blind_bottle. */
+export interface RevealFullBlindBottleResponse {
+  wineId: string;
+  revealedAt: string;
+  /** True exactly when this was the last unrevealed bottle in the session — tasting_sessions.status has now flipped to 'revealed'. */
+  sessionRevealed: boolean;
+}
+
+/** A participant's guess content only — no guestId/guestName (those live one level up on BottleResultParticipantDTO), matching get_bottle_result_for_host's per-participant jsonb shape exactly. */
+export interface HostBottleGuessDTO {
+  countryGuess: string;
+  regionGuess: string;
+  appellationGuess: string | null;
+  grapeBlendMode: GrapeBlendMode | null;
+  grapeBlendGuess: string;
+  producerGuess: string;
+  wineCuveeGuess: string;
+  vintageGuess: string;
+  rating: number | null;
+  confidence: Confidence;
+}
+
+/** One participant's submission status + guess (full_blind/course_reveal only) for the host per-bottle result view. Never includes a token, email, or any field beyond display name + guess content. */
+export interface BottleResultParticipantDTO {
+  guestName: string;
+  submitted: boolean;
+  /** Null exactly when submitted is false. */
+  guess: HostBottleGuessDTO | null;
+}
+
+/** Response from get_bottle_result_for_host — every eligible participant's guess for one revealed bottle. Host-only; see README "Results reveal". */
+export interface BottleResultForHostResponse {
+  session: { publicId: string; status: SessionStatus; scoringVersion: ScoringVersion };
+  wine: RevealedBottleWineDTO;
+  participants: BottleResultParticipantDTO[];
+}
+
+/** One bottle's safe label + reveal state for the participant results hub — never an answer-key field. */
+export interface RevealedBottleSummaryDTO {
+  wineId: string;
+  bottleNumber: number;
+  contributorName: string | null;
+  isRevealed: boolean;
+}
+
+/** Response from get_revealed_bottles_summary — the participant-facing results hub list. */
+export interface RevealedBottlesSummaryResponse {
+  bottles: RevealedBottleSummaryDTO[];
+  /** True once every bottle in the session has been revealed — this is what unlocks the final leaderboard (see the existing /results page). */
+  allRevealed: boolean;
+  revealedCount: number;
+  totalCount: number;
+}
+
+/** One revealed bottle's full answer key, for the host provisional leaderboard — see get_provisional_leaderboard_for_host. */
+export interface LeaderboardWineDTO {
+  id: string;
+  anonymousCode: string;
+  bottleNumber: number;
+  country: string;
+  region: string;
+  appellation: string | null;
+  grapeBlendMode: GrapeBlendMode | null;
+  grapeBlend: string;
+  producer: string;
+  wineCuvee: string;
+  vintage: string;
+  wineStyle: WineStyle;
+  tastingOrder: number;
+}
+
+/** One guess against a revealed bottle, for the host provisional leaderboard. */
+export interface LeaderboardGuessDTO {
+  wineId: string;
+  guestId: string;
+  guestName: string;
+  lockedAt: string | null;
+  countryGuess: string;
+  regionGuess: string;
+  appellationGuess: string | null;
+  grapeBlendMode: GrapeBlendMode | null;
+  grapeBlendGuess: string;
+  producerGuess: string;
+  wineCuveeGuess: string;
+  vintageGuess: string;
+  rating: number | null;
+  confidence: Confidence;
+}
+
+/** Response from get_provisional_leaderboard_for_host — raw revealed-only data; ranking is computed client-side by reusing the existing calculateTasterResults pipeline (see lib/resultsReveal.ts). */
+export interface ProvisionalLeaderboardResponse {
+  wines: LeaderboardWineDTO[];
+  guesses: LeaderboardGuessDTO[];
+  guests: { id: string; displayName: string; completedAt: string | null }[];
+  scoringVersion: ScoringVersion;
+  sessionStatus: SessionStatus;
+  tastingMode: TastingMode;
+  totalCount: number;
+  revealedCount: number;
 }
 
 // --- seen-only shapes (see get_seen_tasting_state / upsert_seen_rating) ---

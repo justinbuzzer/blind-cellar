@@ -255,7 +255,7 @@ export function PersonalPrecisionComparison({
   );
 }
 
-function FieldScoreTable({
+export function FieldScoreTable({
   heading,
   fields,
 }: {
