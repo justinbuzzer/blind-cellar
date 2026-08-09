@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildFinalLeaderboardView,
   buildHostBottleResult,
+  buildHostRecapBottleSummaries,
+  buildParticipantBottleTotals,
   buildProvisionalLeaderboard,
+  findGuessByGuestId,
+  findMyTasterResult,
   formatBottleAggregateSummary,
+  formatHostRecapBottleLine,
+  formatLeaderboardPercent,
+  withYouSuffix,
 } from "@/lib/resultsReveal";
 import {
   BottleResultForHostResponse,
+  FinalLeaderboardResponse,
   HostBottleGuessDTO,
   LeaderboardGuessDTO,
   LeaderboardWineDTO,
@@ -288,5 +297,215 @@ describe("buildProvisionalLeaderboard", () => {
       makeLeaderboardResponse({ revealedCount: 0, totalCount: 0 })
     );
     expect(noWinesYet.allRevealed).toBe(false);
+  });
+
+  it("also returns per-bottle wineResults built from the same submissions, for the host's expandable per-participant detail", () => {
+    const response = makeLeaderboardResponse({
+      guesses: [
+        makeLeaderboardGuess({ guestId: "g1", guestName: "Alice" }),
+        makeLeaderboardGuess({ guestId: "g2", guestName: "Bob", countryGuess: "Italy" }),
+      ],
+      guests: [
+        { id: "g1", displayName: "Alice", completedAt: "2026-08-01T00:00:00Z" },
+        { id: "g2", displayName: "Bob", completedAt: "2026-08-01T00:00:00Z" },
+      ],
+    });
+    const view = buildProvisionalLeaderboard(response);
+    expect(view.wineResults).toHaveLength(1);
+    expect(view.wineResults[0].guesses).toHaveLength(2);
+    expect(view.wineResults[0].guesses.find((g) => g.guestId === "g1")?.totalPoints).toBe(100);
+  });
+});
+
+// --- Final leaderboard + tasting recap (participant) ---
+
+function makeFinalLeaderboardResponse(
+  overrides: Partial<FinalLeaderboardResponse> = {}
+): FinalLeaderboardResponse {
+  return {
+    wines: [makeLeaderboardWine()],
+    guesses: [],
+    guests: [],
+    scoringVersion: "core_v3_appellation_conditional",
+    sessionStatus: "revealed",
+    tastingMode: "full_blind",
+    totalCount: 1,
+    revealedCount: 1,
+    title: "Friday Night Flight",
+    tastingDate: "2026-08-01",
+    myGuestId: "g1",
+    ...overrides,
+  };
+}
+
+describe("buildFinalLeaderboardView", () => {
+  it("ranks participants using the exact same shared pipeline as the host provisional leaderboard", () => {
+    const response = makeFinalLeaderboardResponse({
+      guesses: [
+        makeLeaderboardGuess({ guestId: "g1", guestName: "Alice" }),
+        makeLeaderboardGuess({ guestId: "g2", guestName: "Bob", countryGuess: "Italy" }),
+      ],
+      guests: [
+        { id: "g1", displayName: "Alice", completedAt: "2026-08-01T00:00:00Z" },
+        { id: "g2", displayName: "Bob", completedAt: "2026-08-01T00:00:00Z" },
+      ],
+    });
+    const view = buildFinalLeaderboardView(response);
+    expect(view.tasterResults[0]).toMatchObject({ guestName: "Alice", rank: 1 });
+    expect(view.tasterResults[1]).toMatchObject({ guestName: "Bob", rank: 2 });
+    expect(view.myGuestId).toBe("g1");
+    expect(view.title).toBe("Friday Night Flight");
+  });
+
+  it("ranks mixed 80-point and 100-point bottles fairly via percentage, not raw points", () => {
+    const noAppellationWine = makeLeaderboardWine({
+      id: "wine-2",
+      anonymousCode: "Bottle 2",
+      appellation: null,
+      tastingOrder: 2,
+    });
+    const response = makeFinalLeaderboardResponse({
+      wines: [makeLeaderboardWine(), noAppellationWine],
+      guesses: [
+        // Alice: 80/100 on the 100-point bottle (wrong vintage only) = 80%,
+        // 80 raw points.
+        makeLeaderboardGuess({ wineId: "wine-1", guestId: "g1", guestName: "Alice", vintageGuess: "2018" }),
+        // Bob: perfect on the 80-point bottle = 100%, also 80 raw points.
+        // Equal raw points but a higher percentage — a raw-points comparison
+        // would wrongly call this a tie or even favor Alice.
+        makeLeaderboardGuess({
+          wineId: "wine-2",
+          guestId: "g2",
+          guestName: "Bob",
+          appellationGuess: null,
+        }),
+      ],
+      guests: [
+        { id: "g1", displayName: "Alice", completedAt: "2026-08-01T00:00:00Z" },
+        { id: "g2", displayName: "Bob", completedAt: "2026-08-01T00:00:00Z" },
+      ],
+    });
+    const view = buildFinalLeaderboardView(response);
+    const alice = view.tasterResults.find((t) => t.guestName === "Alice")!;
+    const bob = view.tasterResults.find((t) => t.guestName === "Bob")!;
+    expect(alice.totalPoints).toBe(bob.totalPoints); // equal raw points...
+    expect(bob.overallAccuracyPercent).toBeGreaterThan(alice.overallAccuracyPercent); // ...but Bob's bottle was fully correct
+    expect(bob.rank).toBe(1);
+    expect(alice.rank).toBe(2);
+  });
+
+  it("assigns competition ranks 1, 2, 2, 4 across a four-way field with one tie", () => {
+    const response = makeFinalLeaderboardResponse({
+      guesses: [
+        makeLeaderboardGuess({ guestId: "g1", guestName: "Ava" }), // 100%
+        makeLeaderboardGuess({ guestId: "g2", guestName: "Daniel", vintageGuess: "2018" }), // wrong vintage
+        makeLeaderboardGuess({ guestId: "g3", guestName: "Mia", vintageGuess: "2018" }), // same as Daniel — tie
+        makeLeaderboardGuess({ guestId: "g4", guestName: "Noah", countryGuess: "Spain", regionGuess: "Rioja", vintageGuess: "2018" }),
+      ],
+      guests: [
+        { id: "g1", displayName: "Ava", completedAt: "2026-08-01T00:00:00Z" },
+        { id: "g2", displayName: "Daniel", completedAt: "2026-08-01T00:00:00Z" },
+        { id: "g3", displayName: "Mia", completedAt: "2026-08-01T00:00:00Z" },
+        { id: "g4", displayName: "Noah", completedAt: "2026-08-01T00:00:00Z" },
+      ],
+    });
+    const view = buildFinalLeaderboardView(response);
+    const ranks = view.tasterResults.map((t) => t.rank);
+    expect(ranks).toEqual([1, 2, 2, 4]);
+  });
+});
+
+describe("findMyTasterResult / findGuessByGuestId", () => {
+  it("returns undefined (never a fabricated score) when the viewer has no counted score", () => {
+    const response = makeFinalLeaderboardResponse({
+      guesses: [makeLeaderboardGuess({ guestId: "g2", guestName: "Bob" })],
+      guests: [
+        { id: "g1", displayName: "Alice", completedAt: null },
+        { id: "g2", displayName: "Bob", completedAt: "2026-08-01T00:00:00Z" },
+      ],
+      myGuestId: "g1",
+    });
+    const view = buildFinalLeaderboardView(response);
+    expect(findMyTasterResult(view.tasterResults, "g1")).toBeUndefined();
+    expect(findGuessByGuestId(view.wineResults[0], "g1")).toBeUndefined();
+  });
+
+  it("finds the viewer's own row/guess and never another participant's", () => {
+    const response = makeFinalLeaderboardResponse({
+      guesses: [
+        makeLeaderboardGuess({ guestId: "g1", guestName: "Alice" }),
+        makeLeaderboardGuess({ guestId: "g2", guestName: "Bob", countryGuess: "Italy" }),
+      ],
+      guests: [
+        { id: "g1", displayName: "Alice", completedAt: "2026-08-01T00:00:00Z" },
+        { id: "g2", displayName: "Bob", completedAt: "2026-08-01T00:00:00Z" },
+      ],
+      myGuestId: "g2",
+    });
+    const view = buildFinalLeaderboardView(response);
+    const mine = findMyTasterResult(view.tasterResults, "g2");
+    expect(mine?.guestName).toBe("Bob");
+    const myGuess = findGuessByGuestId(view.wineResults[0], "g2");
+    expect(myGuess?.fieldScores.find((f) => f.field === "country")?.correct).toBe(false);
+  });
+});
+
+describe("formatLeaderboardPercent / withYouSuffix", () => {
+  it("formats to one decimal place", () => {
+    expect(formatLeaderboardPercent(84)).toBe("84.0%");
+    expect(formatLeaderboardPercent(77.777)).toBe("77.8%");
+  });
+
+  it("appends the exact existing ' (you)' convention only for the viewer's own row", () => {
+    expect(withYouSuffix("Ava", true)).toBe("Ava (you)");
+    expect(withYouSuffix("Ava", false)).toBe("Ava");
+  });
+});
+
+// --- Host recap: per-bottle aggregate overview ---
+
+describe("buildHostRecapBottleSummaries / formatHostRecapBottleLine", () => {
+  it("shows the exact required empty-state copy when a bottle has no submitted guesses", () => {
+    const response = makeLeaderboardResponse({ guesses: [], guests: [] });
+    const view = buildProvisionalLeaderboard(response);
+    const summaries = buildHostRecapBottleSummaries(view.wineResults);
+    expect(summaries[0].submittedCount).toBe(0);
+    expect(formatHostRecapBottleLine(summaries[0])).toBe("No submitted guesses to score.");
+  });
+
+  it("averages each guess's own normalized percentage, never raw points, and reports highest in native form", () => {
+    const response = makeLeaderboardResponse({
+      guesses: [
+        makeLeaderboardGuess({ guestId: "g1", guestName: "Alice" }), // 100/100
+        makeLeaderboardGuess({ guestId: "g2", guestName: "Bob", countryGuess: "Italy" }), // 80/100
+      ],
+      guests: [
+        { id: "g1", displayName: "Alice", completedAt: "2026-08-01T00:00:00Z" },
+        { id: "g2", displayName: "Bob", completedAt: "2026-08-01T00:00:00Z" },
+      ],
+    });
+    const view = buildProvisionalLeaderboard(response);
+    const summaries = buildHostRecapBottleSummaries(view.wineResults);
+    expect(summaries[0].submittedCount).toBe(2);
+    expect(summaries[0].averagePercent).toBe(90); // (100 + 80) / 2
+    expect(summaries[0].highestScore).toEqual({ earned: 100, possible: 100 });
+    expect(formatHostRecapBottleLine(summaries[0])).toBe("2 submitted · Average 90% · Highest 100 / 100");
+  });
+});
+
+describe("buildParticipantBottleTotals", () => {
+  it("returns every bottle's safe code with this participant's own guess only, never another's", () => {
+    const secondWine = makeLeaderboardWine({ id: "wine-2", anonymousCode: "Bottle 2", tastingOrder: 2 });
+    const response = makeLeaderboardResponse({
+      wines: [makeLeaderboardWine(), secondWine],
+      guesses: [makeLeaderboardGuess({ wineId: "wine-1", guestId: "g1", guestName: "Alice" })],
+      guests: [{ id: "g1", displayName: "Alice", completedAt: "2026-08-01T00:00:00Z" }],
+    });
+    const view = buildProvisionalLeaderboard(response);
+    const totals = buildParticipantBottleTotals(view.wineResults, "g1");
+    expect(totals).toHaveLength(2);
+    expect(totals[0]).toMatchObject({ code: "Bottle 1" });
+    expect(totals[0].guess?.totalPoints).toBe(100);
+    expect(totals[1]).toMatchObject({ code: "Bottle 2", guess: null });
   });
 });

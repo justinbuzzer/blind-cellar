@@ -165,8 +165,8 @@ export default function BottleRevealPage() {
       </section>
 
       {sessionRevealed ? (
-        <Link href={`/results/${params.publicId}`}>
-          <Button fullWidth>View final results</Button>
+        <Link href={`/session/${params.publicId}/recap`}>
+          <Button fullWidth>View tasting recap</Button>
         </Link>
       ) : (
         <Link href={`/session/${params.publicId}/active`}>

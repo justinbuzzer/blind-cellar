@@ -503,6 +503,29 @@ export interface ProvisionalLeaderboardResponse {
   revealedCount: number;
 }
 
+/**
+ * Response from get_final_leaderboard_for_guest — see README "Final
+ * leaderboard and tasting recap". Same wines/guesses/guests shape as
+ * ProvisionalLeaderboardResponse (so both feed the exact same client-side
+ * ranking pipeline — see lib/resultsReveal.ts), but only ever returned once
+ * the whole session has reached 'revealed'. `myGuestId` is the caller's own
+ * guest id, used purely for "(you)" row-marking and picking out the
+ * viewer's own per-bottle score — never another participant's.
+ */
+export interface FinalLeaderboardResponse {
+  wines: LeaderboardWineDTO[];
+  guesses: LeaderboardGuessDTO[];
+  guests: { id: string; displayName: string; completedAt: string | null }[];
+  scoringVersion: ScoringVersion;
+  sessionStatus: SessionStatus;
+  tastingMode: TastingMode;
+  totalCount: number;
+  revealedCount: number;
+  title: string;
+  tastingDate: string;
+  myGuestId: string;
+}
+
 // --- seen-only shapes (see get_seen_tasting_state / upsert_seen_rating) ---
 
 /**
@@ -646,6 +669,7 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   bottle_not_active: "That bottle isn't the current active bottle yet.",
   guess_already_locked: "Your guess for this bottle is already locked in.",
   bottle_not_revealed: "That bottle hasn't been revealed yet.",
+  not_fully_revealed: "The final leaderboard and tasting recap will be available once every bottle has been revealed.",
   rating_required: "A rating is required.",
   ratings_already_revealed: "This wine's group rating has been revealed, so ratings for it are now locked.",
 

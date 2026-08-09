@@ -3,6 +3,7 @@ import { Confidence, WineGuess, WineIdentityInput } from "@/types/tasting";
 import { isCustomSingleGrape, reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
 import {
   ActiveBottleStateResponse,
+  FinalLeaderboardResponse,
   GuestSessionStateResponse,
   HostGuessProgressDTO,
   JoinSessionResponse,
@@ -149,6 +150,17 @@ export async function getRevealedBottlesSummary(
     p_guest_token: guestToken,
   });
   return { data: data as RevealedBottlesSummaryResponse | null, error };
+}
+
+/** Final leaderboard / tasting recap data source — see README "Final leaderboard and tasting recap". Only ever returns data once the whole session has reached 'revealed'; raises `not_fully_revealed` otherwise. */
+export async function getFinalLeaderboard(
+  supabase: SupabaseClient,
+  guestToken: string
+) {
+  const { data, error } = await supabase.rpc("get_final_leaderboard_for_guest", {
+    p_guest_token: guestToken,
+  });
+  return { data: data as FinalLeaderboardResponse | null, error };
 }
 
 // --- seen only ---

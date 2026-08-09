@@ -2,13 +2,16 @@ import {
   GuestSubmission,
   ScoredGuess,
   ScoringVersion,
+  SessionStatus,
+  TastingMode,
   TastingSession,
   TasterResult,
   WineAnswerKey,
   WineGuess,
+  WineResult,
 } from "@/types/tasting";
 import { scoreWineGuess } from "./scoring";
-import { calculateTasterResults } from "./results";
+import { calculateTasterResults, calculateWineResults } from "./results";
 import { round1 } from "./math";
 import {
   buildCourseRevealSubmissions,
@@ -16,7 +19,10 @@ import {
 } from "./supabase/mappers";
 import {
   BottleResultForHostResponse,
+  FinalLeaderboardResponse,
   HostBottleGuessDTO,
+  LeaderboardGuessDTO,
+  LeaderboardWineDTO,
   ProvisionalLeaderboardResponse,
   RevealedWineGuessRow,
 } from "./supabase/types";
@@ -142,36 +148,55 @@ export function formatBottleAggregateSummary(aggregate: HostBottleAggregate): st
   return `Average score: ${aggregate.averageScore} / ${aggregate.totalPossiblePoints}`;
 }
 
-// --- Provisional leaderboard (host-only, revealed bottles only) ---
+// --- Shared ranking pipeline (provisional host leaderboard + final leaderboard/recap) ---
 
-export interface ProvisionalLeaderboardView {
-  tasterResults: TasterResult[];
+/**
+ * The one shape `get_provisional_leaderboard_for_host` and
+ * `get_final_leaderboard_for_guest` both return (see supabase/schema.sql) —
+ * every currently-in-scope wine's answer key plus every counted guess for
+ * those wines, and every guest row. `buildRankedResults` below is the single
+ * place that turns this raw, server-authorized shape into ranked results, so
+ * the host-provisional and participant-final leaderboards can never compute
+ * a rank two different ways.
+ */
+interface RankedResultsSource {
+  wines: LeaderboardWineDTO[];
+  guesses: LeaderboardGuessDTO[];
+  guests: { id: string; displayName: string; completedAt: string | null }[];
+  tastingMode: TastingMode;
   scoringVersion: ScoringVersion;
-  allRevealed: boolean;
-  revealedCount: number;
-  totalCount: number;
+  sessionStatus: SessionStatus;
+}
+
+interface RankedResults {
+  tasterResults: TasterResult[];
+  wineResults: WineResult[];
 }
 
 /**
- * Builds the host's provisional leaderboard by constructing a synthetic
- * `TastingSession` scoped to only the currently-revealed wines, then calling
- * the exact same `buildRevealedSubmissions`/`buildCourseRevealSubmissions` +
- * `calculateTasterResults` pipeline the final /results page already uses
- * (see lib/supabase/mappers.ts, lib/results.ts) — no ranking/scoring math is
- * duplicated here, only the data scoping changes. Never used for Seen
- * tastings, which have no scoring/leaderboard model at all.
+ * Builds a synthetic `TastingSession` scoped to just the wines in `source`,
+ * then calls the exact same `buildRevealedSubmissions`/
+ * `buildCourseRevealSubmissions` + `calculateTasterResults`/
+ * `calculateWineResults` pipeline the final `/results` report already uses
+ * (see lib/supabase/mappers.ts, lib/results.ts) — no ranking or per-bottle
+ * scoring math is ever duplicated here, only the data scoping changes.
+ * Shared by `buildProvisionalLeaderboard` (host, revealed-bottles-only) and
+ * `buildFinalLeaderboardView` (participant, only ever called once every
+ * bottle is revealed) so the two can never quietly compute a rank
+ * differently.
  *
  * Ties are broken using calculateTasterResults's own existing tie-break key
  * sequence (percentage, then raw points, then submitted-guess count, then
  * exact core matches — see lib/results.ts); any true remaining tie falls
  * back to alphabetical display-name order, achieved by pre-sorting the
  * submissions alphabetically before ranking and relying on Array.sort's
- * guaranteed stability.
+ * guaranteed stability. This repository's canonical ranking has no notion of
+ * "more perfect-score bottles" as a tie-break key, so that key is
+ * deliberately not invented here — see README "Final leaderboard and
+ * tasting recap".
  */
-export function buildProvisionalLeaderboard(
-  response: ProvisionalLeaderboardResponse
-): ProvisionalLeaderboardView {
-  const wines: WineAnswerKey[] = response.wines.map((w) => ({
+function buildRankedResults(source: RankedResultsSource): RankedResults {
+  const wines: WineAnswerKey[] = source.wines.map((w) => ({
     id: w.id,
     code: w.anonymousCode,
     country: w.country,
@@ -186,7 +211,7 @@ export function buildProvisionalLeaderboard(
     tastingOrder: w.tastingOrder,
   }));
 
-  const guessRows: RevealedWineGuessRow[] = response.guesses.map((g) => ({
+  const guessRows: RevealedWineGuessRow[] = source.guesses.map((g) => ({
     id: "",
     session_id: "",
     wine_id: g.wineId,
@@ -206,13 +231,13 @@ export function buildProvisionalLeaderboard(
     locked_at: g.lockedAt,
   }));
 
-  const guestSummaries = response.guests.map((g) => ({ id: g.id, displayName: g.displayName }));
+  const guestSummaries = source.guests.map((g) => ({ id: g.id, displayName: g.displayName }));
   const submissions: GuestSubmission[] =
-    response.tastingMode === "course_reveal"
+    source.tastingMode === "course_reveal"
       ? buildCourseRevealSubmissions(guessRows, guestSummaries)
       : buildRevealedSubmissions(
           guessRows,
-          response.guests.filter((g) => g.completedAt !== null).map((g) => ({ id: g.id, displayName: g.displayName }))
+          source.guests.filter((g) => g.completedAt !== null).map((g) => ({ id: g.id, displayName: g.displayName }))
         );
 
   const alphabeticalSubmissions = [...submissions].sort((a, b) => a.guestName.localeCompare(b.guestName));
@@ -223,16 +248,162 @@ export function buildProvisionalLeaderboard(
     title: "",
     date: "",
     wines,
-    status: response.sessionStatus,
+    status: source.sessionStatus,
     createdAt: "",
-    scoringVersion: response.scoringVersion,
+    scoringVersion: source.scoringVersion,
   };
 
   return {
     tasterResults: calculateTasterResults(session, alphabeticalSubmissions),
+    wineResults: calculateWineResults(session, alphabeticalSubmissions),
+  };
+}
+
+// --- Provisional leaderboard (host-only, revealed bottles only) ---
+
+export interface ProvisionalLeaderboardView {
+  tasterResults: TasterResult[];
+  wineResults: WineResult[];
+  scoringVersion: ScoringVersion;
+  allRevealed: boolean;
+  revealedCount: number;
+  totalCount: number;
+}
+
+/**
+ * Builds the host's provisional leaderboard — see `buildRankedResults`
+ * above for the shared ranking pipeline. Never used for Seen tastings,
+ * which have no scoring/leaderboard model at all.
+ */
+export function buildProvisionalLeaderboard(
+  response: ProvisionalLeaderboardResponse
+): ProvisionalLeaderboardView {
+  const { tasterResults, wineResults } = buildRankedResults(response);
+
+  return {
+    tasterResults,
+    wineResults,
     scoringVersion: response.scoringVersion,
     allRevealed: response.totalCount > 0 && response.revealedCount === response.totalCount,
     revealedCount: response.revealedCount,
     totalCount: response.totalCount,
   };
+}
+
+// --- Final leaderboard + tasting recap (participant, only once fully revealed) ---
+
+export interface FinalLeaderboardView {
+  tasterResults: TasterResult[];
+  wineResults: WineResult[];
+  /** The viewer's own guest id — for "(you)" row-marking and picking out their own per-bottle score, never anyone else's. */
+  myGuestId: string;
+  title: string;
+  tastingDate: string;
+  tastingMode: TastingMode;
+  scoringVersion: ScoringVersion;
+  revealedCount: number;
+  totalCount: number;
+}
+
+/**
+ * Builds the participant-facing final leaderboard + tasting recap data —
+ * see `buildRankedResults` above for the shared ranking pipeline reused
+ * from the host provisional leaderboard. Only ever called with a response
+ * from `get_final_leaderboard_for_guest`, which itself only ever returns
+ * data once the whole session has reached `revealed` — this function does
+ * no additional eligibility gating of its own.
+ */
+export function buildFinalLeaderboardView(response: FinalLeaderboardResponse): FinalLeaderboardView {
+  const { tasterResults, wineResults } = buildRankedResults(response);
+
+  return {
+    tasterResults,
+    wineResults,
+    myGuestId: response.myGuestId,
+    title: response.title,
+    tastingDate: response.tastingDate,
+    tastingMode: response.tastingMode,
+    scoringVersion: response.scoringVersion,
+    revealedCount: response.revealedCount,
+    totalCount: response.totalCount,
+  };
+}
+
+/** This app's one existing "(you)" row-marking convention (see HostControlClient's participant list) — reused verbatim rather than inventing a second style. */
+export function withYouSuffix(displayName: string, isYou: boolean): string {
+  return isYou ? `${displayName} (you)` : displayName;
+}
+
+/** `taster.overallAccuracyPercent`, formatted to this app's one existing leaderboard-percentage convention (see TasterLeaderboard) — one decimal place, e.g. "84.0%". */
+export function formatLeaderboardPercent(overallAccuracyPercent: number): string {
+  return `${overallAccuracyPercent.toFixed(1)}%`;
+}
+
+/** This taster's own row, or undefined if they have no counted score for this scope (see README "Final leaderboard and tasting recap" — never fabricated). */
+export function findMyTasterResult(tasterResults: TasterResult[], myGuestId: string): TasterResult | undefined {
+  return tasterResults.find((t) => t.guestId === myGuestId);
+}
+
+/** One guest's own scored guess for one bottle, or undefined if they have no counted guess for it — never another guest's. */
+export function findGuessByGuestId(wineResult: WineResult, guestId: string): ScoredGuess | undefined {
+  return wineResult.guesses.find((g) => g.guestId === guestId);
+}
+
+// --- Host recap: per-bottle aggregate overview ---
+
+export interface HostRecapBottleSummary {
+  wine: WineAnswerKey;
+  submittedCount: number;
+  /** Arithmetic mean of each counted guess's own normalized `overallAccuracyPercent` — never a raw-points average across guesses (see README "Final leaderboard and tasting recap" — "Bottle average"). Null when submittedCount is 0. */
+  averagePercent: number | null;
+  /** Native-form (this bottle's own denominator — every guess for one bottle already shares it) highest score. Null when submittedCount is 0. */
+  highestScore: { earned: number; possible: number } | null;
+}
+
+/** Builds the host recap's per-bottle aggregate overview directly from the same `wineResults` the provisional leaderboard already computed — no second data fetch, no duplicated scoring. */
+export function buildHostRecapBottleSummaries(wineResults: WineResult[]): HostRecapBottleSummary[] {
+  return wineResults.map((wr) => {
+    const guesses = wr.guesses;
+    if (guesses.length === 0) {
+      return { wine: wr.wine, submittedCount: 0, averagePercent: null, highestScore: null };
+    }
+    const averagePercent = round1(
+      guesses.reduce((sum, g) => sum + g.overallAccuracyPercent, 0) / guesses.length
+    );
+    const highest = guesses.reduce((max, g) => (g.totalPoints > max.totalPoints ? g : max), guesses[0]);
+    return {
+      wine: wr.wine,
+      submittedCount: guesses.length,
+      averagePercent,
+      highestScore: { earned: highest.totalPoints, possible: highest.totalPossiblePoints },
+    };
+  });
+}
+
+/** "No submitted guesses to score." per README "Final leaderboard and tasting recap" — the exact required host-recap empty-state copy (distinct from the per-bottle result page's own "...yet." wording, which is unchanged). */
+export function formatHostRecapBottleLine(summary: HostRecapBottleSummary): string {
+  if (summary.submittedCount === 0 || summary.averagePercent === null || summary.highestScore === null) {
+    return "No submitted guesses to score.";
+  }
+  return `${summary.submittedCount} submitted · Average ${summary.averagePercent}% · Highest ${summary.highestScore.earned} / ${summary.highestScore.possible}`;
+}
+
+// --- Host leaderboard: per-participant per-bottle detail ---
+
+export interface ParticipantBottleTotal {
+  /** The bottle's safe anonymous code (e.g. "Bottle 3") — never a raw id. */
+  code: string;
+  /** Null when this participant has no counted guess for this bottle. */
+  guess: ScoredGuess | null;
+}
+
+/** One participant's own per-bottle totals across every wine in `wineResults`, in tasting order — used by the host leaderboard's expandable per-participant detail. Never another participant's guess. */
+export function buildParticipantBottleTotals(
+  wineResults: WineResult[],
+  guestId: string
+): ParticipantBottleTotal[] {
+  return wineResults.map((wr) => ({
+    code: wr.wine.code,
+    guess: findGuessByGuestId(wr, guestId) ?? null,
+  }));
 }

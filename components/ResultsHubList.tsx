@@ -8,7 +8,10 @@ interface ResultsHubListProps {
   bottles: RevealedBottleSummaryDTO[];
   allRevealed: boolean;
   resultHref: (wineId: string) => string;
-  finalResultsHref: string;
+  /** The new dedicated final-leaderboard page (rank/name/percentage only) — see README "Final leaderboard and tasting recap". */
+  leaderboardHref: string;
+  /** The new in-app tasting recap page. */
+  recapHref: string;
 }
 
 /**
@@ -20,7 +23,7 @@ interface ResultsHubListProps {
  * contributor labels"); only actual wine identity requires a reveal, so an
  * unrevealed row simply has no "View results" action.
  */
-export function ResultsHubList({ bottles, allRevealed, resultHref, finalResultsHref }: ResultsHubListProps) {
+export function ResultsHubList({ bottles, allRevealed, resultHref, leaderboardHref, recapHref }: ResultsHubListProps) {
   return (
     <div className="flex flex-col gap-6">
       <Card className="p-0">
@@ -46,9 +49,16 @@ export function ResultsHubList({ bottles, allRevealed, resultHref, finalResultsH
       </Card>
 
       {allRevealed ? (
-        <Link href={finalResultsHref}>
-          <Button fullWidth>View final leaderboard</Button>
-        </Link>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <Link href={recapHref} className="flex-1">
+            <Button fullWidth>View tasting recap</Button>
+          </Link>
+          <Link href={leaderboardHref} className="flex-1">
+            <Button variant="secondary" fullWidth>
+              View final leaderboard
+            </Button>
+          </Link>
+        </div>
       ) : (
         <Card className="text-sm text-cellar-muted">
           The final leaderboard will be available after all results are revealed.

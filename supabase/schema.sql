@@ -2362,6 +2362,120 @@ begin
 end;
 $$;
 
+-- Guest: the final-leaderboard/tasting-recap data source (see README "Final
+-- leaderboard and tasting recap") — same wines/guesses/guests shape as
+-- get_provisional_leaderboard_for_host above (so the client can reuse the
+-- exact same ranking pipeline for both), but guest-token authenticated and
+-- hard-gated on the WHOLE session being 'revealed', never a per-bottle
+-- check. Full blind and course_reveal both only ever reach status =
+-- 'revealed' once every one of their bottles has already been individually
+-- revealed (see reveal_full_blind_bottle / reveal_bottle above), so this
+-- gate is exactly "every bottle eligible to this participant has been
+-- revealed" for both modes — there is no separate "future course bottle"
+-- case to additionally guard against here. Raises 'not_fully_revealed'
+-- (rather than silently returning partial data) if called before that
+-- point; the participant-facing pages only ever call this after their own
+-- get_guest_session_state read already reports status = 'revealed', so this
+-- is a defense-in-depth check, not the primary UX gate. Rejects 'seen' —
+-- Seen tasting has no compatible blind score/reveal model (see README
+-- "Tasting modes") and is deliberately left out of this feature entirely.
+create or replace function get_final_leaderboard_for_guest(
+  p_guest_token text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_guest guests%rowtype;
+  v_session tasting_sessions%rowtype;
+  v_wines jsonb;
+  v_guesses jsonb;
+  v_guests jsonb;
+  v_total_count int;
+  v_revealed_count int;
+begin
+  select * into v_guest from guests where guest_token = p_guest_token;
+  if not found then
+    raise exception 'invalid_guest_token';
+  end if;
+  select * into v_session from tasting_sessions where id = v_guest.session_id;
+
+  if v_session.tasting_mode not in ('full_blind', 'course_reveal') then
+    raise exception 'invalid_tasting_mode';
+  end if;
+  if v_session.status <> 'revealed' then
+    raise exception 'not_fully_revealed';
+  end if;
+
+  select count(*), count(*) filter (where revealed_at is not null)
+  into v_total_count, v_revealed_count
+  from wines where session_id = v_session.id;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'id', w.id,
+    'anonymousCode', w.anonymous_code,
+    'bottleNumber', w.bottle_number,
+    'country', w.country,
+    'region', w.region,
+    'appellation', w.appellation,
+    'grapeBlendMode', w.grape_blend_mode,
+    'grapeBlend', w.grape_style,
+    'producer', w.producer,
+    'wineCuvee', w.wine_cuvee,
+    'vintage', w.vintage,
+    'wineStyle', w.wine_style,
+    'tastingOrder', w.tasting_order
+  ) order by w.tasting_order), '[]'::jsonb)
+  into v_wines
+  from wines w where w.session_id = v_session.id and w.revealed_at is not null;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'wineId', wg.wine_id,
+    'guestId', wg.guest_id,
+    'guestName', g.display_name,
+    'lockedAt', wg.locked_at,
+    'countryGuess', wg.country_guess,
+    'regionGuess', wg.region_guess,
+    'appellationGuess', wg.appellation_guess,
+    'grapeBlendMode', wg.grape_blend_mode,
+    'grapeBlendGuess', wg.grape_style_guess,
+    'producerGuess', wg.producer_guess,
+    'wineCuveeGuess', wg.wine_cuvee_guess,
+    'vintageGuess', wg.vintage_guess,
+    'rating', wg.rating,
+    'confidence', wg.confidence
+  )), '[]'::jsonb)
+  into v_guesses
+  from wine_guesses wg
+  join guests g on g.id = wg.guest_id
+  join wines w on w.id = wg.wine_id
+  where w.session_id = v_session.id and w.revealed_at is not null;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'id', g.id,
+    'displayName', g.display_name,
+    'completedAt', g.completed_at
+  ) order by g.created_at), '[]'::jsonb)
+  into v_guests
+  from guests g where g.session_id = v_session.id;
+
+  return jsonb_build_object(
+    'wines', v_wines,
+    'guesses', v_guesses,
+    'guests', v_guests,
+    'scoringVersion', v_session.scoring_version,
+    'sessionStatus', v_session.status,
+    'tastingMode', v_session.tasting_mode,
+    'totalCount', v_total_count,
+    'revealedCount', v_revealed_count,
+    'title', v_session.title,
+    'tastingDate', v_session.tasting_date,
+    'myGuestId', v_guest.id
+  );
+end;
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Seen tasting mode (see README "Tasting modes"): every registered bottle
 -- becomes fully visible to every participant the moment the host starts
@@ -2651,6 +2765,7 @@ grant execute on function reveal_full_blind_bottle(uuid, text, uuid) to anon, au
 grant execute on function get_bottle_result_for_host(uuid, text, uuid) to anon, authenticated;
 grant execute on function get_revealed_bottles_summary(text) to anon, authenticated;
 grant execute on function get_provisional_leaderboard_for_host(uuid, text) to anon, authenticated;
+grant execute on function get_final_leaderboard_for_guest(text) to anon, authenticated;
 grant execute on function join_tasting_session(uuid, text) to anon, authenticated;
 grant execute on function get_registration_state(text) to anon, authenticated;
 grant execute on function register_bottle(text, text, text, text, text, text, text, text, text, text, jsonb, text) to anon, authenticated;

@@ -688,6 +688,11 @@ export function HostControlClient({
                       View leaderboard
                     </Button>
                   </Link>
+                  <Link href={`/host/${publicId}/recap?token=${encodeURIComponent(hostToken)}`}>
+                    <Button variant="secondary" fullWidth>
+                      View tasting recap
+                    </Button>
+                  </Link>
                 </div>
               </div>
             </>
@@ -762,6 +767,11 @@ export function HostControlClient({
                       View leaderboard
                     </Button>
                   </Link>
+                  <Link href={`/host/${publicId}/recap?token=${encodeURIComponent(hostToken)}`}>
+                    <Button variant="secondary" fullWidth>
+                      View tasting recap
+                    </Button>
+                  </Link>
                 </div>
               </div>
             </>
@@ -816,6 +826,20 @@ export function HostControlClient({
           <Link href={`/results/${publicId}`}>
             <Button>View shared results</Button>
           </Link>
+          {tastingMode !== "seen" && (
+            <div className="flex w-full flex-col gap-2 sm:flex-row">
+              <Link href={`/host/${publicId}/leaderboard?token=${encodeURIComponent(hostToken)}`} className="flex-1">
+                <Button variant="secondary" fullWidth>
+                  View final leaderboard
+                </Button>
+              </Link>
+              <Link href={`/host/${publicId}/recap?token=${encodeURIComponent(hostToken)}`} className="flex-1">
+                <Button variant="secondary" fullWidth>
+                  View tasting recap
+                </Button>
+              </Link>
+            </div>
+          )}
         </Card>
       )}
 

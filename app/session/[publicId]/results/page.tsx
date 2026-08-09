@@ -28,7 +28,9 @@ export default function CourseRevealResultsHubPage() {
   const router = useRouter();
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [summary, setSummary] = useState<RevealedBottlesSummaryResponse | null>(null);
+  const [announcement, setAnnouncement] = useState("");
   const guestTokenRef = useRef<string | null>(null);
+  const wasAllRevealedRef = useRef(false);
 
   const refresh = useCallback(async () => {
     const supabase = getSupabaseBrowserClient();
@@ -39,6 +41,10 @@ export default function CourseRevealResultsHubPage() {
       setLoadState("invalid-token");
       return;
     }
+    if (data.allRevealed && !wasAllRevealedRef.current) {
+      setAnnouncement("Final leaderboard and tasting recap are now available.");
+    }
+    wasAllRevealedRef.current = data.allRevealed;
     setSummary(data);
     setLoadState("ready");
   }, []);
@@ -117,6 +123,9 @@ export default function CourseRevealResultsHubPage() {
         <HomeLink />
         <HostControlsLink sessionPublicId={params.publicId} />
       </div>
+      <p role="status" aria-live="polite" className="sr-only">
+        {announcement}
+      </p>
       <div>
         <SectionEyebrow>Results</SectionEyebrow>
         <h1 className="mt-1.5 font-display text-3xl font-semibold text-cellar-maroon-dark">
@@ -127,7 +136,8 @@ export default function CourseRevealResultsHubPage() {
         bottles={summary.bottles}
         allRevealed={summary.allRevealed}
         resultHref={(wineId) => `/session/${params.publicId}/bottle/${wineId}/reveal`}
-        finalResultsHref={`/results/${params.publicId}`}
+        leaderboardHref={`/session/${params.publicId}/leaderboard`}
+        recapHref={`/session/${params.publicId}/recap`}
       />
     </main>
   );

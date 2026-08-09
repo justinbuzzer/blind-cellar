@@ -1382,6 +1382,144 @@ select get_bottle_result_for_host(
 
 No RLS policy or table grant changed. Every new/replaced function runs `SECURITY DEFINER` and re-verifies the caller's guest or host token itself — nothing here trusts a client-supplied role, reveal state, or eligibility flag. `get_bottle_result_for_host` and `get_provisional_leaderboard_for_host` are host-token-gated and hard-fail on `revealed_at is null`/an unrevealed bottle, so a valid host token can never pull an unrevealed bottle's identity or guesses through them. `get_revealed_bottle`'s tightened `guesses` array is scoped to `wg.guest_id = v_guest.id` in its own `where` clause — not filtered client-side — so an ordinary participant's own successful call can never contain another guest's guess even if the client code were compromised. `wine_guesses` itself remains untouched: no new column, no new grant, no addition to the `supabase_realtime` publication.
 
+## Migrating for the final leaderboard and tasting recap
+
+Adds one new RPC, `get_final_leaderboard_for_guest` (see README "Final leaderboard and tasting recap") — no new table, column, or RLS policy, and no change to any existing RPC. It mirrors `get_provisional_leaderboard_for_host`'s exact wines/guesses/guests shape (so both feed the same client-side ranking pipeline in `lib/resultsReveal.ts`), but is guest-token authenticated and hard-gated on the whole session being `revealed`, rather than host-token authenticated and scoped to currently-revealed bottles.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+```sql
+-- Guest: the final-leaderboard/tasting-recap data source (see README "Final
+-- leaderboard and tasting recap") — same wines/guesses/guests shape as
+-- get_provisional_leaderboard_for_host above (so the client can reuse the
+-- exact same ranking pipeline for both), but guest-token authenticated and
+-- hard-gated on the WHOLE session being 'revealed', never a per-bottle
+-- check. Full blind and course_reveal both only ever reach status =
+-- 'revealed' once every one of their bottles has already been individually
+-- revealed (see reveal_full_blind_bottle / reveal_bottle), so this gate is
+-- exactly "every bottle eligible to this participant has been revealed"
+-- for both modes. Raises 'not_fully_revealed' if called before that point.
+-- Rejects 'seen' — Seen tasting has no compatible blind score/reveal model
+-- and is deliberately left out of this feature entirely.
+create or replace function get_final_leaderboard_for_guest(
+  p_guest_token text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_guest guests%rowtype;
+  v_session tasting_sessions%rowtype;
+  v_wines jsonb;
+  v_guesses jsonb;
+  v_guests jsonb;
+  v_total_count int;
+  v_revealed_count int;
+begin
+  select * into v_guest from guests where guest_token = p_guest_token;
+  if not found then
+    raise exception 'invalid_guest_token';
+  end if;
+  select * into v_session from tasting_sessions where id = v_guest.session_id;
+
+  if v_session.tasting_mode not in ('full_blind', 'course_reveal') then
+    raise exception 'invalid_tasting_mode';
+  end if;
+  if v_session.status <> 'revealed' then
+    raise exception 'not_fully_revealed';
+  end if;
+
+  select count(*), count(*) filter (where revealed_at is not null)
+  into v_total_count, v_revealed_count
+  from wines where session_id = v_session.id;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'id', w.id,
+    'anonymousCode', w.anonymous_code,
+    'bottleNumber', w.bottle_number,
+    'country', w.country,
+    'region', w.region,
+    'appellation', w.appellation,
+    'grapeBlendMode', w.grape_blend_mode,
+    'grapeBlend', w.grape_style,
+    'producer', w.producer,
+    'wineCuvee', w.wine_cuvee,
+    'vintage', w.vintage,
+    'wineStyle', w.wine_style,
+    'tastingOrder', w.tasting_order
+  ) order by w.tasting_order), '[]'::jsonb)
+  into v_wines
+  from wines w where w.session_id = v_session.id and w.revealed_at is not null;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'wineId', wg.wine_id,
+    'guestId', wg.guest_id,
+    'guestName', g.display_name,
+    'lockedAt', wg.locked_at,
+    'countryGuess', wg.country_guess,
+    'regionGuess', wg.region_guess,
+    'appellationGuess', wg.appellation_guess,
+    'grapeBlendMode', wg.grape_blend_mode,
+    'grapeBlendGuess', wg.grape_style_guess,
+    'producerGuess', wg.producer_guess,
+    'wineCuveeGuess', wg.wine_cuvee_guess,
+    'vintageGuess', wg.vintage_guess,
+    'rating', wg.rating,
+    'confidence', wg.confidence
+  )), '[]'::jsonb)
+  into v_guesses
+  from wine_guesses wg
+  join guests g on g.id = wg.guest_id
+  join wines w on w.id = wg.wine_id
+  where w.session_id = v_session.id and w.revealed_at is not null;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'id', g.id,
+    'displayName', g.display_name,
+    'completedAt', g.completed_at
+  ) order by g.created_at), '[]'::jsonb)
+  into v_guests
+  from guests g where g.session_id = v_session.id;
+
+  return jsonb_build_object(
+    'wines', v_wines,
+    'guesses', v_guesses,
+    'guests', v_guests,
+    'scoringVersion', v_session.scoring_version,
+    'sessionStatus', v_session.status,
+    'tastingMode', v_session.tasting_mode,
+    'totalCount', v_total_count,
+    'revealedCount', v_revealed_count,
+    'title', v_session.title,
+    'tastingDate', v_session.tasting_date,
+    'myGuestId', v_guest.id
+  );
+end;
+$$;
+
+grant execute on function get_final_leaderboard_for_guest(text) to anon, authenticated;
+```
+
+### 2. Verification queries
+
+```sql
+-- the function exists with the expected one-argument signature
+select routine_name from information_schema.routines
+where routine_name = 'get_final_leaderboard_for_guest';
+
+-- a session still collecting (or partway revealed) always rejects this call
+-- — never a partial ranking
+select get_final_leaderboard_for_guest(
+  (select guest_token from guests g join tasting_sessions s on s.id = g.session_id where s.status <> 'revealed' limit 1)
+);
+-- expect: an error containing 'not_fully_revealed'
+```
+
+### RLS and privacy summary
+
+No RLS policy or table grant changed. `get_final_leaderboard_for_guest` runs `SECURITY DEFINER`, independently re-verifies the caller's guest token, and hard-fails on anything but `status = 'revealed'` — a guest token can never pull a ranking, a wine identity, or a guess through this function before every bottle in the session has actually been revealed, regardless of what the client believes. Its response shape is intentionally identical to `get_provisional_leaderboard_for_host`'s so the exact same `lib/resultsReveal.ts` ranking pipeline (and its existing tests) cover both call sites — the final leaderboard/recap pages built on top of it only ever render the computed `TasterResult`/`WineResult` rows this pipeline produces, never the raw guess rows the RPC returns, so another participant's field-by-field guesses are never rendered anywhere in the new final leaderboard or recap UI.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

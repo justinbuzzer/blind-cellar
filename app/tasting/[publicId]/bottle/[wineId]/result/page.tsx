@@ -140,8 +140,8 @@ export default function FullBlindBottleResultPage() {
         <ParticipantScoreBreakdown wine={result.wine} score={submitted ? result.guesses[0] ?? null : null} />
       </section>
 
-      <Link href={allRevealed ? `/results/${params.publicId}` : `/tasting/${params.publicId}/results`}>
-        <Button fullWidth>{allRevealed ? "View final leaderboard" : "Back to results"}</Button>
+      <Link href={allRevealed ? `/tasting/${params.publicId}/recap` : `/tasting/${params.publicId}/results`}>
+        <Button fullWidth>{allRevealed ? "View tasting recap" : "Back to results"}</Button>
       </Link>
     </main>
   );
