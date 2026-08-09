@@ -12,6 +12,7 @@ import { StatusChip } from "@/components/StatusChip";
 import { ImageBand } from "@/components/ImageBand";
 import { TastingOrderList } from "@/components/host/TastingOrderList";
 import { SeenHostBottleRow } from "@/components/host/SeenHostBottleRow";
+import { BottleProgressControl } from "@/components/host/BottleProgressControl";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { ArchiveLink } from "@/components/navigation/ArchiveLink";
 import { AccountNav } from "@/components/navigation/AccountNav";
@@ -19,6 +20,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { hostControlImage } from "@/lib/appImages";
 import { WINE_STYLE_LABELS } from "@/types/tasting";
 import { formatSeenRatingStatus } from "@/lib/seenHostControls";
+import { formatGuessProgressTitle, formatProgressAccessibleLabel } from "@/lib/hostProgress";
 import {
   friendlyRpcError,
   HostActiveBottleDTO,
@@ -585,6 +587,19 @@ export function HostControlClient({
                       <span className="ml-auto rounded-full border border-cellar-border px-2 py-0.5 text-xs text-cellar-muted">
                         {WINE_STYLE_LABELS[wine.wineStyle]}
                       </span>
+                      {(tastingMode === "full_blind" ||
+                        (tastingMode === "course_reveal" && activeBottle?.id === wine.id)) && (
+                        <BottleProgressControl
+                          publicId={publicId}
+                          hostToken={hostToken}
+                          wineId={wine.id}
+                          responseKind="guess"
+                          title={formatGuessProgressTitle(wine.bottleNumber)}
+                          accessibleLabel={formatProgressAccessibleLabel("guess", {
+                            bottleNumber: wine.bottleNumber,
+                          })}
+                        />
+                      )}
                     </li>
                   ))}
                 </ol>
@@ -703,6 +718,8 @@ export function HostControlClient({
                       <SeenHostBottleRow
                         key={wine.id}
                         wine={wine}
+                        publicId={publicId}
+                        hostToken={hostToken}
                         onRevealClick={setConfirmingSeenWineId}
                       />
                     ))}

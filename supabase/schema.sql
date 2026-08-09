@@ -3359,4 +3359,131 @@ begin
 end;
 $$;
 
+-- ---------------------------------------------------------------------------
+-- Host per-bottle response-progress popover (see README "Host per-bottle
+-- response progress"): lets the host see, for one bottle at a time, how many
+-- eligible participants have submitted the relevant response and the safe
+-- display names of the ones who haven't — never guess/rating content, never
+-- an average, never anything not already computed elsewhere in this file.
+-- Deliberately a single on-demand RPC (called only when the host opens the
+-- popover) rather than baked into get_host_session's eager payload, so a
+-- normal page load never fetches every bottle's participant-name list.
+-- ---------------------------------------------------------------------------
+
+-- Host: per-bottle participant response progress. Reuses the exact same
+-- "eligible"/"submitted" predicates already used elsewhere in this file for
+-- each mode, so this can never drift into a second, competing definition:
+--   full_blind    -> guests.completed_at is not null (get_host_session's
+--                    completedCount / complete_guest_submission's own gate;
+--                    full_blind has no per-bottle lock, so this is
+--                    identical for every bottle in the session)
+--   course_reveal -> wine_guesses.locked_at is not null for this wine
+--                    (get_host_session's activeBottle.submittedCount /
+--                    lock_wine_guess), and only for the current active
+--                    bottle — the same "earliest unrevealed by tasting_order"
+--                    lookup and bottle_not_active guard as lock_wine_guess,
+--                    so a not-yet-released or already-revealed bottle can
+--                    never be queried, including by a host manually passing
+--                    a different wine id.
+--   seen          -> wine_guesses.rating is not null for this wine
+--                    (get_host_session's seen.ratedCount)
+-- "Eligible" is the same `guests` row count used by every one of those
+-- existing computations — the host counts once only because they have
+-- exactly one guests row (see create_tasting_session), never a special case
+-- here. Returns only counts and missing participants' existing safe
+-- guests.display_name — never a guess, a rating, a score, an email, or a
+-- token.
+create or replace function get_bottle_response_progress(
+  p_public_id uuid,
+  p_host_token text,
+  p_wine_id uuid
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_session tasting_sessions%rowtype;
+  v_wine wines%rowtype;
+  v_active_wine_id uuid;
+  v_response_kind text;
+  v_submitted_count int;
+  v_eligible_count int;
+  v_missing_names jsonb;
+begin
+  select * into v_session from tasting_sessions where public_id = p_public_id;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+  if v_session.host_token_hash <> encode(digest(p_host_token, 'sha256'), 'hex') then
+    raise exception 'invalid_host_token';
+  end if;
+
+  select * into v_wine from wines where id = p_wine_id and session_id = v_session.id;
+  if not found then
+    raise exception 'wine_not_in_session';
+  end if;
+
+  select count(*) into v_eligible_count from guests where session_id = v_session.id;
+
+  if v_session.tasting_mode = 'full_blind' then
+    v_response_kind := 'guess';
+    select count(*) into v_submitted_count from guests
+      where session_id = v_session.id and completed_at is not null;
+    select coalesce(jsonb_agg(display_name order by created_at), '[]'::jsonb) into v_missing_names
+      from guests where session_id = v_session.id and completed_at is null;
+
+  elsif v_session.tasting_mode = 'course_reveal' then
+    v_response_kind := 'guess';
+
+    -- Same lookup lock_wine_guess uses: the single earliest-tasting_order
+    -- unrevealed bottle. A not-yet-released or already-revealed bottle id
+    -- (including a manually-substituted one) can never match, so this can't
+    -- be used to peek at a bottle the host isn't currently working through.
+    select id into v_active_wine_id from wines
+      where session_id = v_session.id and revealed_at is null
+      order by tasting_order asc
+      limit 1;
+    if v_active_wine_id is distinct from p_wine_id then
+      raise exception 'bottle_not_active';
+    end if;
+
+    select count(*) into v_submitted_count from wine_guesses
+      where wine_id = p_wine_id and locked_at is not null;
+    select coalesce(jsonb_agg(g.display_name order by g.created_at), '[]'::jsonb) into v_missing_names
+      from guests g
+      where g.session_id = v_session.id
+        and not exists (
+          select 1 from wine_guesses wg
+          where wg.wine_id = p_wine_id and wg.guest_id = g.id and wg.locked_at is not null
+        );
+
+  elsif v_session.tasting_mode = 'seen' then
+    v_response_kind := 'rating';
+    select count(*) into v_submitted_count from wine_guesses
+      where wine_id = p_wine_id and rating is not null;
+    select coalesce(jsonb_agg(g.display_name order by g.created_at), '[]'::jsonb) into v_missing_names
+      from guests g
+      where g.session_id = v_session.id
+        and not exists (
+          select 1 from wine_guesses wg
+          where wg.wine_id = p_wine_id and wg.guest_id = g.id and wg.rating is not null
+        );
+
+  else
+    raise exception 'invalid_tasting_mode';
+  end if;
+
+  return jsonb_build_object(
+    'bottleId', p_wine_id,
+    'responseKind', v_response_kind,
+    'submittedCount', v_submitted_count,
+    'eligibleCount', v_eligible_count,
+    'missingParticipantNames', v_missing_names
+  );
+end;
+$$;
+
+grant execute on function get_bottle_response_progress(uuid, text, uuid) to anon, authenticated;
+
 grant execute on function public.delete_cellar_bottle(uuid) to authenticated;

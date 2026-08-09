@@ -168,6 +168,23 @@ export interface RevealSeenRatingsResponse {
   groupRating: number | null;
 }
 
+/**
+ * Response from get_bottle_response_progress — see README "Host per-bottle
+ * response progress". Host-only, one bottle at a time, fetched only when the
+ * host opens the progress popover. Never carries a guess, a rating value, a
+ * score, an email, or a token — only safe counts and the existing session
+ * display names of participants who have not yet submitted.
+ */
+export interface BottleResponseProgressDTO {
+  bottleId: string;
+  /** "guess" for full_blind/course_reveal, "rating" for seen. */
+  responseKind: "guess" | "rating";
+  submittedCount: number;
+  eligibleCount: number;
+  /** Safe session display names only, for participants who have not submitted. */
+  missingParticipantNames: string[];
+}
+
 export interface HostSessionResponse {
   session: {
     id: string;

@@ -630,6 +630,42 @@ where table_name = 'guests' and column_name = 'display_name';
 
 No RLS policy changed and no new grant was added to the `guests` table — `contributorName` is read via a subselect inside two already-`SECURITY DEFINER` functions, exactly the same pattern already in production for Seen mode and post-reveal. Both RPCs already scope every field they return to the calling guest token's own session/bottles (and, for `get_active_bottle_state`, to only the currently-active bottle), so this adds no new way to see another session's, another participant's, or a not-yet-active bottle's contributor. `contributorName` carries only the existing session-scoped display name — never email, account/profile data, or any other identifier.
 
+## Migrating for the host per-bottle response-progress popover
+
+Adds one new host-only RPC, `get_bottle_response_progress` (see README "Host per-bottle response progress") — no new table, column, or RLS policy. Computes counts and missing-participant names entirely from the existing `guests`/`wines`/`wine_guesses` data, reusing the exact same eligibility/submission predicates already used by `get_host_session`, `complete_guest_submission`, and `lock_wine_guess`. Re-running the full `supabase/schema.sql` brings an existing project up to date.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+1. **New `get_bottle_response_progress(p_public_id uuid, p_host_token text, p_wine_id uuid) returns jsonb`** — validates the host token exactly like `get_host_session`, validates the bottle belongs to the session, then branches on `tasting_sessions.tasting_mode`:
+   - `full_blind`: `submittedCount` = `guests` with `completed_at is not null`; same for every bottle in the session, since full_blind has no per-bottle lock.
+   - `course_reveal`: re-derives the current active bottle (the same earliest-`revealed_at is null`-by-`tasting_order` lookup `lock_wine_guess` uses) and raises `bottle_not_active` for any other bottle id; `submittedCount` = `wine_guesses` for that wine with `locked_at is not null`.
+   - `seen`: `submittedCount` = `wine_guesses` for that wine with `rating is not null`.
+   - In every case, `eligibleCount` is the session's total `guests` row count, and `missingParticipantNames` is the `display_name` of every eligible guest without a qualifying response, ordered by `created_at`.
+2. **Granted to `anon, authenticated`** like every other guest/host RPC — the host-token check inside the function itself is what actually restricts access, not the grant.
+
+### 2. Verification queries
+
+```sql
+-- the function exists with the expected three-argument signature
+select routine_name, data_type from information_schema.parameters
+where specific_name = (
+  select specific_name from information_schema.routines
+  where routine_name = 'get_bottle_response_progress'
+) order by ordinal_position;
+
+-- a wrong host token is rejected the same way every other host RPC rejects one
+select get_bottle_response_progress(
+  (select public_id from tasting_sessions limit 1),
+  'not-a-real-token',
+  (select id from wines limit 1)
+);
+-- expect: an error containing 'invalid_host_token'
+```
+
+### RLS and privacy summary
+
+No RLS policy changed and no new grant was added to `wine_guesses` (which still has no anon SELECT policy at all — see "Views" above) or to any column of `guests`/`wines` beyond the existing ones. `get_bottle_response_progress` runs as `SECURITY DEFINER` and returns only two counts plus the existing safe `guests.display_name` for non-submitters — never a guess, a rating value, a confidence, a note, a score, an email, or a token. A participant/guest token can never satisfy the host-token check, so this RPC is unreachable by anyone but the session's own host; a host of one session can never pass another session's bottle id and get a result, since the bottle-ownership check is scoped to `p_public_id`'s session. For `course_reveal`, requesting a not-yet-released or already-revealed bottle's progress always fails with `bottle_not_active`, the same guard `lock_wine_guess` already relies on — there is no way to peek at a bottle the host isn't currently working through, including by substituting a different wine id in the request.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

@@ -1,4 +1,5 @@
 import { Button } from "@/components/Button";
+import { BottleProgressControl } from "@/components/host/BottleProgressControl";
 import { HostBottleDTO } from "@/lib/supabase/types";
 import {
   formatSeenGroupRating,
@@ -6,9 +7,12 @@ import {
   formatSeenWineIdentity,
   formatSeenWineSecondaryLine,
 } from "@/lib/seenHostControls";
+import { RATING_PROGRESS_TITLE, formatProgressAccessibleLabel } from "@/lib/hostProgress";
 
 interface SeenHostBottleRowProps {
   wine: HostBottleDTO;
+  publicId: string;
+  hostToken: string;
   onRevealClick: (wineId: string) => void;
 }
 
@@ -23,12 +27,24 @@ interface SeenHostBottleRowProps {
  * Only ever rendered for a bottle whose `seen` field is populated — see
  * HostBottleDTO, populated by get_host_session only for seen-mode sessions.
  */
-export function SeenHostBottleRow({ wine, onRevealClick }: SeenHostBottleRowProps) {
+export function SeenHostBottleRow({ wine, publicId, hostToken, onRevealClick }: SeenHostBottleRowProps) {
   const seen = wine.seen;
   if (!seen) return null;
 
   const revealed = seen.ratingsRevealedAt !== null;
   const identity = formatSeenWineIdentity(seen);
+
+  const progressControl = (
+    <BottleProgressControl
+      publicId={publicId}
+      hostToken={hostToken}
+      wineId={wine.id}
+      responseKind="rating"
+      title={RATING_PROGRESS_TITLE}
+      subtitle={identity}
+      accessibleLabel={formatProgressAccessibleLabel("rating", { wineIdentityLabel: identity })}
+    />
+  );
 
   return (
     <li className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -47,15 +63,21 @@ export function SeenHostBottleRow({ wine, onRevealClick }: SeenHostBottleRowProp
           <>
             <p className="text-sm font-medium text-cellar-text">Ratings revealed</p>
             <p className="text-sm text-cellar-text">{formatSeenGroupRating(seen.groupRating)}</p>
-            <p className="text-sm text-cellar-muted">
-              {formatSeenRatingStatus(seen.ratedCount, seen.eligibleCount)}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-cellar-muted">
+                {formatSeenRatingStatus(seen.ratedCount, seen.eligibleCount)}
+              </p>
+              {progressControl}
+            </div>
           </>
         ) : (
           <>
-            <p className="text-sm text-cellar-muted">
-              {formatSeenRatingStatus(seen.ratedCount, seen.eligibleCount)}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-cellar-muted">
+                {formatSeenRatingStatus(seen.ratedCount, seen.eligibleCount)}
+              </p>
+              {progressControl}
+            </div>
             <Button
               variant="secondary"
               onClick={() => onRevealClick(wine.id)}
