@@ -6,6 +6,7 @@ import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { SegmentedControl } from "@/components/SegmentedControl";
+import { TextField } from "@/components/TextField";
 import { BottleForm, BottleFormErrors } from "@/components/registration/BottleForm";
 import { CellarBottleSelector } from "@/components/registration/CellarBottleSelector";
 import { PageHeader } from "@/components/PageHeader";
@@ -14,9 +15,14 @@ import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { BottleFormInput, registerBottle } from "@/lib/supabase/guestActions";
-import { registerBottleFromCellar } from "@/lib/supabase/cellarActions";
-import { cellarBottleFormatLabel, cellarWineIdentityLabel } from "@/lib/cellar";
-import { compactWineLocationLabel } from "@/lib/appellations";
+import { registerBottleFromCellar, registerBottlesFromCellarGroup } from "@/lib/supabase/cellarActions";
+import { cellarWineIdentityLabel } from "@/lib/cellar";
+import {
+  CellarBottleGroup,
+  formatAvailableCountLabel,
+  formatCellarFormatLine,
+  formatCellarOriginLine,
+} from "@/lib/cellarGrouping";
 import { CellarBottleRow, friendlyRpcError } from "@/lib/supabase/types";
 import { hasBottleFormErrors, validateBottleForm } from "@/lib/validation";
 import { bottleLabel } from "@/lib/codes";
@@ -58,9 +64,12 @@ export default function AddBottlePage() {
   const [source, setSource] = useState<Source>("manual");
   const [cellarLoadState, setCellarLoadState] = useState<CellarLoadState>("idle");
   const [availableCellarBottles, setAvailableCellarBottles] = useState<CellarBottleRow[]>([]);
-  const [selectedCellarBottle, setSelectedCellarBottle] = useState<CellarBottleRow | null>(null);
+  const [selectedCellarGroup, setSelectedCellarGroup] = useState<CellarBottleGroup | null>(null);
+  const [cellarQuantity, setCellarQuantity] = useState(1);
+  const [cellarQuantityError, setCellarQuantityError] = useState<string | null>(null);
   const [cellarSubmitting, setCellarSubmitting] = useState(false);
   const [cellarSubmitError, setCellarSubmitError] = useState<string | null>(null);
+  const [cellarAddedCount, setCellarAddedCount] = useState<number | null>(null);
 
   useEffect(() => {
     const token = getGuestToken(params.publicId);
@@ -126,8 +135,8 @@ export default function AddBottlePage() {
     setRegisteredNumber(data.bottleNumber);
   }
 
-  async function handleUseThisBottle() {
-    if (!selectedCellarBottle || cellarSubmitting) return;
+  async function handleAddFromCellarGroup() {
+    if (!selectedCellarGroup || cellarSubmitting) return;
     const token = getGuestToken(params.publicId);
     const supabase = getSupabaseBrowserClient();
     if (!token || !supabase) {
@@ -135,17 +144,51 @@ export default function AddBottlePage() {
       return;
     }
 
-    setCellarSubmitting(true);
     setCellarSubmitError(null);
-    const { data, error } = await registerBottleFromCellar(supabase, token, selectedCellarBottle.id);
-    setCellarSubmitting(false);
 
+    // A one-bottle group is always quantity 1 with no visible field (see
+    // README "Personal Cellar" — "Grouped display"); a multi-bottle group
+    // requires a valid 1..bottleCount quantity before the round trip.
+    if (selectedCellarGroup.bottleCount > 1) {
+      if (
+        !Number.isInteger(cellarQuantity) ||
+        cellarQuantity < 1 ||
+        cellarQuantity > selectedCellarGroup.bottleCount
+      ) {
+        setCellarQuantityError(`Enter a quantity between 1 and ${selectedCellarGroup.bottleCount}.`);
+        return;
+      }
+    }
+    setCellarQuantityError(null);
+    setCellarSubmitting(true);
+
+    if (selectedCellarGroup.bottleCount === 1) {
+      const { data, error } = await registerBottleFromCellar(
+        supabase,
+        token,
+        selectedCellarGroup.representative.id
+      );
+      setCellarSubmitting(false);
+      if (error || !data) {
+        setCellarSubmitError(friendlyRpcError(error));
+        return;
+      }
+      setCellarAddedCount(1);
+      return;
+    }
+
+    const { data, error } = await registerBottlesFromCellarGroup(
+      supabase,
+      token,
+      selectedCellarGroup.representative.id,
+      cellarQuantity
+    );
+    setCellarSubmitting(false);
     if (error || !data) {
       setCellarSubmitError(friendlyRpcError(error));
       return;
     }
-
-    setRegisteredNumber(data.bottleNumber);
+    setCellarAddedCount(data.count);
   }
 
   function resetForAnotherBottle() {
@@ -153,9 +196,12 @@ export default function AddBottlePage() {
     setErrors({});
     setSubmitError(null);
     setSource("manual");
-    setSelectedCellarBottle(null);
+    setSelectedCellarGroup(null);
+    setCellarQuantity(1);
+    setCellarQuantityError(null);
     setCellarSubmitError(null);
     setRegisteredNumber(null);
+    setCellarAddedCount(null);
     if (user) loadCellarBottles();
   }
 
@@ -196,8 +242,42 @@ export default function AddBottlePage() {
     );
   }
 
+  // Grouped Add-from-cellar success (see README "Personal Cellar" —
+  // "Grouped display") — distinct from the manual-registration screen above,
+  // which is unchanged. Covers both the one-bottle case (still registered
+  // via the original single-bottle RPC) and the new atomic multi-bottle add.
+  if (cellarAddedCount !== null) {
+    return (
+      <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
+        <HomeLink />
+        <div className="w-full border-t border-cellar-gold/40 pt-5">
+          <h1 className="font-display text-2xl font-semibold text-cellar-maroon-dark">
+            {cellarAddedCount === 1 ? "Bottle added to tasting." : `${cellarAddedCount} bottles added to tasting.`}
+          </h1>
+          <p className="mt-2 text-sm text-cellar-muted">Keep the wine&rsquo;s identity secret until reveal.</p>
+        </div>
+        <div className="flex w-full flex-col gap-2">
+          <Button fullWidth onClick={resetForAnotherBottle}>
+            Add another bottle
+          </Button>
+          <Button
+            fullWidth
+            variant="secondary"
+            onClick={() => router.push(`/register/${params.publicId}`)}
+          >
+            Back to my bottles
+          </Button>
+          <HostControlsLink
+            sessionPublicId={params.publicId}
+            className="self-center"
+          />
+        </div>
+      </main>
+    );
+  }
+
   const hasUnsavedChanges =
-    selectedCellarBottle !== null ||
+    selectedCellarGroup !== null ||
     (Object.keys(value) as (keyof BottleFormInput)[]).some((key) => value[key] !== EMPTY_BOTTLE[key]);
 
   const showSourceChoice = Boolean(user) && cellarLoadState === "ready" && availableCellarBottles.length > 0;
@@ -224,7 +304,7 @@ export default function AddBottlePage() {
           value={source}
           onChange={(next) => {
             setSource(next);
-            if (next === "manual") setSelectedCellarBottle(null);
+            if (next === "manual") setSelectedCellarGroup(null);
           }}
           options={[
             { value: "manual", label: "Add a new bottle" },
@@ -258,19 +338,45 @@ export default function AddBottlePage() {
           submitting={submitting}
           submitError={submitError}
         />
-      ) : selectedCellarBottle ? (
+      ) : selectedCellarGroup ? (
         <Card className="flex flex-col gap-3">
           <SectionEyebrow>Selected from your cellar</SectionEyebrow>
+          <p className="text-xs font-medium uppercase tracking-[0.15em] text-cellar-muted">
+            {WINE_STYLE_LABELS[selectedCellarGroup.representative.wine_style]}
+          </p>
           <h3 className="font-display text-xl font-semibold text-cellar-maroon-dark">
-            {cellarWineIdentityLabel(selectedCellarBottle)}
+            {cellarWineIdentityLabel(selectedCellarGroup.representative)}
           </h3>
-          <p className="text-sm text-cellar-muted">
-            {compactWineLocationLabel(selectedCellarBottle)} ·{" "}
-            {WINE_STYLE_LABELS[selectedCellarBottle.wine_style]} · {cellarBottleFormatLabel(selectedCellarBottle)}
+          <p className="text-sm text-cellar-muted">{formatCellarOriginLine(selectedCellarGroup.representative)}</p>
+          <p className="text-sm text-cellar-muted">{formatCellarFormatLine(selectedCellarGroup.representative)}</p>
+          <p className="text-sm font-medium text-cellar-text">
+            {formatAvailableCountLabel(selectedCellarGroup.bottleCount)}
           </p>
           <p className="text-sm text-cellar-text">
-            This bottle will be reserved for this tasting until it is used or returned.
+            {selectedCellarGroup.bottleCount === 1
+              ? "This bottle will be reserved for this tasting until it is used or returned."
+              : "The bottles you add will be reserved for this tasting until they are used or returned."}
           </p>
+
+          {selectedCellarGroup.bottleCount > 1 && (
+            <TextField
+              label="Bottles to add"
+              hint={`Up to ${selectedCellarGroup.bottleCount} available.`}
+              error={cellarQuantityError ?? undefined}
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={selectedCellarGroup.bottleCount}
+              step={1}
+              className="max-w-[8rem]"
+              value={Number.isFinite(cellarQuantity) ? cellarQuantity : ""}
+              onChange={(e) => {
+                const raw = e.target.value;
+                setCellarQuantity(raw === "" ? NaN : Number(raw));
+                setCellarQuantityError(null);
+              }}
+            />
+          )}
 
           {cellarSubmitError && (
             <p
@@ -282,13 +388,13 @@ export default function AddBottlePage() {
           )}
 
           <div className="mt-1 flex flex-col gap-2">
-            <Button type="button" onClick={handleUseThisBottle} disabled={cellarSubmitting}>
-              {cellarSubmitting ? "Reserving…" : "Use this bottle"}
+            <Button type="button" onClick={handleAddFromCellarGroup} disabled={cellarSubmitting}>
+              {cellarSubmitting ? "Adding…" : "Add to tasting"}
             </Button>
             <Button
               type="button"
               variant="secondary"
-              onClick={() => setSelectedCellarBottle(null)}
+              onClick={() => setSelectedCellarGroup(null)}
               disabled={cellarSubmitting}
             >
               Choose another bottle
@@ -298,7 +404,7 @@ export default function AddBottlePage() {
               variant="ghost"
               onClick={() => {
                 setSource("manual");
-                setSelectedCellarBottle(null);
+                setSelectedCellarGroup(null);
               }}
               disabled={cellarSubmitting}
             >
@@ -307,7 +413,14 @@ export default function AddBottlePage() {
           </div>
         </Card>
       ) : (
-        <CellarBottleSelector bottles={availableCellarBottles} onSelect={setSelectedCellarBottle} />
+        <CellarBottleSelector
+          bottles={availableCellarBottles}
+          onSelect={(group) => {
+            setSelectedCellarGroup(group);
+            setCellarQuantity(1);
+            setCellarQuantityError(null);
+          }}
+        />
       )}
     </main>
   );

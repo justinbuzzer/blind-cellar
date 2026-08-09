@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/Button";
@@ -12,7 +12,9 @@ import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { AccountNav } from "@/components/navigation/AccountNav";
 import { ArchiveTabs } from "@/components/archive/ArchiveTabs";
-import { CellarEntryRow, CellarSessionSummary } from "@/components/cellar/CellarEntryRow";
+import { CellarSessionSummary } from "@/components/cellar/CellarEntryRow";
+import { CellarFilterBar } from "@/components/cellar/CellarFilterBar";
+import { CellarGroupRow } from "@/components/cellar/CellarGroupRow";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useAuthUser } from "@/lib/supabase/useAuthUser";
 import {
@@ -21,7 +23,9 @@ import {
   returnCellarBottleToAvailable,
 } from "@/lib/supabase/cellarActions";
 import { CellarBottleRow, friendlyRpcError } from "@/lib/supabase/types";
-import { CellarBottleStatus } from "@/types/tasting";
+import { CellarBottleStatus, CELLAR_STATUS_LABELS } from "@/types/tasting";
+import { applyCellarFilters, CellarFilterValues, DEFAULT_CELLAR_FILTERS, updateCellarFilter } from "@/lib/cellarFilters";
+import { groupCellarBottles } from "@/lib/cellarGrouping";
 
 type ConfigState = "checking" | "no-config" | "configured";
 type LoadState = "loading" | "ready" | "error";
@@ -46,6 +50,22 @@ export default function CellarPage() {
   const [rows, setRows] = useState<CellarBottleRow[]>([]);
   const [sessionById, setSessionById] = useState<Map<string, CellarSessionSummary>>(new Map());
   const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [filters, setFilters] = useState<CellarFilterValues>(DEFAULT_CELLAR_FILTERS);
+
+  const groups = useMemo(() => groupCellarBottles(rows), [rows]);
+  const visibleGroups = useMemo(() => applyCellarFilters(groups, filters), [groups, filters]);
+
+  // Whenever the underlying groups change (tab switch, refetch, or a
+  // mutation refresh) re-run the same "keep if still valid, else reset to
+  // All" cascade a user edit would trigger — a no-op when nothing actually
+  // went stale, so filter choices survive same-view refreshes, but a filter
+  // pointing at data that no longer exists in this tab is never left
+  // silently selected against zero options (see README "Personal Cellar" —
+  // "Grouped display").
+  useEffect(() => {
+    setFilters((current) => updateCellarFilter(groups, current, "type", current.type));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups]);
 
   const [returnTarget, setReturnTarget] = useState<CellarBottleRow | null>(null);
   const [returning, setReturning] = useState(false);
@@ -305,40 +325,56 @@ export default function CellarPage() {
         )}
 
         {loadState === "ready" && rows.length > 0 && (
-          <ul className="divide-y divide-cellar-border">
-            {rows.map((row) => (
-              <CellarEntryRow
-                key={row.id}
-                row={row}
-                session={sessionFor(row)}
-                onEdit={tab === "available" ? () => router.push(`/cellar/${row.id}/edit`) : undefined}
-                onDelete={
-                  tab === "available"
-                    ? () => {
-                        setDeleteError(null);
-                        setDeleteTarget(row);
-                      }
-                    : undefined
-                }
-                onReturn={
-                  tab === "reserved"
-                    ? () => {
-                        setReturnError(null);
-                        setReturnTarget(row);
-                      }
-                    : undefined
-                }
-                onConsume={
-                  tab === "reserved"
-                    ? () => {
-                        setConsumeError(null);
-                        setConsumeTarget(row);
-                      }
-                    : undefined
+          <>
+            {/* Status/all-cellar totals are always a count of physical bottles
+                (rows.length), never of visible grouped entries — filtering
+                below only narrows which groups are shown, it never changes
+                this number. */}
+            <p className="text-sm text-cellar-muted">
+              {CELLAR_STATUS_LABELS[tab]} ({rows.length})
+            </p>
+
+            <CellarFilterBar
+              groups={groups}
+              values={filters}
+              onChange={setFilters}
+            />
+
+            {visibleGroups.length === 0 ? (
+              <EmptyState
+                title="No bottles match these filters."
+                message="Try a different combination, or clear your filters to see everything."
+                action={
+                  <Button type="button" variant="secondary" onClick={() => setFilters(DEFAULT_CELLAR_FILTERS)}>
+                    Clear filters
+                  </Button>
                 }
               />
-            ))}
-          </ul>
+            ) : (
+              <ul className="divide-y divide-cellar-border">
+                {visibleGroups.map((group) => (
+                  <CellarGroupRow
+                    key={group.groupKey}
+                    group={group}
+                    sessionFor={sessionFor}
+                    onEdit={(row) => router.push(`/cellar/${row.id}/edit`)}
+                    onDelete={(row) => {
+                      setDeleteError(null);
+                      setDeleteTarget(row);
+                    }}
+                    onReturn={(row) => {
+                      setReturnError(null);
+                      setReturnTarget(row);
+                    }}
+                    onConsume={(row) => {
+                      setConsumeError(null);
+                      setConsumeTarget(row);
+                    }}
+                  />
+                ))}
+              </ul>
+            )}
+          </>
         )}
       </div>
 

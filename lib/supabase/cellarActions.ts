@@ -1,6 +1,10 @@
 import { SupabaseClient } from "@supabase/supabase-js";
 import { CellarBottleFormInput, cellarBottleRpcArgs } from "@/lib/cellar";
-import { AddCellarBottleResponse, RegisterBottleFromCellarResponse } from "./types";
+import {
+  AddCellarBottleResponse,
+  RegisterBottleFromCellarResponse,
+  RegisterBottlesFromCellarGroupResponse,
+} from "./types";
 
 /**
  * Thin RPC wrappers for Personal Cellar v1 (see README "Personal Cellar") —
@@ -42,6 +46,29 @@ export async function registerBottleFromCellar(
     p_cellar_bottle_id: cellarBottleId,
   });
   return { data: data as RegisterBottleFromCellarResponse | null, error };
+}
+
+/**
+ * Grouped cellar display (see README "Personal Cellar" — "Grouped
+ * display"): the atomic multi-bottle add, used only when the selected
+ * grouped Add-from-cellar entry has more than one available bottle. A
+ * one-bottle group still goes through `registerBottleFromCellar` above
+ * unchanged. `cellarBottleId` is only an anchor — the RPC recomputes the
+ * whole matching group and its current stock server-side; nothing about
+ * which specific physical bottles get reserved is ever decided client-side.
+ */
+export async function registerBottlesFromCellarGroup(
+  supabase: SupabaseClient,
+  guestToken: string,
+  cellarBottleId: string,
+  quantity: number
+) {
+  const { data, error } = await supabase.rpc("register_bottles_from_cellar_group", {
+    p_guest_token: guestToken,
+    p_cellar_bottle_id: cellarBottleId,
+    p_quantity: quantity,
+  });
+  return { data: data as RegisterBottlesFromCellarGroupResponse | null, error };
 }
 
 export async function returnCellarBottleToAvailable(supabase: SupabaseClient, cellarBottleId: string) {

@@ -701,6 +701,166 @@ select get_host_guess_progress(
 
 No RLS policy changed and no new grant was added anywhere. `get_host_guess_progress` runs as `SECURITY DEFINER` and returns only `{submittedCount, eligibleCount}` — never a participant name (submitted or missing), a bottle id, a guess, a rating value, a confidence, a note, a score, an email, or a token. Only the session's own host, calling with their own participant guest token, can ever get a non-error result; a different session's host, or any ordinary participant's guest token, always fails the same generic check. For `course_reveal`, a not-yet-released or already-revealed bottle can never be queried, exactly like `get_bottle_response_progress`. This is a deliberately more minimal DTO than that function's — the host's own guess screen must never receive participant names even though both RPCs are computed from the same underlying data.
 
+## Migrating for the grouped cellar display and atomic multi-bottle add
+
+Adds one new RPC, `register_bottles_from_cellar_group` (see README "Personal Cellar" — "Atomic multi-bottle add") — no new table, column, or RLS policy, and no change to any existing cellar RPC. It generalizes `register_bottle_from_cellar` (unchanged, still used for one-bottle groups) to atomically reserve N matching bottles and create N tasting bottles in a single transaction.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+```sql
+create or replace function public.register_bottles_from_cellar_group(
+  p_guest_token text,
+  p_cellar_bottle_id uuid,
+  p_quantity int
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_guest guests%rowtype;
+  v_session tasting_sessions%rowtype;
+  v_anchor cellar_bottles%rowtype;
+  v_ids uuid[];
+  v_next_number int;
+  v_next_order int;
+  v_first_bottle_number int;
+  v_wine_ids uuid[];
+begin
+  select * into v_guest from guests where guest_token = p_guest_token;
+  if not found then
+    raise exception 'invalid_guest_token';
+  end if;
+
+  select * into v_session from tasting_sessions where id = v_guest.session_id for update;
+  if v_session.status <> 'registration' then
+    raise exception 'registration_closed';
+  end if;
+
+  if v_uid is null then
+    raise exception 'cellar_bottle_unavailable';
+  end if;
+
+  if p_quantity is null or p_quantity < 1 or p_quantity > 100 then
+    raise exception 'invalid_quantity';
+  end if;
+
+  select * into v_anchor from cellar_bottles where id = p_cellar_bottle_id;
+  if not found or v_anchor.owner_user_id is distinct from v_uid or v_anchor.status <> 'available' then
+    raise exception 'cellar_bottle_unavailable';
+  end if;
+
+  perform validate_grape_blend_components(v_anchor.grape_blend_mode, v_anchor.grape_blend_components);
+
+  select array_agg(id order by created_at asc, id asc) into v_ids
+  from (
+    select id, created_at from cellar_bottles
+    where owner_user_id = v_uid
+      and status = 'available'
+      and country is not distinct from v_anchor.country
+      and region is not distinct from v_anchor.region
+      and appellation is not distinct from v_anchor.appellation
+      and grape_blend_mode is not distinct from v_anchor.grape_blend_mode
+      and grape_blend is not distinct from v_anchor.grape_blend
+      and grape_blend_components is not distinct from v_anchor.grape_blend_components
+      and producer is not distinct from v_anchor.producer
+      and wine_cuvee is not distinct from v_anchor.wine_cuvee
+      and vintage is not distinct from v_anchor.vintage
+      and wine_style is not distinct from v_anchor.wine_style
+      and bottle_format is not distinct from v_anchor.bottle_format
+      and bottle_format_other is not distinct from v_anchor.bottle_format_other
+      and storage_location is not distinct from v_anchor.storage_location
+    order by created_at asc, id asc
+    limit p_quantity
+    for update
+  ) matching;
+
+  if v_ids is null or array_length(v_ids, 1) < p_quantity then
+    raise exception 'cellar_group_stock_changed';
+  end if;
+
+  v_next_number := v_session.next_bottle_number;
+  select coalesce(max(tasting_order), 0) + 1 into v_next_order
+  from wines where session_id = v_session.id;
+  v_first_bottle_number := v_next_number;
+
+  with inserted as (
+    insert into wines (
+      session_id, display_order, bottle_number, tasting_order, anonymous_code, contributor_guest_id,
+      country, region, appellation, grape_style, grape_blend_mode, grape_blend_components, producer, wine_cuvee,
+      vintage, wine_style, cellar_bottle_id
+    )
+    select
+      v_session.id,
+      v_first_bottle_number - 1 + (u.ord - 1),
+      v_first_bottle_number + (u.ord - 1),
+      v_next_order + (u.ord - 1),
+      'Bottle ' || (v_first_bottle_number + (u.ord - 1)),
+      v_guest.id,
+      cb.country, cb.region, cb.appellation, cb.grape_blend, cb.grape_blend_mode, cb.grape_blend_components,
+      cb.producer, cb.wine_cuvee, cb.vintage, cb.wine_style, cb.id
+    from unnest(v_ids) with ordinality as u(cellar_id, ord)
+    join cellar_bottles cb on cb.id = u.cellar_id
+    returning wines.id as wine_id, wines.cellar_bottle_id as cellar_id, wines.bottle_number as bottle_number
+  ),
+  updated as (
+    update cellar_bottles cb
+    set status = 'reserved',
+        reserved_session_id = v_session.id,
+        reserved_tasting_bottle_id = inserted.wine_id,
+        reserved_at = now(),
+        updated_at = now()
+    from inserted
+    where cb.id = inserted.cellar_id
+    returning inserted.wine_id as wine_id, inserted.bottle_number as bottle_number
+  )
+  select array_agg(wine_id order by bottle_number) into v_wine_ids from updated;
+
+  update tasting_sessions set next_bottle_number = v_first_bottle_number + p_quantity where id = v_session.id;
+
+  return jsonb_build_object(
+    'ids', to_jsonb(v_wine_ids),
+    'count', p_quantity,
+    'firstBottleNumber', v_first_bottle_number
+  );
+end;
+$$;
+
+grant execute on function public.register_bottles_from_cellar_group(text, uuid, int) to authenticated;
+```
+
+1. **`p_cellar_bottle_id` is only an anchor** — one bottle the client already legitimately has from its own RLS-scoped fetch. The function never trusts a client-supplied "group" of ids; it re-derives the full matching set itself from `(owner_user_id = auth.uid(), status = 'available', <every material identity field equal to the anchor's>)`, using `is not distinct from` throughout so `null` fields (e.g. no appellation) compare correctly.
+2. **Locking and determinism**: the matching-rows subquery is `order by created_at asc, id asc ... limit p_quantity for update` — the same "oldest first, id as a stable tie-breaker" rule the grouped display's client-side helper (`lib/cellarGrouping.ts`'s `oldestBottleFirst`) documents, and `for update` means a concurrent identical call blocks rather than double-reserving the same row.
+3. **All-or-nothing**: if fewer than `p_quantity` matching rows can be locked, the function raises `cellar_group_stock_changed` *before* any insert/update runs — no partial reservation, no partial tasting-bottle creation, ever.
+4. **One transaction, N wines, N reservations**: a single `insert ... select ... returning` creates every wine row (continuing the session's existing `bottle_number`/`tasting_order`/`display_order`/`anonymous_code` allocation scheme), and a chained `update ... from inserted` reserves exactly the corresponding cellar rows, preserving the same 1:1 `wines.cellar_bottle_id` linkage `register_bottle_from_cellar` already established.
+5. **Granted to `authenticated` only** (not `anon`), matching every other cellar-mutating RPC — a signed-out request can never reach this far, since `auth.uid()` would already be null and the function raises immediately.
+
+### 2. Verification queries
+
+```sql
+-- the function exists with the expected three-argument signature
+select routine_name, data_type from information_schema.parameters
+where specific_name = (
+  select specific_name from information_schema.routines
+  where routine_name = 'register_bottles_from_cellar_group'
+) order by ordinal_position;
+
+-- requesting more bottles than currently available fails safely, with no
+-- partial insert/reservation left behind
+select register_bottles_from_cellar_group(
+  (select guest_token from guests limit 1),
+  (select id from cellar_bottles where status = 'available' limit 1),
+  9999
+);
+-- expect: an error containing 'cellar_group_stock_changed', and no new
+-- rows in `wines` or status changes in `cellar_bottles` as a result
+```
+
+### RLS and privacy summary
+
+No RLS policy changed and no new grant was added on `cellar_bottles` or `wines` themselves. `register_bottles_from_cellar_group` runs as `SECURITY DEFINER`, re-validates the caller's `auth.uid()` and cellar ownership independently of anything the client claims, and only ever operates on rows it has itself just re-selected and locked — a stale, tampered, or otherwise-incorrect client-side "group" can never cause it to touch a bottle outside the caller's own current matching set. The response contains only `{ids, count, firstBottleNumber}` — `ids` are the new wines' own ids (never rendered to the user), and no cellar bottle id, note, or other private field is ever returned.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

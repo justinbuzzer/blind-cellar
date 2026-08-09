@@ -492,6 +492,20 @@ export interface RegisterBottleFromCellarResponse {
   bottleNumber: number;
 }
 
+/**
+ * Grouped cellar display (see README "Personal Cellar" — "Grouped
+ * display"): register_bottles_from_cellar_group's response for adding N>1
+ * bottles from one grouped Add-from-cellar entry in a single atomic action.
+ * `ids` are the newly created wines' ids, in the same bottle-number order as
+ * `firstBottleNumber..firstBottleNumber+count-1` — never rendered to the
+ * user, only `count` is (for the pluralized confirmation message).
+ */
+export interface RegisterBottlesFromCellarGroupResponse {
+  ids: string[];
+  count: number;
+  firstBottleNumber: number;
+}
+
 /** Machine-readable error tags raised by the RPC functions (see schema.sql). */
 export const RPC_ERROR_MESSAGES: Record<string, string> = {
   title_required: "A tasting title is required.",
@@ -535,6 +549,11 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   not_authenticated: "Sign in to use your cellar.",
   cellar_bottle_unavailable:
     "This bottle is no longer available in your cellar. Choose another bottle or add a new one.",
+  // Grouped display (see README "Personal Cellar" — "Grouped display") —
+  // raised only by register_bottles_from_cellar_group, when fewer than the
+  // requested quantity of matching bottles are still available by the time
+  // the atomic add runs (another tab/device reserved or deleted one first).
+  cellar_group_stock_changed: "The available bottle count changed. Please try again.",
   cellar_bottle_not_found: "That cellar bottle couldn't be found.",
   cellar_bottle_not_editable:
     "This bottle cannot be edited while it is reserved or after it has been consumed.",
