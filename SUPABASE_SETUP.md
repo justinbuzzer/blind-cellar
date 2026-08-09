@@ -600,6 +600,36 @@ select wine_style_grape_options_hint('white'), wine_style_grape_options_hint('re
 
 No RLS policy changed and no new table/column was added — `wines.wine_style` keeps its existing grants exactly as they were (still not in the narrow anon/authenticated column grant on `wines`; the raw value is reachable only from inside a `SECURITY DEFINER` function). `styleHint` is exposed exclusively through `get_guest_session_state`/`get_active_bottle_state`, both of which already scope every field they return to the calling guest token's own session/bottles — no new endpoint, no way to request another bottle's or another session's hint, and no raw style value anywhere in either response.
 
+## Migrating for Bottle-order contributor labels
+
+Extends Full blind and Course-by-course guess entry only (see README "Bottle-order contributor labels") with the contributor's existing session display name alongside the "Bottle N" label, for pouring/navigation coordination. Reuses the same `wines.contributor_guest_id → guests.display_name` subselect already used by `get_seen_tasting_state` (Seen mode) and `get_revealed_bottle` (post-reveal) — no new table, column, or RLS policy. Re-running the full `supabase/schema.sql` brings an existing project up to date; both statements below are additive and safe to re-run.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+1. **`get_guest_session_state`'s `wines` array gains one new field per bottle, `contributorName`** — `(select display_name from guests where id = w.contributor_guest_id)`, null when the bottle has no recorded contributor.
+2. **`get_active_bottle_state`'s `activeBottle` object gains the same field, `contributorName`** — `(select display_name from guests where id = v_active.contributor_guest_id)`, computed only in the branch where an active bottle exists.
+
+### 2. Verification queries
+
+```sql
+-- both RPCs' return type still includes the expected json shape (spot-check
+-- via a real guest token in your own project; there is no schema-only way
+-- to introspect a json-returning plpgsql function's payload shape)
+select prosrc from pg_proc where proname in ('get_guest_session_state', 'get_active_bottle_state');
+-- expect: both function bodies contain 'contributorName' and a
+-- "select display_name from guests where id = ..." subselect
+
+-- guests.display_name still carries no new grant to anon/authenticated —
+-- it's reachable only from inside these SECURITY DEFINER functions, exactly
+-- as it already was for get_seen_tasting_state/get_revealed_bottle
+select grantee, privilege_type from information_schema.role_column_grants
+where table_name = 'guests' and column_name = 'display_name';
+```
+
+### RLS and privacy summary
+
+No RLS policy changed and no new grant was added to the `guests` table — `contributorName` is read via a subselect inside two already-`SECURITY DEFINER` functions, exactly the same pattern already in production for Seen mode and post-reveal. Both RPCs already scope every field they return to the calling guest token's own session/bottles (and, for `get_active_bottle_state`, to only the currently-active bottle), so this adds no new way to see another session's, another participant's, or a not-yet-active bottle's contributor. `contributorName` carries only the existing session-scoped display name — never email, account/profile data, or any other identifier.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

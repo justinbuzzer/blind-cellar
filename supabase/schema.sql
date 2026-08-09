@@ -1564,7 +1564,15 @@ begin
         'id', w.id,
         'bottleNumber', w.bottle_number,
         'anonymousCode', w.anonymous_code,
-        'styleHint', wine_style_grape_options_hint(w.wine_style)
+        'styleHint', wine_style_grape_options_hint(w.wine_style),
+        -- Bottle-order coordination cue only (see README "Grape-entry
+        -- assistance" and "Bottle-order contributor labels") — the same
+        -- session-scoped guests.display_name already shown to every
+        -- participant in Seen mode (get_seen_tasting_state) and post-reveal
+        -- (get_revealed_bottle), never a new identity surface. Null when
+        -- contributor_guest_id is null (a bottle with no recorded
+        -- contributor), which the client renders as no name at all.
+        'contributorName', (select display_name from guests where id = w.contributor_guest_id)
       ) order by w.tasting_order, w.bottle_number)
       from wines w where w.session_id = v_session.id
     ), '[]'::jsonb),
@@ -1788,7 +1796,8 @@ begin
       'anonymousCode', v_active.anonymous_code,
       'position', v_position,
       'totalBottles', v_total_bottles,
-      'styleHint', wine_style_grape_options_hint(v_active.wine_style)
+      'styleHint', wine_style_grape_options_hint(v_active.wine_style),
+      'contributorName', (select display_name from guests where id = v_active.contributor_guest_id)
     ),
     'myGuess', case when v_my_guess.id is null then null else jsonb_build_object(
       'wineId', v_my_guess.wine_id,

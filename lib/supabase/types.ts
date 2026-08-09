@@ -224,6 +224,8 @@ export interface GuestSessionWineDTO {
   anonymousCode: string;
   /** Privacy-safe grape-colour hint derived from this bottle's actual wine style — never the raw style itself. See README "Grape-entry assistance". */
   styleHint: BlindGuessGrapeOptionsHint;
+  /** The contributor's session display name — a bottle-order/pouring coordination cue only, never a wine-identity reveal. Null if the bottle has no recorded contributor. See README "Bottle-order contributor labels". */
+  contributorName: string | null;
 }
 
 export interface GuestSessionStateResponse {
@@ -300,6 +302,8 @@ export interface ActiveBottleDTO {
   totalBottles: number;
   /** Privacy-safe grape-colour hint derived from this bottle's actual wine style — never the raw style itself. See README "Grape-entry assistance". */
   styleHint: BlindGuessGrapeOptionsHint;
+  /** The contributor's session display name — a bottle-order/pouring coordination cue only, never a wine-identity reveal. Null if the bottle has no recorded contributor. See README "Bottle-order contributor labels". */
+  contributorName: string | null;
 }
 
 export interface ActiveBottleStateResponse {

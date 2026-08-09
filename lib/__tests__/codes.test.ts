@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bottleLabel, generateSessionCode } from "@/lib/codes";
+import { bottleLabel, formatBlindBottleLabel, generateSessionCode } from "@/lib/codes";
 import {
   SESSION_STATUSES,
   TASTING_MODE_DESCRIPTIONS,
@@ -14,6 +14,33 @@ describe("bottleLabel", () => {
     expect(bottleLabel(1)).toBe("Bottle 1");
     expect(bottleLabel(2)).toBe("Bottle 2");
     expect(bottleLabel(42)).toBe("Bottle 42");
+  });
+});
+
+describe("formatBlindBottleLabel", () => {
+  it("appends the contributor's display name with an em dash", () => {
+    expect(formatBlindBottleLabel(1, "Justin")).toBe("Bottle 1 — Justin");
+    expect(formatBlindBottleLabel(2, "Sarah")).toBe("Bottle 2 — Sarah");
+  });
+
+  it("falls back to the plain bottle label when the name is missing", () => {
+    expect(formatBlindBottleLabel(1, null)).toBe("Bottle 1");
+    expect(formatBlindBottleLabel(1, undefined)).toBe("Bottle 1");
+    expect(formatBlindBottleLabel(1)).toBe("Bottle 1");
+  });
+
+  it("falls back to the plain bottle label when the name is whitespace-only", () => {
+    expect(formatBlindBottleLabel(3, "   ")).toBe("Bottle 3");
+    expect(formatBlindBottleLabel(3, "\t\n")).toBe("Bottle 3");
+  });
+
+  it("trims surrounding whitespace from a real name", () => {
+    expect(formatBlindBottleLabel(4, "  Daniel  ")).toBe("Bottle 4 — Daniel");
+  });
+
+  it("preserves Unicode and accented characters", () => {
+    expect(formatBlindBottleLabel(5, "José")).toBe("Bottle 5 — José");
+    expect(formatBlindBottleLabel(6, "François")).toBe("Bottle 6 — François");
   });
 });
 

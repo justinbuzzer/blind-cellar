@@ -25,6 +25,7 @@ import { emptyWineGuess } from "@/lib/guess";
 import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend, invalidOtherGrapeGuessMessage } from "@/lib/validation";
 import { getGuestToken } from "@/lib/deviceStorage";
 import { waitingToRevealImage } from "@/lib/appImages";
+import { formatBlindBottleLabel } from "@/lib/codes";
 import { WineGuess } from "@/types/tasting";
 
 type LoadState =
@@ -309,7 +310,9 @@ export default function ActiveBottlePage() {
           <ImageBand image={waitingToRevealImage} className="absolute inset-0" />
           <div className="relative flex flex-col items-center gap-2">
             <p className="text-xs font-medium uppercase tracking-[0.2em] text-cellar-gold">
-              {activeBottle?.anonymousCode ?? "Your bottle"}
+              {activeBottle
+                ? formatBlindBottleLabel(activeBottle.bottleNumber, activeBottle.contributorName)
+                : "Your bottle"}
             </p>
             <h1 className="font-display text-2xl font-semibold text-cellar-bg">
               Your guess is locked
@@ -325,6 +328,11 @@ export default function ActiveBottlePage() {
   }
 
   if (!activeBottle || !guess) return null;
+
+  const activeBottleLabel = formatBlindBottleLabel(
+    activeBottle.bottleNumber,
+    activeBottle.contributorName
+  );
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-6 px-6 py-10">
@@ -344,12 +352,12 @@ export default function ActiveBottlePage() {
       <ProgressBar
         current={activeBottle.position}
         total={activeBottle.totalBottles}
-        label={`${activeBottle.anonymousCode} — ${activeBottle.position} of ${activeBottle.totalBottles}`}
+        label={`${activeBottleLabel} — ${activeBottle.position} of ${activeBottle.totalBottles}`}
       />
 
       <WineGuessForm
         key={activeBottle.id}
-        wineCode={activeBottle.anonymousCode}
+        wineCode={activeBottleLabel}
         value={guess}
         onChange={updateGuess}
         styleHint={activeBottle.styleHint}

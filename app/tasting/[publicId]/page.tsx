@@ -23,6 +23,7 @@ import { mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
 import { emptyWineGuess } from "@/lib/guess";
 import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend, invalidOtherGrapeGuessMessage } from "@/lib/validation";
 import { getGuestToken } from "@/lib/deviceStorage";
+import { formatBlindBottleLabel } from "@/lib/codes";
 import { WineGuess } from "@/types/tasting";
 
 type LoadState =
@@ -279,6 +280,7 @@ export default function GuestTastingPage() {
   const guess = guesses.find((g) => g.wineId === wine.id);
   if (!guess) return null;
   const isLast = currentIndex === wines.length - 1;
+  const wineLabel = formatBlindBottleLabel(wine.bottleNumber, wine.contributorName);
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-6 px-6 py-10">
@@ -298,12 +300,12 @@ export default function GuestTastingPage() {
       <ProgressBar
         current={currentIndex + 1}
         total={wines.length}
-        label={`${wine.anonymousCode} — ${currentIndex + 1} of ${wines.length}`}
+        label={`${wineLabel} — ${currentIndex + 1} of ${wines.length}`}
       />
 
       <WineGuessForm
         key={wine.id}
-        wineCode={wine.anonymousCode}
+        wineCode={wineLabel}
         value={guess}
         onChange={(next) => updateGuess(wine.id, next)}
         styleHint={wine.styleHint}

@@ -129,7 +129,15 @@ function guestSession(
       participantCount: 2,
       ...overrides,
     },
-    wines: [{ id: "w1", bottleNumber: 1, anonymousCode: "Bottle 1", styleHint: "all_skins" }],
+    wines: [
+      {
+        id: "w1",
+        bottleNumber: 1,
+        anonymousCode: "Bottle 1",
+        styleHint: "all_skins",
+        contributorName: null,
+      },
+    ],
     guesses: [],
   };
 }
