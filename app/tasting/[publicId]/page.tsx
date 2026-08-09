@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/Button";
 import { ProgressBar } from "@/components/ProgressBar";
 import { WineGuessForm } from "@/components/WineGuessForm";
+import { GuessGroupProgress } from "@/components/GuessGroupProgress";
 import { SavingIndicator, SaveState } from "@/components/SavingIndicator";
 import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { LoadingState } from "@/components/LoadingState";
@@ -16,13 +17,14 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   completeSubmission,
   getGuestSessionState,
+  getHostGuessProgress,
   upsertGuess,
 } from "@/lib/supabase/guestActions";
-import { friendlyRpcError, GuestSessionWineDTO } from "@/lib/supabase/types";
+import { friendlyRpcError, GuestSessionWineDTO, HostGuessProgressDTO } from "@/lib/supabase/types";
 import { mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
 import { emptyWineGuess } from "@/lib/guess";
 import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend, invalidOtherGrapeGuessMessage } from "@/lib/validation";
-import { getGuestToken } from "@/lib/deviceStorage";
+import { getGuestToken, getHostToken } from "@/lib/deviceStorage";
 import { formatBlindBottleLabel } from "@/lib/codes";
 import { WineGuess } from "@/types/tasting";
 
@@ -49,10 +51,17 @@ export default function GuestTastingPage() {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [isHost, setIsHost] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [hostGuessProgress, setHostGuessProgress] = useState<HostGuessProgressDTO | null>(null);
 
   const guestTokenRef = useRef<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSaveRef = useRef<{ wineId: string; guess: WineGuess } | null>(null);
+  // Any bottle id in this session — full_blind's group-progress count is
+  // session-wide (see get_host_guess_progress), identical for every bottle,
+  // so it only needs to be fetched once and never re-fetched on Previous/Next.
+  const anyWineIdRef = useRef<string | null>(null);
 
   const performSave = useCallback(async () => {
     const supabase = getSupabaseBrowserClient();
@@ -131,8 +140,60 @@ export default function GuestTastingPage() {
       );
 
       setLoadState(data.guest.completedAt !== null ? "locked" : "ready");
+
+      // Host-only live group-progress count (see README "Host per-bottle
+      // response progress" — "Host guess screen group progress"). This local
+      // host-token check is a UI-only decision, exactly like
+      // HostControlsLink's — get_host_guess_progress independently
+      // re-verifies this guest token actually belongs to the session's host
+      // before returning anything, so a non-host can never trigger or see
+      // this fetch's result even if this check were somehow bypassed.
+      if (getHostToken(params.publicId) && data.wines.length > 0) {
+        anyWineIdRef.current = data.wines[0].id;
+        setSessionId(data.session.id);
+        setIsHost(true);
+        const { data: progress } = await getHostGuessProgress(
+          supabase,
+          token,
+          data.wines[0].id
+        );
+        setHostGuessProgress(progress);
+      }
     })();
   }, [params.publicId, router]);
+
+  // Live refresh for the host-only group-progress count above. `guests` is
+  // realtime-enabled (unlike wine_guesses — see README "Host per-bottle
+  // response progress"), so a participant's completed_at flip (their final
+  // submit) is broadcast here directly, the same mechanism
+  // HostControlClient already uses for its own guests-table subscription.
+  // full_blind's count is session-wide (identical for every bottle), so a
+  // single subscription for the whole page is enough — no per-bottle
+  // re-subscription is needed when the host navigates Previous/Next.
+  useEffect(() => {
+    if (!isHost || !sessionId) return;
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const token = guestTokenRef.current;
+    const wineId = anyWineIdRef.current;
+    if (!token || !wineId) return;
+
+    const channel = supabase
+      .channel(`host-guess-progress-${sessionId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "guests", filter: `session_id=eq.${sessionId}` },
+        async () => {
+          const { data: progress } = await getHostGuessProgress(supabase, token, wineId);
+          setHostGuessProgress(progress);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isHost, sessionId]);
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -302,6 +363,8 @@ export default function GuestTastingPage() {
         total={wines.length}
         label={`${wineLabel} — ${currentIndex + 1} of ${wines.length}`}
       />
+
+      <GuessGroupProgress progress={hostGuessProgress} />
 
       <WineGuessForm
         key={wine.id}

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/Button";
 import { ProgressBar } from "@/components/ProgressBar";
 import { WineGuessForm } from "@/components/WineGuessForm";
+import { GuessGroupProgress } from "@/components/GuessGroupProgress";
 import { SavingIndicator, SaveState } from "@/components/SavingIndicator";
 import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { LoadingState } from "@/components/LoadingState";
@@ -16,14 +17,15 @@ import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   getActiveBottleState,
+  getHostGuessProgress,
   lockWineGuess,
   upsertGuess,
 } from "@/lib/supabase/guestActions";
-import { friendlyRpcError, ActiveBottleDTO } from "@/lib/supabase/types";
+import { friendlyRpcError, ActiveBottleDTO, HostGuessProgressDTO } from "@/lib/supabase/types";
 import { mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
 import { emptyWineGuess } from "@/lib/guess";
 import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend, invalidOtherGrapeGuessMessage } from "@/lib/validation";
-import { getGuestToken } from "@/lib/deviceStorage";
+import { getGuestToken, getHostToken } from "@/lib/deviceStorage";
 import { waitingToRevealImage } from "@/lib/appImages";
 import { formatBlindBottleLabel } from "@/lib/codes";
 import { WineGuess } from "@/types/tasting";
@@ -63,6 +65,7 @@ export default function ActiveBottlePage() {
     id: string;
     anonymousCode: string;
   } | null>(null);
+  const [hostGuessProgress, setHostGuessProgress] = useState<HostGuessProgressDTO | null>(null);
 
   const guestTokenRef = useRef<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -71,6 +74,15 @@ export default function ActiveBottlePage() {
   // when a refresh shows a *different* active bottle we know ours was just
   // revealed — the server no longer reports a revealed bottle as "active".
   const trackedBottleRef = useRef<ActiveBottleDTO | null>(null);
+  // Set once, synchronously, before the first refresh() call — see README
+  // "Host per-bottle response progress" — "Host guess screen group
+  // progress". A UI-only decision (same local host-token check as
+  // HostControlsLink); get_host_guess_progress independently re-verifies
+  // this guest token actually belongs to the session's host.
+  const isHostRef = useRef(false);
+  // Guards against a stale in-flight progress fetch for a previous active
+  // bottle overwriting the count for whichever bottle is now active.
+  const latestActiveBottleIdRef = useRef<string | null>(null);
 
   const performSave = useCallback(async () => {
     const supabase = getSupabaseBrowserClient();
@@ -150,6 +162,23 @@ export default function ActiveBottlePage() {
       data.myGuess ? mapGuestGuessDtoToWineGuess(data.myGuess) : emptyWineGuess(data.activeBottle.id)
     );
     setLoadState(data.locked ? "locked" : "ready");
+
+    if (isHostRef.current) {
+      const wineId = data.activeBottle.id;
+      if (latestActiveBottleIdRef.current !== wineId) {
+        // Switched to a different active bottle — clear immediately so the
+        // previous bottle's count is never briefly shown for the new one.
+        setHostGuessProgress(null);
+      }
+      latestActiveBottleIdRef.current = wineId;
+      if (token) {
+        getHostGuessProgress(supabase, token, wineId).then(({ data: progress }) => {
+          if (latestActiveBottleIdRef.current === wineId) {
+            setHostGuessProgress(progress);
+          }
+        });
+      }
+    }
   }, [params.publicId, router]);
 
   useEffect(() => {
@@ -159,6 +188,7 @@ export default function ActiveBottlePage() {
       return;
     }
     guestTokenRef.current = token;
+    isHostRef.current = !!getHostToken(params.publicId);
 
     const supabase = getSupabaseBrowserClient();
     if (!supabase) {
@@ -354,6 +384,8 @@ export default function ActiveBottlePage() {
         total={activeBottle.totalBottles}
         label={`${activeBottleLabel} — ${activeBottle.position} of ${activeBottle.totalBottles}`}
       />
+
+      <GuessGroupProgress progress={hostGuessProgress} />
 
       <WineGuessForm
         key={activeBottle.id}

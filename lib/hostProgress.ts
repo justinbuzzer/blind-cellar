@@ -71,3 +71,23 @@ export function formatProgressUpdateAnnouncement(
   const verb = kind === "rating" ? "Rating" : "Guess";
   return `${verb} progress updated: ${formatProgressStatusLine(kind, submittedCount, eligibleCount)}.`;
 }
+
+/**
+ * "Group progress · {submittedCount} of {eligibleCount} submitted" — the
+ * host's own Full blind/Course-by-course guess-screen live count (see
+ * README "Host per-bottle response progress" — "Host guess screen group
+ * progress"). Always the "guess" kind — this line never appears on a Seen
+ * rating page. Built on the same `formatProgressStatusLine` the Host
+ * Controls popover uses, so the two copies can never drift.
+ */
+export function formatGroupProgressLine(submittedCount: number, eligibleCount: number): string {
+  return `Group progress · ${formatProgressStatusLine("guess", submittedCount, eligibleCount)}`;
+}
+
+/** "Group progress updated: {submittedCount} of {eligibleCount} submitted." — the host guess screen's own live-region announcement text. */
+export function formatGroupProgressUpdateAnnouncement(
+  submittedCount: number,
+  eligibleCount: number
+): string {
+  return `Group progress updated: ${formatProgressStatusLine("guess", submittedCount, eligibleCount)}.`;
+}

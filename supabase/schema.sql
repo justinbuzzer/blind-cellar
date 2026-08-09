@@ -3486,4 +3486,96 @@ $$;
 
 grant execute on function get_bottle_response_progress(uuid, text, uuid) to anon, authenticated;
 
+-- ---------------------------------------------------------------------------
+-- Host-participant guess-screen live group-progress count (see README "Host
+-- per-bottle response progress" — "Host guess screen group progress"): a
+-- minimal, host-only aggregate the host's OWN guess-entry page can show
+-- while they're guessing, distinct from the Host Controls popover above.
+-- Authenticated by guest_token (the host's own participant identity on this
+-- page — the same token used by upsert_wine_guess/lock_wine_guess), never by
+-- host_token, since the host guess screen never has the host token in scope.
+-- Returns only the two counts — never a missing-participant name, unlike
+-- get_bottle_response_progress just above. Deliberately does not share a SQL
+-- subroutine with that function (this codebase has no shared-helper pattern
+-- across its RPCs — every function is self-contained), but every predicate
+-- here is intentionally identical to the corresponding branch there, so the
+-- two can never quietly diverge into two different "submitted" definitions.
+-- ---------------------------------------------------------------------------
+create or replace function get_host_guess_progress(
+  p_guest_token text,
+  p_wine_id uuid
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_guest guests%rowtype;
+  v_session tasting_sessions%rowtype;
+  v_wine wines%rowtype;
+  v_active_wine_id uuid;
+  v_submitted_count int;
+  v_eligible_count int;
+begin
+  select * into v_guest from guests where guest_token = p_guest_token;
+  if not found then
+    raise exception 'invalid_guest_token';
+  end if;
+
+  select * into v_session from tasting_sessions where id = v_guest.session_id;
+
+  -- Only the session's own host, guessing as a participant, may see this —
+  -- the exact same host-as-participant definition used throughout this file
+  -- (tasting_sessions.host_guest_id), never a second concept of "host".
+  -- Collapsed into the same generic error an invalid token would raise, so
+  -- an ordinary participant's guest token can never distinguish "you aren't
+  -- the host" from "that token isn't valid at all".
+  if v_session.host_guest_id is distinct from v_guest.id then
+    raise exception 'invalid_guest_token';
+  end if;
+
+  if v_session.tasting_mode not in ('full_blind', 'course_reveal') then
+    raise exception 'invalid_tasting_mode';
+  end if;
+
+  select * into v_wine from wines where id = p_wine_id and session_id = v_session.id;
+  if not found then
+    raise exception 'wine_not_in_session';
+  end if;
+
+  select count(*) into v_eligible_count from guests where session_id = v_session.id;
+
+  if v_session.tasting_mode = 'full_blind' then
+    -- Same signal as get_bottle_response_progress/complete_guest_submission
+    -- — full_blind has no per-bottle lock, so this is identical for every
+    -- bottle in the session regardless of which one p_wine_id names.
+    select count(*) into v_submitted_count from guests
+      where session_id = v_session.id and completed_at is not null;
+  else
+    -- course_reveal: same "current active bottle" guard as
+    -- get_bottle_response_progress/lock_wine_guess — a not-yet-released or
+    -- already-revealed bottle id can never be queried, so this can never
+    -- expose progress for a future or past bottle from the host's own
+    -- guess screen either.
+    select id into v_active_wine_id from wines
+      where session_id = v_session.id and revealed_at is null
+      order by tasting_order asc
+      limit 1;
+    if v_active_wine_id is distinct from p_wine_id then
+      raise exception 'bottle_not_active';
+    end if;
+
+    select count(*) into v_submitted_count from wine_guesses
+      where wine_id = p_wine_id and locked_at is not null;
+  end if;
+
+  return jsonb_build_object(
+    'submittedCount', v_submitted_count,
+    'eligibleCount', v_eligible_count
+  );
+end;
+$$;
+
+grant execute on function get_host_guess_progress(text, uuid) to anon, authenticated;
+
 grant execute on function public.delete_cellar_bottle(uuid) to authenticated;

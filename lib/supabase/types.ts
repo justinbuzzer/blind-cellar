@@ -265,6 +265,22 @@ export interface GuestSessionStateResponse {
   guesses: GuestGuessDTO[];
 }
 
+/**
+ * Response from get_host_guess_progress — see README "Host per-bottle
+ * response progress" — "Host guess screen group progress". Shown only on
+ * the host's own Full blind/Course-by-course guess-entry page, never on an
+ * ordinary participant's. Deliberately more minimal than
+ * BottleResponseProgressDTO (the Host Controls popover's shape) — no
+ * `missingParticipantNames`, no `bottleId`, no `responseKind` — since the
+ * host guess screen must never receive participant names or content, even
+ * though both are computed from the same underlying eligible/submitted
+ * definitions.
+ */
+export interface HostGuessProgressDTO {
+  submittedCount: number;
+  eligibleCount: number;
+}
+
 export interface JoinSessionResponse {
   guest_id: string;
   guest_token: string;

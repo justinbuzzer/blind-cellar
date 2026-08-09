@@ -666,6 +666,41 @@ select get_bottle_response_progress(
 
 No RLS policy changed and no new grant was added to `wine_guesses` (which still has no anon SELECT policy at all — see "Views" above) or to any column of `guests`/`wines` beyond the existing ones. `get_bottle_response_progress` runs as `SECURITY DEFINER` and returns only two counts plus the existing safe `guests.display_name` for non-submitters — never a guess, a rating value, a confidence, a note, a score, an email, or a token. A participant/guest token can never satisfy the host-token check, so this RPC is unreachable by anyone but the session's own host; a host of one session can never pass another session's bottle id and get a result, since the bottle-ownership check is scoped to `p_public_id`'s session. For `course_reveal`, requesting a not-yet-released or already-revealed bottle's progress always fails with `bottle_not_active`, the same guard `lock_wine_guess` already relies on — there is no way to peek at a bottle the host isn't currently working through, including by substituting a different wine id in the request.
 
+## Migrating for the host guess screen's live group-progress count
+
+Adds one new RPC, `get_host_guess_progress` (see README "Host per-bottle response progress" — "Host guess screen group progress") — no new table, column, or RLS policy. Unlike `get_bottle_response_progress` above (host-token-authenticated, includes missing-participant names), this one is **guest-token**-authenticated — the host's own guess screen only ever has their participant guest token in scope, never their host token — and returns a stricter, separate DTO with no names at all.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+1. **New `get_host_guess_progress(p_guest_token text, p_wine_id uuid) returns jsonb`** — looks up the guest by `p_guest_token`, then verifies `tasting_sessions.host_guest_id` equals that guest's own id (the same host-as-participant definition used throughout this file); an ordinary participant's guest token fails this check and receives the same generic `invalid_guest_token` error as a wholly invalid token, so a caller can never distinguish "you aren't the host" from "that token isn't valid at all". Verifies the session's mode is `full_blind` or `course_reveal` (`invalid_tasting_mode` otherwise — this line never shows on a Seen rating page) and that the wine belongs to the session (`wine_not_in_session`). For `course_reveal`, re-derives the current active bottle exactly like `lock_wine_guess`/`get_bottle_response_progress` and rejects any other bottle id with `bottle_not_active`.
+2. **Counts mirror `get_bottle_response_progress`'s predicates exactly** — full_blind: `guests.completed_at is not null`; course_reveal: `wine_guesses.locked_at is not null` for the (now-verified-active) bottle. Eligible count is the session's total `guests` rows, same as everywhere else in this file.
+3. **Granted to `anon, authenticated`** like every other guest RPC — the guest-token-to-host check inside the function is what actually restricts access, not the grant.
+
+### 2. Verification queries
+
+```sql
+-- the function exists with the expected two-argument signature
+select routine_name, data_type from information_schema.parameters
+where specific_name = (
+  select specific_name from information_schema.routines
+  where routine_name = 'get_host_guess_progress'
+) order by ordinal_position;
+
+-- an ordinary participant's own guest token is rejected the same way an
+-- invalid token would be — never a different error
+select get_host_guess_progress(
+  (select guest_token from guests where id <> (
+    select host_guest_id from tasting_sessions where id = guests.session_id
+  ) limit 1),
+  (select id from wines limit 1)
+);
+-- expect: an error containing 'invalid_guest_token'
+```
+
+### RLS and privacy summary
+
+No RLS policy changed and no new grant was added anywhere. `get_host_guess_progress` runs as `SECURITY DEFINER` and returns only `{submittedCount, eligibleCount}` — never a participant name (submitted or missing), a bottle id, a guess, a rating value, a confidence, a note, a score, an email, or a token. Only the session's own host, calling with their own participant guest token, can ever get a non-error result; a different session's host, or any ordinary participant's guest token, always fails the same generic check. For `course_reveal`, a not-yet-released or already-revealed bottle can never be queried, exactly like `get_bottle_response_progress`. This is a deliberately more minimal DTO than that function's — the host's own guess screen must never receive participant names even though both RPCs are computed from the same underlying data.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

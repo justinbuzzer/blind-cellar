@@ -3,6 +3,8 @@ import {
   NO_ELIGIBLE_PARTICIPANTS_MESSAGE,
   RATING_PROGRESS_TITLE,
   formatAllSubmittedMessage,
+  formatGroupProgressLine,
+  formatGroupProgressUpdateAnnouncement,
   formatGuessProgressTitle,
   formatMissingSectionHeading,
   formatProgressAccessibleLabel,
@@ -89,6 +91,26 @@ describe("formatProgressUpdateAnnouncement", () => {
   it("formats a polite live-region announcement for a rating refresh", () => {
     expect(formatProgressUpdateAnnouncement("rating", 6, 8)).toBe(
       "Rating progress updated: 6 of 8 rated."
+    );
+  });
+});
+
+describe("formatGroupProgressLine", () => {
+  it("formats the exact required host guess-screen copy", () => {
+    expect(formatGroupProgressLine(6, 8)).toBe("Group progress · 6 of 8 submitted");
+    expect(formatGroupProgressLine(0, 8)).toBe("Group progress · 0 of 8 submitted");
+    expect(formatGroupProgressLine(8, 8)).toBe("Group progress · 8 of 8 submitted");
+  });
+
+  it("never uses the word 'guests'", () => {
+    expect(formatGroupProgressLine(6, 8)).not.toMatch(/guests/i);
+  });
+});
+
+describe("formatGroupProgressUpdateAnnouncement", () => {
+  it("formats the exact required host guess-screen live-region text", () => {
+    expect(formatGroupProgressUpdateAnnouncement(7, 8)).toBe(
+      "Group progress updated: 7 of 8 submitted."
     );
   });
 });

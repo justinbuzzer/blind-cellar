@@ -4,6 +4,7 @@ import { isCustomSingleGrape, reconstructBlendComponentsFromText } from "@/lib/w
 import {
   ActiveBottleStateResponse,
   GuestSessionStateResponse,
+  HostGuessProgressDTO,
   JoinSessionResponse,
   MyBottleDTO,
   RegisterBottleResponse,
@@ -34,6 +35,27 @@ export async function getGuestSessionState(
     p_guest_token: guestToken,
   });
   return { data: data as GuestSessionStateResponse | null, error };
+}
+
+/**
+ * Host-only live group-progress count for the host's own Full blind/
+ * Course-by-course guess screen — see README "Host per-bottle response
+ * progress" — "Host guess screen group progress". Returns null (not an
+ * error toast) for an ordinary participant's guest token, a Seen session, or
+ * (in course_reveal) a bottle that isn't the current active one — the
+ * caller treats any of those the same way: don't show the group-progress
+ * line.
+ */
+export async function getHostGuessProgress(
+  supabase: SupabaseClient,
+  guestToken: string,
+  wineId: string
+) {
+  const { data, error } = await supabase.rpc("get_host_guess_progress", {
+    p_guest_token: guestToken,
+    p_wine_id: wineId,
+  });
+  return { data: data as HostGuessProgressDTO | null, error };
 }
 
 export async function upsertGuess(
