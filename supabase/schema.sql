@@ -1166,9 +1166,18 @@ $$;
 -- once revealed, and rejects a display name that (after trim+lowercase)
 -- already exists in this session (this also naturally protects the host's
 -- own display name from being reused by a later joiner).
+-- Signature changed (device/recovery credential hashes added for the
+-- session-rejoin feature) — explicitly drop the old overload so it can't be
+-- called with stale semantics; safe/no-op on a fresh install. See README
+-- "Session rejoin".
+drop function if exists join_tasting_session(uuid, text);
+
 create or replace function join_tasting_session(
   p_public_id uuid,
-  p_display_name text
+  p_display_name text,
+  p_device_token_hash text,
+  p_recovery_code_hash text,
+  p_client_ip text default null
 ) returns table (guest_id uuid, guest_token text, display_name text)
 language plpgsql
 security definer
@@ -1180,16 +1189,22 @@ declare
   v_token text;
   v_guest_id uuid;
 begin
+  select * into v_session from tasting_sessions where public_id = p_public_id;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+
+  if not check_rejoin_rate_limit(
+    'join:' || p_public_id::text || ':' || coalesce(p_client_ip, 'unknown'), 20, interval '1 hour'
+  ) then
+    raise exception 'rate_limited';
+  end if;
+
   if v_name = '' then
     raise exception 'display_name_required';
   end if;
   if length(v_name) > 60 then
     raise exception 'display_name_too_long';
-  end if;
-
-  select * into v_session from tasting_sessions where public_id = p_public_id;
-  if not found then
-    raise exception 'session_not_found';
   end if;
   if v_session.status = 'revealed' then
     raise exception 'session_already_revealed';
@@ -1207,6 +1222,17 @@ begin
   insert into guests (session_id, display_name, guest_token)
   values (v_session.id, v_name, v_token)
   returning guests.id into v_guest_id;
+
+  -- Every new guest gets both a device credential (silent same-device
+  -- resume) and a one-time recovery code (cross-device resume) — see README
+  -- "Session rejoin". Both raw secrets are generated and hashed by the
+  -- calling Route Handler (never here); this function only ever sees and
+  -- stores the hashes, exactly like host_token_hash above.
+  insert into participant_access_credentials (guest_id, token_hash, credential_type, expires_at)
+  values (v_guest_id, p_device_token_hash, 'device_session', now() + interval '180 days');
+
+  insert into participant_access_credentials (guest_id, token_hash, credential_type, expires_at)
+  values (v_guest_id, p_recovery_code_hash, 'recovery_code', v_session.created_at + interval '30 days');
 
   return query select v_guest_id, v_token, v_name;
 end;
@@ -2766,7 +2792,7 @@ grant execute on function get_bottle_result_for_host(uuid, text, uuid) to anon, 
 grant execute on function get_revealed_bottles_summary(text) to anon, authenticated;
 grant execute on function get_provisional_leaderboard_for_host(uuid, text) to anon, authenticated;
 grant execute on function get_final_leaderboard_for_guest(text) to anon, authenticated;
-grant execute on function join_tasting_session(uuid, text) to anon, authenticated;
+grant execute on function join_tasting_session(uuid, text, text, text, text) to anon, authenticated;
 grant execute on function get_registration_state(text) to anon, authenticated;
 grant execute on function register_bottle(text, text, text, text, text, text, text, text, text, text, jsonb, text) to anon, authenticated;
 grant execute on function update_bottle(text, uuid, text, text, text, text, text, text, text, text, text, jsonb, text) to anon, authenticated;
@@ -3089,9 +3115,29 @@ begin
       raise exception 'invalid_guest_token';
     end if;
 
+    -- Session-rejoin (see README): claiming also directly links
+    -- guests.user_id, so this participant is recognized by
+    -- resolve_join_identity/get_my_tastings without a fresh device/recovery
+    -- credential. Never merges: reject outright if this exact guest row
+    -- already belongs to a DIFFERENT account, or if this account already
+    -- has a DIFFERENT active participant record in this session — either
+    -- direction would be a silent identity merge, which this feature never
+    -- performs.
+    if v_guest.user_id is not null and v_guest.user_id <> v_uid then
+      raise exception 'account_already_linked';
+    end if;
+    if exists (
+      select 1 from guests g2
+      where g2.session_id = v_session.id and g2.user_id = v_uid and g2.id <> v_guest.id
+    ) then
+      raise exception 'account_already_linked';
+    end if;
+
     insert into public.account_tasting_records (user_id, session_id, role, participant_id, claim_source)
     values (v_uid, v_session.id, 'participant', v_guest.id, p_claim_source)
     on conflict (user_id, session_id, participant_id) where role = 'participant' do nothing;
+
+    update guests set user_id = v_uid where id = v_guest.id and user_id is null;
   end if;
 end;
 $$;
@@ -4233,3 +4279,513 @@ $$;
 grant execute on function get_host_guess_progress(text, uuid) to anon, authenticated;
 
 grant execute on function public.delete_cellar_bottle(uuid) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Session rejoin — see README "Session rejoin" and SUPABASE_SETUP.md
+-- "Migrating for session rejoin".
+--
+-- Design summary:
+--   * guests.user_id is the ONLY new column on the existing tasting-flow
+--     tables. When set, it means "this participant record belongs to this
+--     signed-in account" — the canonical guests row is never duplicated;
+--     an account-linked participant is still just a guests row, with a
+--     guest_token exactly like every other participant (see
+--     join_tasting_session_as_account below), so every existing RPC that
+--     already takes p_guest_token keeps working completely unchanged for
+--     account-linked participants. This is the single design choice that
+--     keeps this entire feature additive: no existing guessing, reveal,
+--     scoring, leaderboard, or recap code changes at all.
+--   * participant_access_credentials holds hashed, short-lived, revocable
+--     credentials used ONLY to resolve "who is this browser" when a device
+--     has no guest_token yet (new device, cleared storage) — it is never
+--     consulted for ordinary in-tasting actions, which keep using the
+--     existing guest_token model unchanged. Every secret here is generated
+--     and hashed by the calling Route Handler (lib/tokens.ts), exactly like
+--     host_token_hash above — Postgres only ever stores/compares a hash.
+--   * rejoin_rate_limit_events + check_rejoin_rate_limit() is a minimal,
+--     fixed-window limiter — this app had no rate-limiting infrastructure
+--     at all before this feature; see README for why this simple approach
+--     was chosen over a more sophisticated algorithm.
+--   * Nothing here weakens or changes host_token/host_token_hash. Host
+--     access remains anonymous-bearer-token-based, by explicit product
+--     decision — see README "Session rejoin" for why host lost-token
+--     cross-device recovery and a host-issued-recovery UI are deliberately
+--     out of scope for this feature (the host_issued_recovery credential
+--     type exists in the check constraint below for forward-compatibility
+--     only; nothing in this migration ever creates one).
+-- ---------------------------------------------------------------------------
+
+alter table guests add column if not exists user_id uuid references auth.users(id) on delete set null;
+
+-- "No more than one active participant membership for the same account in
+-- the same session" from the spec. guests has no soft-delete/status column
+-- — a participant row is never removed once created — so "active" here is
+-- simply "exists"; excluding nulls is the safe equivalent this schema
+-- actually needs (documented here since the spec's suggested WHERE clause
+-- assumed a status column this table doesn't have).
+create unique index if not exists guests_session_user_uniq
+  on guests (session_id, user_id)
+  where user_id is not null;
+
+create index if not exists guests_user_id_idx on guests (user_id) where user_id is not null;
+
+create table if not exists participant_access_credentials (
+  id uuid primary key default gen_random_uuid(),
+  guest_id uuid not null references guests(id) on delete cascade,
+  token_hash text not null unique,
+  credential_type text not null check (credential_type in ('device_session', 'recovery_code', 'host_issued_recovery')),
+  created_at timestamptz not null default now(),
+  expires_at timestamptz,
+  last_used_at timestamptz,
+  revoked_at timestamptz,
+  revoked_reason text,
+  rotated_from_id uuid references participant_access_credentials(id)
+);
+
+create index if not exists participant_access_credentials_guest_id_idx
+  on participant_access_credentials (guest_id);
+-- The lookup every resolve/redeem call actually performs: an unrevoked
+-- credential by its hash. Partial on revoked_at is null so revoked rows
+-- (the majority, over time, as devices rotate) don't bloat the hot index.
+create index if not exists participant_access_credentials_active_hash_idx
+  on participant_access_credentials (token_hash) where revoked_at is null;
+
+alter table participant_access_credentials enable row level security;
+
+-- No anon/authenticated policy at all, on purpose — exactly like guests'
+-- own guest_token column, these are only ever read or written from inside
+-- the SECURITY DEFINER functions below. A client can never list, guess, or
+-- enumerate a credential by querying this table directly (RLS with no
+-- policy denies every operation; the revoke below removes even the
+-- possibility of an accidental future permissive policy being reachable
+-- without an explicit grant too).
+revoke all on participant_access_credentials from anon, authenticated;
+
+create table if not exists rejoin_rate_limit_events (
+  id bigint generated always as identity primary key,
+  scope_key text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists rejoin_rate_limit_events_scope_created_idx
+  on rejoin_rate_limit_events (scope_key, created_at desc);
+
+alter table rejoin_rate_limit_events enable row level security;
+revoke all on rejoin_rate_limit_events from anon, authenticated;
+
+-- Minimal fixed-window rate limiter: records this attempt, then reports
+-- whether the count within p_window (including the just-recorded row) is
+-- still <= p_max. Not a sliding-window/token-bucket algorithm — deliberately
+-- simple, matching this app's "no dedicated rate-limit infrastructure"
+-- starting point (see README "Session rejoin"). Old rows are never purged
+-- by this function; SUPABASE_SETUP.md documents an optional periodic
+-- cleanup query for operators who want one. Internal helper only — never
+-- granted to anon/authenticated; only ever called from inside another
+-- SECURITY DEFINER function in this file.
+create or replace function check_rejoin_rate_limit(
+  p_scope_key text,
+  p_max_attempts int,
+  p_window interval
+) returns boolean
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_count int;
+begin
+  insert into rejoin_rate_limit_events (scope_key) values (p_scope_key);
+
+  select count(*) into v_count
+  from rejoin_rate_limit_events
+  where scope_key = p_scope_key and created_at > now() - p_window;
+
+  return v_count <= p_max_attempts;
+end;
+$$;
+
+-- Account-linked join: idempotent by design (test "Account rejoin cannot
+-- create duplicate active membership under concurrent requests") — a
+-- signed-in account that already has a participant record for this session
+-- always gets that SAME record back, never a duplicate, whether this is the
+-- first call or the hundredth. No display-name parameter: the participant's
+-- name comes from profiles.display_name (falling back to the email's local
+-- part, then "Guest"), since the account already established that identity
+-- at sign-up — asking for it again here would just be friction. Never mints
+-- a device/recovery credential: the account's own auth session is already
+-- sufficient proof of identity going forward (see README "Session rejoin").
+create or replace function join_tasting_session_as_account(
+  p_public_id uuid
+) returns table (guest_id uuid, guest_token text, display_name text, already_member boolean)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_session tasting_sessions%rowtype;
+  v_existing guests%rowtype;
+  v_profile_name text;
+  v_profile_email text;
+  v_name text;
+  v_token text;
+  v_guest_id uuid;
+begin
+  if v_uid is null then
+    raise exception 'not_signed_in';
+  end if;
+
+  if not check_rejoin_rate_limit('join_account:' || v_uid::text, 30, interval '1 hour') then
+    raise exception 'rate_limited';
+  end if;
+
+  select * into v_session from tasting_sessions where public_id = p_public_id;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+
+  select * into v_existing from guests where session_id = v_session.id and user_id = v_uid;
+  if found then
+    return query select v_existing.id, v_existing.guest_token, v_existing.display_name, true;
+    return;
+  end if;
+
+  if v_session.status = 'revealed' then
+    raise exception 'session_already_revealed';
+  end if;
+
+  select p.display_name, p.email into v_profile_name, v_profile_email
+  from profiles p where p.id = v_uid;
+
+  v_name := nullif(btrim(coalesce(v_profile_name, '')), '');
+  if v_name is null then
+    v_name := nullif(split_part(coalesce(v_profile_email, ''), '@', 1), '');
+  end if;
+  if v_name is null then
+    v_name := 'Guest';
+  end if;
+  if length(v_name) > 60 then
+    v_name := left(v_name, 60);
+  end if;
+
+  -- Two account holders racing to join with a normalized-duplicate display
+  -- name is exactly as legitimate as two guests doing so — reuse the same
+  -- collision handling the guest path uses, rather than failing the join.
+  if exists (
+    select 1 from guests
+    where session_id = v_session.id and display_name_normalized = lower(v_name)
+  ) then
+    v_name := left(v_name, 55) || ' (' || substr(v_uid::text, 1, 4) || ')';
+  end if;
+
+  v_token := encode(gen_random_bytes(32), 'base64');
+
+  begin
+    insert into guests (session_id, display_name, guest_token, user_id)
+    values (v_session.id, v_name, v_token, v_uid)
+    returning guests.id into v_guest_id;
+  exception when unique_violation then
+    -- Concurrent request already created this account's membership (the
+    -- guests_session_user_uniq index caught the race) — fetch and return
+    -- it rather than erroring.
+    select * into v_existing from guests where session_id = v_session.id and user_id = v_uid;
+    if found then
+      return query select v_existing.id, v_existing.guest_token, v_existing.display_name, true;
+      return;
+    end if;
+    raise exception 'duplicate_guest_name';
+  end;
+
+  return query select v_guest_id, v_token, v_name, false;
+end;
+$$;
+
+grant execute on function join_tasting_session_as_account(uuid) to authenticated;
+
+-- The single read-only entry point the public join route calls to decide
+-- which of the five rejoin-landing screens to show (see README "Session
+-- rejoin" — "QR join precedence"). Returns both an account match (by
+-- auth.uid(), if signed in) and a device match (by hashed cookie value, if
+-- supplied) independently — the caller (a Route Handler, then the join
+-- page) decides how to render "recognized account" / "recognized guest" /
+-- "conflict" / "unrecognized" from the combination, per the exact
+-- precedence and non-merging rules in README. Never mutates guest_token or
+-- guests rows; only bumps last_used_at bookkeeping on a matched device
+-- credential.
+create or replace function resolve_join_identity(
+  p_public_id uuid,
+  p_device_token_hash text default null
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_session tasting_sessions%rowtype;
+  v_account_guest guests%rowtype;
+  v_device_guest guests%rowtype;
+  v_account_match jsonb := null;
+  v_device_match jsonb := null;
+begin
+  select * into v_session from tasting_sessions where public_id = p_public_id;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+
+  if v_uid is not null then
+    select * into v_account_guest from guests where session_id = v_session.id and user_id = v_uid;
+    if found then
+      v_account_match := jsonb_build_object(
+        'guestId', v_account_guest.id,
+        'displayName', v_account_guest.display_name,
+        'guestToken', v_account_guest.guest_token
+      );
+    end if;
+  end if;
+
+  if p_device_token_hash is not null then
+    select g.* into v_device_guest
+    from guests g
+    join participant_access_credentials pac on pac.guest_id = g.id
+    where g.session_id = v_session.id
+      and pac.credential_type = 'device_session'
+      and pac.token_hash = p_device_token_hash
+      and pac.revoked_at is null
+      and (pac.expires_at is null or pac.expires_at > now());
+    if found then
+      update participant_access_credentials
+        set last_used_at = now()
+        where token_hash = p_device_token_hash and credential_type = 'device_session';
+      v_device_match := jsonb_build_object(
+        'guestId', v_device_guest.id,
+        'displayName', v_device_guest.display_name,
+        'guestToken', v_device_guest.guest_token
+      );
+    end if;
+  end if;
+
+  return jsonb_build_object(
+    'session', jsonb_build_object(
+      'publicId', v_session.public_id,
+      'status', v_session.status,
+      'tastingMode', v_session.tasting_mode
+    ),
+    'accountMatch', v_account_match,
+    'deviceMatch', v_device_match
+  );
+end;
+$$;
+
+grant execute on function resolve_join_identity(uuid, text) to anon, authenticated;
+
+-- Redeems a one-time recovery code for cross-device guest rejoin. Every
+-- failure path — session not found, code not found, expired, already used,
+-- or belonging to a different session — collapses into the single generic
+-- 'recovery_failed' exception, matching README's explicit "never reveal
+-- why" requirement. `for update` row-locks the matched credential so two
+-- simultaneous redemption attempts with the same code can't both succeed.
+create or replace function redeem_recovery_code(
+  p_public_id uuid,
+  p_code_hash text,
+  p_new_device_token_hash text,
+  p_client_ip text default null
+) returns table (guest_id uuid, guest_token text, display_name text)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_session tasting_sessions%rowtype;
+  v_credential participant_access_credentials%rowtype;
+  v_guest guests%rowtype;
+  v_device_count int;
+  v_oldest_device_id uuid;
+begin
+  select * into v_session from tasting_sessions where public_id = p_public_id;
+  if not found then
+    raise exception 'recovery_failed';
+  end if;
+
+  if not check_rejoin_rate_limit('recover_ip:' || coalesce(p_client_ip, 'unknown'), 8, interval '15 minutes')
+     or not check_rejoin_rate_limit('recover_session:' || v_session.id::text, 20, interval '15 minutes')
+  then
+    raise exception 'rate_limited';
+  end if;
+
+  -- Scoped to this session's own guests from the start (via the join), so a
+  -- code hash that happens to match a credential belonging to a DIFFERENT
+  -- session's participant simply never matches this query — the same "not
+  -- found" path as any other invalid code, never revealing that the code
+  -- exists elsewhere.
+  select pac.* into v_credential
+  from participant_access_credentials pac
+  join guests g on g.id = pac.guest_id
+  where g.session_id = v_session.id
+    and pac.credential_type = 'recovery_code'
+    and pac.token_hash = p_code_hash
+    and pac.revoked_at is null
+    and (pac.expires_at is null or pac.expires_at > now())
+  for update;
+
+  if not found then
+    raise exception 'recovery_failed';
+  end if;
+
+  select * into v_guest from guests where id = v_credential.guest_id;
+
+  update participant_access_credentials
+    set revoked_at = now(), revoked_reason = 'redeemed'
+    where id = v_credential.id;
+
+  -- Enforce the 3-active-device cap: revoke the oldest active device
+  -- credential for this participant before inserting the new one, so a
+  -- guest who keeps recovering from new devices never silently accumulates
+  -- unbounded standing access — see README "Session rejoin" credential
+  -- policy. Never revokes the credential that led to THIS call, since that
+  -- was a recovery_code, not a device_session, row.
+  select count(*) into v_device_count
+  from participant_access_credentials
+  where participant_access_credentials.guest_id = v_guest.id
+    and credential_type = 'device_session' and revoked_at is null;
+
+  if v_device_count >= 3 then
+    select id into v_oldest_device_id
+    from participant_access_credentials
+    where participant_access_credentials.guest_id = v_guest.id
+      and credential_type = 'device_session' and revoked_at is null
+    order by created_at asc
+    limit 1;
+    update participant_access_credentials
+      set revoked_at = now(), revoked_reason = 'device_limit'
+      where id = v_oldest_device_id;
+  end if;
+
+  insert into participant_access_credentials (guest_id, token_hash, credential_type, expires_at, rotated_from_id)
+  values (v_guest.id, p_new_device_token_hash, 'device_session', now() + interval '180 days', v_credential.id);
+
+  return query select v_guest.id, v_guest.guest_token, v_guest.display_name;
+end;
+$$;
+
+grant execute on function redeem_recovery_code(uuid, text, text, text) to anon, authenticated;
+
+-- Best-effort, additive: links the HOST's own bootstrap guest row (see
+-- create_tasting_session) to their account, purely so their personal
+-- participant/guessing flow also benefits from account-based rejoin — never
+-- touches host_token_hash or any host-authorization check. Called
+-- alongside the existing claim_account_tasting_record(role='host') call
+-- in app/api/host/create-session's tryAutoLinkHost, never on its own.
+-- Silently no-ops on any conflict (never raises past "this account already
+-- has a different participant here") since it is fire-and-forget alongside
+-- session creation and must never block that response.
+create or replace function link_host_guest_to_account(
+  p_public_id uuid,
+  p_host_token text
+) returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_session tasting_sessions%rowtype;
+begin
+  if v_uid is null then
+    raise exception 'not_authenticated';
+  end if;
+
+  select * into v_session from tasting_sessions where public_id = p_public_id;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+  if v_session.host_token_hash <> encode(digest(p_host_token, 'sha256'), 'hex') then
+    raise exception 'invalid_host_token';
+  end if;
+  if v_session.host_guest_id is null then
+    return;
+  end if;
+
+  update guests set user_id = v_uid
+  where id = v_session.host_guest_id and user_id is null
+    and not exists (
+      select 1 from guests g2 where g2.session_id = v_session.id and g2.user_id = v_uid
+    );
+end;
+$$;
+
+grant execute on function link_host_guest_to_account(uuid, text) to authenticated;
+
+-- "My tastings" (see README "Session rejoin" — "Resume from account area"):
+-- every session the signed-in account hosts (via account_tasting_records,
+-- the existing claim link) or participates in (via guests.user_id, this
+-- feature's new direct link) — safe summary fields only, never another
+-- user's data, since every row here is independently scoped to auth.uid().
+create or replace function get_my_tastings()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_result jsonb;
+begin
+  if v_uid is null then
+    raise exception 'not_authenticated';
+  end if;
+
+  select coalesce(jsonb_agg(t order by (t->>'tastingDate') desc), '[]'::jsonb) into v_result
+  from (
+    select jsonb_build_object(
+      'publicId', s.public_id,
+      'title', s.title,
+      'tastingDate', s.tasting_date,
+      'status', s.status,
+      'tastingMode', s.tasting_mode,
+      'role', 'host'
+    ) as t
+    from account_tasting_records atr
+    join tasting_sessions s on s.id = atr.session_id
+    where atr.user_id = v_uid and atr.role = 'host'
+
+    union all
+
+    select jsonb_build_object(
+      'publicId', s.public_id,
+      'title', s.title,
+      'tastingDate', s.tasting_date,
+      'status', s.status,
+      'tastingMode', s.tasting_mode,
+      'role', 'participant'
+    ) as t
+    from guests g
+    join tasting_sessions s on s.id = g.session_id
+    where g.user_id = v_uid
+  ) x;
+
+  return v_result;
+end;
+$$;
+
+grant execute on function get_my_tastings() to authenticated;
+
+-- Backfill: a participant already linked via the pre-existing claim feature
+-- (account_tasting_records, role='participant') becomes directly
+-- account-linked too, so resolve_join_identity's account-match path and
+-- get_my_tastings recognize them immediately without requiring a fresh
+-- claim. Skipped per-row if it would violate the new uniqueness rule
+-- (would require the same account to have already separately claimed two
+-- different guest rows in the same session — not possible under the
+-- pre-existing participant unique index, so this never actually skips in
+-- practice, but the guard is kept for safety).
+update guests g
+set user_id = atr.user_id
+from account_tasting_records atr
+where atr.role = 'participant'
+  and atr.participant_id = g.id
+  and g.user_id is null
+  and not exists (
+    select 1 from guests g2
+    where g2.session_id = g.session_id and g2.user_id = atr.user_id
+  );

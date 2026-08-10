@@ -1520,6 +1520,577 @@ select get_final_leaderboard_for_guest(
 
 No RLS policy or table grant changed. `get_final_leaderboard_for_guest` runs `SECURITY DEFINER`, independently re-verifies the caller's guest token, and hard-fails on anything but `status = 'revealed'` — a guest token can never pull a ranking, a wine identity, or a guess through this function before every bottle in the session has actually been revealed, regardless of what the client believes. Its response shape is intentionally identical to `get_provisional_leaderboard_for_host`'s so the exact same `lib/resultsReveal.ts` ranking pipeline (and its existing tests) cover both call sites — the final leaderboard/recap pages built on top of it only ever render the computed `TasterResult`/`WineResult` rows this pipeline produces, never the raw guess rows the RPC returns, so another participant's field-by-field guesses are never rendered anywhere in the new final leaderboard or recap UI.
 
+## Migrating for session rejoin
+
+Adds one column (`guests.user_id`), two tables (`participant_access_credentials`, `rejoin_rate_limit_events`), five new RPCs (`check_rejoin_rate_limit`, `join_tasting_session_as_account`, `resolve_join_identity`, `redeem_recovery_code`, `link_host_guest_to_account`, `get_my_tastings` — six, including the internal rate-limit helper), replaces `join_tasting_session` in place with a version that also mints device/recovery credential hashes, and extends `claim_account_tasting_record`'s participant branch to also set `guests.user_id` — see README "Session rejoin". No change to `host_token`/`host_token_hash`, scoring, tasting modes, bottle registration, or Cellar.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+```sql
+-- Signature changed (device/recovery credential hashes added for the
+-- session-rejoin feature) — explicitly drop the old overload so it can't be
+-- called with stale semantics; safe/no-op on a fresh install. See README
+-- "Session rejoin".
+drop function if exists join_tasting_session(uuid, text);
+
+create or replace function join_tasting_session(
+  p_public_id uuid,
+  p_display_name text,
+  p_device_token_hash text,
+  p_recovery_code_hash text,
+  p_client_ip text default null
+) returns table (guest_id uuid, guest_token text, display_name text)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_session tasting_sessions%rowtype;
+  v_name text := btrim(p_display_name);
+  v_token text;
+  v_guest_id uuid;
+begin
+  select * into v_session from tasting_sessions where public_id = p_public_id;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+
+  if not check_rejoin_rate_limit(
+    'join:' || p_public_id::text || ':' || coalesce(p_client_ip, 'unknown'), 20, interval '1 hour'
+  ) then
+    raise exception 'rate_limited';
+  end if;
+
+  if v_name = '' then
+    raise exception 'display_name_required';
+  end if;
+  if length(v_name) > 60 then
+    raise exception 'display_name_too_long';
+  end if;
+  if v_session.status = 'revealed' then
+    raise exception 'session_already_revealed';
+  end if;
+
+  if exists (
+    select 1 from guests
+    where session_id = v_session.id and display_name_normalized = lower(v_name)
+  ) then
+    raise exception 'duplicate_guest_name';
+  end if;
+
+  v_token := encode(gen_random_bytes(32), 'base64');
+
+  insert into guests (session_id, display_name, guest_token)
+  values (v_session.id, v_name, v_token)
+  returning guests.id into v_guest_id;
+
+  insert into participant_access_credentials (guest_id, token_hash, credential_type, expires_at)
+  values (v_guest_id, p_device_token_hash, 'device_session', now() + interval '180 days');
+
+  insert into participant_access_credentials (guest_id, token_hash, credential_type, expires_at)
+  values (v_guest_id, p_recovery_code_hash, 'recovery_code', v_session.created_at + interval '30 days');
+
+  return query select v_guest_id, v_token, v_name;
+end;
+$$;
+
+grant execute on function join_tasting_session(uuid, text, text, text, text) to anon, authenticated;
+
+-- guests.user_id, participant_access_credentials, rejoin_rate_limit_events,
+-- and every function below are brand new — see README "Session rejoin" for
+-- the full design summary.
+
+alter table guests add column if not exists user_id uuid references auth.users(id) on delete set null;
+
+create unique index if not exists guests_session_user_uniq
+  on guests (session_id, user_id)
+  where user_id is not null;
+
+create index if not exists guests_user_id_idx on guests (user_id) where user_id is not null;
+
+create table if not exists participant_access_credentials (
+  id uuid primary key default gen_random_uuid(),
+  guest_id uuid not null references guests(id) on delete cascade,
+  token_hash text not null unique,
+  credential_type text not null check (credential_type in ('device_session', 'recovery_code', 'host_issued_recovery')),
+  created_at timestamptz not null default now(),
+  expires_at timestamptz,
+  last_used_at timestamptz,
+  revoked_at timestamptz,
+  revoked_reason text,
+  rotated_from_id uuid references participant_access_credentials(id)
+);
+
+create index if not exists participant_access_credentials_guest_id_idx
+  on participant_access_credentials (guest_id);
+create index if not exists participant_access_credentials_active_hash_idx
+  on participant_access_credentials (token_hash) where revoked_at is null;
+
+alter table participant_access_credentials enable row level security;
+revoke all on participant_access_credentials from anon, authenticated;
+
+create table if not exists rejoin_rate_limit_events (
+  id bigint generated always as identity primary key,
+  scope_key text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists rejoin_rate_limit_events_scope_created_idx
+  on rejoin_rate_limit_events (scope_key, created_at desc);
+
+alter table rejoin_rate_limit_events enable row level security;
+revoke all on rejoin_rate_limit_events from anon, authenticated;
+
+create or replace function check_rejoin_rate_limit(
+  p_scope_key text,
+  p_max_attempts int,
+  p_window interval
+) returns boolean
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_count int;
+begin
+  insert into rejoin_rate_limit_events (scope_key) values (p_scope_key);
+
+  select count(*) into v_count
+  from rejoin_rate_limit_events
+  where scope_key = p_scope_key and created_at > now() - p_window;
+
+  return v_count <= p_max_attempts;
+end;
+$$;
+
+create or replace function join_tasting_session_as_account(
+  p_public_id uuid
+) returns table (guest_id uuid, guest_token text, display_name text, already_member boolean)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_session tasting_sessions%rowtype;
+  v_existing guests%rowtype;
+  v_profile_name text;
+  v_profile_email text;
+  v_name text;
+  v_token text;
+  v_guest_id uuid;
+begin
+  if v_uid is null then
+    raise exception 'not_signed_in';
+  end if;
+
+  if not check_rejoin_rate_limit('join_account:' || v_uid::text, 30, interval '1 hour') then
+    raise exception 'rate_limited';
+  end if;
+
+  select * into v_session from tasting_sessions where public_id = p_public_id;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+
+  select * into v_existing from guests where session_id = v_session.id and user_id = v_uid;
+  if found then
+    return query select v_existing.id, v_existing.guest_token, v_existing.display_name, true;
+    return;
+  end if;
+
+  if v_session.status = 'revealed' then
+    raise exception 'session_already_revealed';
+  end if;
+
+  select p.display_name, p.email into v_profile_name, v_profile_email
+  from profiles p where p.id = v_uid;
+
+  v_name := nullif(btrim(coalesce(v_profile_name, '')), '');
+  if v_name is null then
+    v_name := nullif(split_part(coalesce(v_profile_email, ''), '@', 1), '');
+  end if;
+  if v_name is null then
+    v_name := 'Guest';
+  end if;
+  if length(v_name) > 60 then
+    v_name := left(v_name, 60);
+  end if;
+
+  if exists (
+    select 1 from guests
+    where session_id = v_session.id and display_name_normalized = lower(v_name)
+  ) then
+    v_name := left(v_name, 55) || ' (' || substr(v_uid::text, 1, 4) || ')';
+  end if;
+
+  v_token := encode(gen_random_bytes(32), 'base64');
+
+  begin
+    insert into guests (session_id, display_name, guest_token, user_id)
+    values (v_session.id, v_name, v_token, v_uid)
+    returning guests.id into v_guest_id;
+  exception when unique_violation then
+    select * into v_existing from guests where session_id = v_session.id and user_id = v_uid;
+    if found then
+      return query select v_existing.id, v_existing.guest_token, v_existing.display_name, true;
+      return;
+    end if;
+    raise exception 'duplicate_guest_name';
+  end;
+
+  return query select v_guest_id, v_token, v_name, false;
+end;
+$$;
+
+grant execute on function join_tasting_session_as_account(uuid) to authenticated;
+
+create or replace function resolve_join_identity(
+  p_public_id uuid,
+  p_device_token_hash text default null
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_session tasting_sessions%rowtype;
+  v_account_guest guests%rowtype;
+  v_device_guest guests%rowtype;
+  v_account_match jsonb := null;
+  v_device_match jsonb := null;
+begin
+  select * into v_session from tasting_sessions where public_id = p_public_id;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+
+  if v_uid is not null then
+    select * into v_account_guest from guests where session_id = v_session.id and user_id = v_uid;
+    if found then
+      v_account_match := jsonb_build_object(
+        'guestId', v_account_guest.id,
+        'displayName', v_account_guest.display_name,
+        'guestToken', v_account_guest.guest_token
+      );
+    end if;
+  end if;
+
+  if p_device_token_hash is not null then
+    select g.* into v_device_guest
+    from guests g
+    join participant_access_credentials pac on pac.guest_id = g.id
+    where g.session_id = v_session.id
+      and pac.credential_type = 'device_session'
+      and pac.token_hash = p_device_token_hash
+      and pac.revoked_at is null
+      and (pac.expires_at is null or pac.expires_at > now());
+    if found then
+      update participant_access_credentials
+        set last_used_at = now()
+        where token_hash = p_device_token_hash and credential_type = 'device_session';
+      v_device_match := jsonb_build_object(
+        'guestId', v_device_guest.id,
+        'displayName', v_device_guest.display_name,
+        'guestToken', v_device_guest.guest_token
+      );
+    end if;
+  end if;
+
+  return jsonb_build_object(
+    'session', jsonb_build_object(
+      'publicId', v_session.public_id,
+      'status', v_session.status,
+      'tastingMode', v_session.tasting_mode
+    ),
+    'accountMatch', v_account_match,
+    'deviceMatch', v_device_match
+  );
+end;
+$$;
+
+grant execute on function resolve_join_identity(uuid, text) to anon, authenticated;
+
+create or replace function redeem_recovery_code(
+  p_public_id uuid,
+  p_code_hash text,
+  p_new_device_token_hash text,
+  p_client_ip text default null
+) returns table (guest_id uuid, guest_token text, display_name text)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_session tasting_sessions%rowtype;
+  v_credential participant_access_credentials%rowtype;
+  v_guest guests%rowtype;
+  v_device_count int;
+  v_oldest_device_id uuid;
+begin
+  select * into v_session from tasting_sessions where public_id = p_public_id;
+  if not found then
+    raise exception 'recovery_failed';
+  end if;
+
+  if not check_rejoin_rate_limit('recover_ip:' || coalesce(p_client_ip, 'unknown'), 8, interval '15 minutes')
+     or not check_rejoin_rate_limit('recover_session:' || v_session.id::text, 20, interval '15 minutes')
+  then
+    raise exception 'rate_limited';
+  end if;
+
+  select pac.* into v_credential
+  from participant_access_credentials pac
+  join guests g on g.id = pac.guest_id
+  where g.session_id = v_session.id
+    and pac.credential_type = 'recovery_code'
+    and pac.token_hash = p_code_hash
+    and pac.revoked_at is null
+    and (pac.expires_at is null or pac.expires_at > now())
+  for update;
+
+  if not found then
+    raise exception 'recovery_failed';
+  end if;
+
+  select * into v_guest from guests where id = v_credential.guest_id;
+
+  update participant_access_credentials
+    set revoked_at = now(), revoked_reason = 'redeemed'
+    where id = v_credential.id;
+
+  select count(*) into v_device_count
+  from participant_access_credentials
+  where participant_access_credentials.guest_id = v_guest.id
+    and credential_type = 'device_session' and revoked_at is null;
+
+  if v_device_count >= 3 then
+    select id into v_oldest_device_id
+    from participant_access_credentials
+    where participant_access_credentials.guest_id = v_guest.id
+      and credential_type = 'device_session' and revoked_at is null
+    order by created_at asc
+    limit 1;
+    update participant_access_credentials
+      set revoked_at = now(), revoked_reason = 'device_limit'
+      where id = v_oldest_device_id;
+  end if;
+
+  insert into participant_access_credentials (guest_id, token_hash, credential_type, expires_at, rotated_from_id)
+  values (v_guest.id, p_new_device_token_hash, 'device_session', now() + interval '180 days', v_credential.id);
+
+  return query select v_guest.id, v_guest.guest_token, v_guest.display_name;
+end;
+$$;
+
+grant execute on function redeem_recovery_code(uuid, text, text, text) to anon, authenticated;
+
+create or replace function link_host_guest_to_account(
+  p_public_id uuid,
+  p_host_token text
+) returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_session tasting_sessions%rowtype;
+begin
+  if v_uid is null then
+    raise exception 'not_authenticated';
+  end if;
+
+  select * into v_session from tasting_sessions where public_id = p_public_id;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+  if v_session.host_token_hash <> encode(digest(p_host_token, 'sha256'), 'hex') then
+    raise exception 'invalid_host_token';
+  end if;
+  if v_session.host_guest_id is null then
+    return;
+  end if;
+
+  update guests set user_id = v_uid
+  where id = v_session.host_guest_id and user_id is null
+    and not exists (
+      select 1 from guests g2 where g2.session_id = v_session.id and g2.user_id = v_uid
+    );
+end;
+$$;
+
+grant execute on function link_host_guest_to_account(uuid, text) to authenticated;
+
+create or replace function get_my_tastings()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_result jsonb;
+begin
+  if v_uid is null then
+    raise exception 'not_authenticated';
+  end if;
+
+  select coalesce(jsonb_agg(t order by (t->>'tastingDate') desc), '[]'::jsonb) into v_result
+  from (
+    select jsonb_build_object(
+      'publicId', s.public_id,
+      'title', s.title,
+      'tastingDate', s.tasting_date,
+      'status', s.status,
+      'tastingMode', s.tasting_mode,
+      'role', 'host'
+    ) as t
+    from account_tasting_records atr
+    join tasting_sessions s on s.id = atr.session_id
+    where atr.user_id = v_uid and atr.role = 'host'
+
+    union all
+
+    select jsonb_build_object(
+      'publicId', s.public_id,
+      'title', s.title,
+      'tastingDate', s.tasting_date,
+      'status', s.status,
+      'tastingMode', s.tasting_mode,
+      'role', 'participant'
+    ) as t
+    from guests g
+    join tasting_sessions s on s.id = g.session_id
+    where g.user_id = v_uid
+  ) x;
+
+  return v_result;
+end;
+$$;
+
+grant execute on function get_my_tastings() to authenticated;
+
+-- claim_account_tasting_record's participant branch now also links
+-- guests.user_id directly (see README "Session rejoin" — "Optional account
+-- claim"). Reproduced here in full since `create or replace` replaces the
+-- whole function body.
+create or replace function public.claim_account_tasting_record(
+  p_public_id uuid,
+  p_role text,
+  p_token text,
+  p_claim_source text
+) returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_session tasting_sessions%rowtype;
+  v_guest guests%rowtype;
+begin
+  if v_uid is null then
+    raise exception 'not_authenticated';
+  end if;
+  if p_role not in ('host', 'participant') then
+    raise exception 'invalid_role';
+  end if;
+  if p_claim_source not in ('automatic', 'browser_claim') then
+    raise exception 'invalid_claim_source';
+  end if;
+
+  select * into v_session from tasting_sessions where public_id = p_public_id;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+
+  if p_claim_source = 'browser_claim' and v_session.status <> 'revealed' then
+    raise exception 'session_not_revealed';
+  end if;
+
+  if p_role = 'host' then
+    if p_token is null or v_session.host_token_hash <> encode(digest(p_token, 'sha256'), 'hex') then
+      raise exception 'invalid_host_token';
+    end if;
+
+    insert into public.account_tasting_records (user_id, session_id, role, participant_id, claim_source)
+    values (v_uid, v_session.id, 'host', null, p_claim_source)
+    on conflict (user_id, session_id) where role = 'host' do nothing;
+  else
+    select * into v_guest from guests
+    where guest_token = p_token and session_id = v_session.id;
+    if not found then
+      raise exception 'invalid_guest_token';
+    end if;
+
+    if v_guest.user_id is not null and v_guest.user_id <> v_uid then
+      raise exception 'account_already_linked';
+    end if;
+    if exists (
+      select 1 from guests g2
+      where g2.session_id = v_session.id and g2.user_id = v_uid and g2.id <> v_guest.id
+    ) then
+      raise exception 'account_already_linked';
+    end if;
+
+    insert into public.account_tasting_records (user_id, session_id, role, participant_id, claim_source)
+    values (v_uid, v_session.id, 'participant', v_guest.id, p_claim_source)
+    on conflict (user_id, session_id, participant_id) where role = 'participant' do nothing;
+
+    update guests set user_id = v_uid where id = v_guest.id and user_id is null;
+  end if;
+end;
+$$;
+
+grant execute on function public.claim_account_tasting_record(uuid, text, text, text) to authenticated;
+
+-- Backfill: links every pre-existing claimed participant record directly,
+-- so resolve_join_identity/get_my_tastings recognize them immediately.
+update guests g
+set user_id = atr.user_id
+from account_tasting_records atr
+where atr.role = 'participant'
+  and atr.participant_id = g.id
+  and g.user_id is null
+  and not exists (
+    select 1 from guests g2
+    where g2.session_id = g.session_id and g2.user_id = atr.user_id
+  );
+```
+
+### 2. Verification queries
+
+```sql
+-- every new function exists
+select routine_name from information_schema.routines
+where routine_name in (
+  'check_rejoin_rate_limit', 'join_tasting_session_as_account',
+  'resolve_join_identity', 'redeem_recovery_code',
+  'link_host_guest_to_account', 'get_my_tastings'
+);
+
+-- the account-membership uniqueness constraint exists
+select indexname from pg_indexes where indexname = 'guests_session_user_uniq';
+
+-- participant_access_credentials is fully locked down for anon/authenticated
+select has_table_privilege('anon', 'participant_access_credentials', 'select'); -- expect: false
+select has_table_privilege('authenticated', 'participant_access_credentials', 'select'); -- expect: false
+```
+
+### RLS and privacy summary
+
+`participant_access_credentials` and `rejoin_rate_limit_events` have RLS enabled with **no policy at all** and no grant to `anon`/`authenticated` — every device token, recovery code hash, and rate-limit counter is reachable only from inside the `SECURITY DEFINER` functions above, never by a direct client query. `guests.user_id` carries no new column grant — it's not in the existing narrow `grant select (id, session_id, display_name, created_at, completed_at) on guests` list, so it stays exactly as invisible to a direct client read as `guest_token` already was; the only way to learn "is this participant account-linked" is through `resolve_join_identity`/`get_my_tastings`, both of which only ever reveal that fact about the caller's own resolved identity. No table's RLS policy changed, and `host_token_hash` gained no new reader.
+
+### Optional periodic cleanup
+
+`rejoin_rate_limit_events` grows one row per join/account-join/recovery attempt and is never pruned automatically. For a long-running deployment, an optional periodic job (pg_cron, or just an occasional manual run) can safely delete old rows, since the rate limiter only ever looks back by its own fixed window (at most 1 hour in the current policy):
+
+```sql
+delete from rejoin_rate_limit_events where created_at < now() - interval '7 days';
+```
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):
@@ -1542,13 +2113,15 @@ Every tasting workflow (hosting, joining, registering bottles, guessing, rating,
 - **Account-linked tasting records (`public.account_tasting_records`, `claim_account_tasting_record`) also introduce no new privilege** — see "Migrating for account-linked tasting records" above for the full schema. The short version: the only write path re-validates the exact same host/guest token every other RPC already does, `auth.uid()` (never a client-supplied user id) decides whose row gets written, and the table has no insert/update/delete policy for any role at all — a signed-in user who merely knows or guesses a session id, with no valid token for it, can never create a link. Reading is plain RLS (`auth.uid() = user_id`), so "Your record" needs no token round trip at all — ownership of the *row* is what's being checked there, not ownership of a token.
 - **The Palate Profile (`/profile`, `/api/profile`, `/api/profile/ledger`) introduces no new privilege either** — see "Migrating for the Palate Profile" above. Both Route Handlers use the cookie-aware client (so every query runs as the caller's own `authenticated` role, not an elevated one), read `account_tasting_records` under its existing RLS (`auth.uid() = user_id`, no exceptions), and re-derive every session's report through the same `loadTastingReportData` pipeline the archive and results page already call — there is no separate, broader "get all my data" query path, and no aggregate figure is ever computed from another user's rows.
 - **Region and Appellation (`wines.appellation`, `cellar_bottles.appellation`) also introduces no new privilege** — see "Migrating for Region and Appellation" above. It's an additive nullable column following the exact same visibility path region/country already had: masked pre-reveal in `guest_visible_wines`, owner-only in `cellar_bottles`. The one new thing is `is_valid_appellation`, a plain SQL function (no elevated privilege of its own) called from inside the already-`SECURITY DEFINER` bottle-identity RPCs to reject a non-curated value server-side rather than trusting the client's `<select>` alone.
+- **Session rejoin (`guests.user_id`, `participant_access_credentials`, `rejoin_rate_limit_events`, and the six new RPCs) also introduces no new privilege over the tasting data itself** — see "Migrating for session rejoin" above. It's a second, independent way to *resolve which existing participant a browser already is* (by account or by a new hashed device/recovery credential), layered on top of the same `guest_token` every downstream action already required; no reveal, scoring, or guess RPC changed. Every new secret (device token, recovery code) is hashed with the same approach as `host_token_hash` before Postgres ever sees it, `participant_access_credentials` has no client-reachable grant at all, and `host_token`/`host_token_hash` gained no new column, check, or recovery path — host authorization is completely unchanged by this feature.
 - **Personal Cellar (`cellar_bottles` and its five RPCs) is the strictest privacy boundary in this app** — see "Migrating for Personal Cellar v1" above. Unlike every other table, there is no direct-client write path at all, not even an "owner may update their own row" policy: add/edit/reserve/return/consume all go through a `SECURITY DEFINER` RPC that re-validates `auth.uid()` and ownership independently, every time. `wines.cellar_bottle_id` carries no `anon`/`authenticated` column grant, so cellar provenance is structurally invisible to the host, other participants, and reports — not just hidden by convention.
 - **Bug fixed in this revision**: the `guest_visible_wines` and `revealed_wine_guesses` views were previously declared with `security_invoker = true`. Combined with `wines`/`wine_guesses` having Row Level Security enabled but no SELECT policy for `anon`, that setting would have made these views return **zero rows for anon on a real Supabase project** — a security_invoker view evaluates RLS as the calling role, and anon was never granted any row-visibility on those tables directly. The fix is to not set `security_invoker` (the default, `false`, runs the view as its owner), so the view's own `CASE`/`WHERE` masking logic — not the caller's RLS — is what decides what anon sees. This was never caught before because the app had not yet been tested against a live Supabase project.
 
 ### Honest MVP limitations
 
 - **Tokens are bearer credentials, not accounts.** Anyone who obtains a host or guest link (screenshot, shared clipboard, browser history on a shared device) has full access matching that role, for as long as the session exists. There's no way to revoke a token, log out, or rotate it.
-- **No rate limiting.** The RPC functions don't currently throttle repeated calls at a token, so a determined script could hammer `register_bottle` or `upsert_wine_guess` — acceptable for a private dinner-party tool, not for anything public-facing.
+- **No rate limiting on most RPCs.** Only session-rejoin's join/account-join/recovery-code calls are now rate-limited (see "Migrating for session rejoin" above), via a minimal fixed-window counter keyed mostly on `x-forwarded-for` (best-effort, not a hardened anti-abuse system). Every other RPC function — `register_bottle`, `upsert_wine_guess`, etc. — still doesn't throttle repeated calls at a token, so a determined script could hammer those — acceptable for a private dinner-party tool, not for anything public-facing.
+- **Host lost-token recovery and host-issued recovery codes are deliberately not implemented.** Session rejoin (see above) gives guests both same-device and cross-device recovery; a host who loses their `host_token`/management link still has no recovery path at all — this was an explicit scope decision (rebuilding host authorization around accounts, or adding host-side token reissue, is a bigger and riskier change than a guest-facing rejoin feature should absorb) rather than an oversight. The `host_issued_recovery` credential type exists in `participant_access_credentials`'s check constraint for forward compatibility only; nothing creates one yet.
 - **Realtime + column privileges is one layer of defense, not independently verified against every Supabase version.** We rely on documented Supabase column-level privileges to keep `host_token_hash`, `guest_token`, `contributor_guest_id`, and all answer-key columns out of anon reads (including Realtime broadcasts). The tables/columns granted to anon at all are deliberately minimal; the actually sensitive data never has any anon table grant, masked/gated entirely through views and RPC functions instead — that's the layer we'd trust first if this were ever audited.
 - **`display_name` uniqueness is only enforced per-session**, via a generated lower/trimmed column — it doesn't handle full Unicode normalization (accents, punctuation) the way `lib/normalize.ts`'s scoring comparisons do; "Alice" and "Álice" would currently be treated as different names.
 - **No migration framework.** `supabase/schema.sql` is a single hand-maintained file with inline "MIGRATION-SENSITIVE" comments rather than a sequence of versioned migration files. That's workable for one feature step; a project with more history would want real migrations.

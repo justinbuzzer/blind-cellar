@@ -6,7 +6,6 @@ import {
   FinalLeaderboardResponse,
   GuestSessionStateResponse,
   HostGuessProgressDTO,
-  JoinSessionResponse,
   MyBottleDTO,
   RegisterBottleResponse,
   RegistrationStateResponse,
@@ -14,20 +13,6 @@ import {
   RevealedBottlesSummaryResponse,
   SeenTastingStateResponse,
 } from "./types";
-
-export async function joinSession(
-  supabase: SupabaseClient,
-  publicId: string,
-  displayName: string
-) {
-  const { data, error } = await supabase.rpc("join_tasting_session", {
-    p_public_id: publicId,
-    p_display_name: displayName,
-  });
-  if (error) return { data: null, error };
-  const row = (Array.isArray(data) ? data[0] : data) as JoinSessionResponse;
-  return { data: row, error: null };
-}
 
 export async function getGuestSessionState(
   supabase: SupabaseClient,

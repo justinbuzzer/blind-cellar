@@ -289,6 +289,49 @@ export interface JoinSessionResponse {
   display_name: string;
 }
 
+/** See README "Session rejoin" — join_tasting_session_as_account. */
+export interface JoinAsAccountResponse {
+  guest_id: string;
+  guest_token: string;
+  display_name: string;
+  already_member: boolean;
+}
+
+/** One side of a resolve_join_identity match — see lib/rejoin.ts IdentityMatch. */
+export interface IdentityMatchDTO {
+  guestId: string;
+  displayName: string;
+  guestToken: string;
+}
+
+/** See README "Session rejoin" — resolve_join_identity. */
+export interface JoinResolutionResponse {
+  session: {
+    publicId: string;
+    status: SessionStatus;
+    tastingMode: TastingMode | null;
+  };
+  accountMatch: IdentityMatchDTO | null;
+  deviceMatch: IdentityMatchDTO | null;
+}
+
+/** See README "Session rejoin" — redeem_recovery_code. */
+export interface RecoveryRedeemResponse {
+  guest_id: string;
+  guest_token: string;
+  display_name: string;
+}
+
+/** One row of get_my_tastings — see README "Session rejoin" — "Resume from account area". */
+export interface MyTastingEntry {
+  publicId: string;
+  title: string;
+  tastingDate: string;
+  status: SessionStatus;
+  tastingMode: TastingMode;
+  role: "host" | "participant";
+}
+
 /** A participant's own registered bottle, as returned by get_registration_state. */
 export interface MyBottleDTO {
   id: string;
@@ -704,6 +747,16 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   // tags; the first two use the spec's exact required copy verbatim.
   cellar_bottle_reserved: "This bottle cannot be deleted while it is reserved.",
   cellar_bottle_consumed: "Consumed bottles remain part of your cellar record.",
+
+  // Session rejoin (see README "Session rejoin"). rate_limited and
+  // recovery_failed deliberately use the spec's exact generic copy and are
+  // raised for every distinct underlying reason (expired/used/wrong-session/
+  // too-many-attempts) — never anything more specific, on purpose.
+  rate_limited: "Please wait a moment and try again.",
+  recovery_failed: "That code could not be used. Check it and try again.",
+  not_signed_in: "Sign in to continue with your account.",
+  account_already_linked:
+    "This account already has a participant record for this tasting.",
 };
 
 /** Turns a Supabase/Postgres error into a friendly, pre-written message when we recognize it. */

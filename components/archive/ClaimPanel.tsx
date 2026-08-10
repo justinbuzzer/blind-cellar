@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
+import { Modal } from "@/components/Modal";
 import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { ArchiveRole } from "@/lib/archive";
 import { claimAccountTastingRecord } from "@/lib/supabase/claim";
@@ -12,22 +13,37 @@ interface ClaimPanelProps {
   role: ArchiveRole;
   token: string;
   className?: string;
+  /** Shown in the confirmation prompt for a participant claim, per README
+   * "Session rejoin" — "Optional account claim". Not always available at
+   * every call site today; falls back to a generic "your account" phrasing
+   * rather than fabricating a name. */
+  displayName?: string;
   /** Called once the claim succeeds, so the caller can refresh its own lists (e.g. move the entry out of "This browser"'s claimable set). */
   onClaimed?: () => void;
 }
 
-type ClaimState = "idle" | "claiming" | "success" | "error";
+type ClaimState = "idle" | "confirming" | "claiming" | "success" | "error";
 
 /**
  * The explicit "Add to my tasting record" action (see README "Account-linked
- * tasting records") — shown only where the caller has already confirmed
- * every eligibility rule (signed in, valid local token, revealed, not
- * already linked). This component itself does no eligibility checking; it
- * only performs the claim and reports the result, using the exact required
- * copy. A refined paper panel, not a banner or a modal — the action has no
- * destructive/irreversible quality that would justify one.
+ * tasting records" and "Session rejoin" — "Optional account claim") — shown
+ * only where the caller has already confirmed every eligibility rule
+ * (signed in, valid local token, revealed, not already linked). This
+ * component itself does no eligibility checking; it only shows an explicit
+ * confirmation, then performs the claim and reports the result. For a
+ * participant claim, this is also what links guests.user_id (see
+ * claim_account_tasting_record in supabase/schema.sql) — proof of guest
+ * identity is the same locally-held guest_token this panel already required
+ * before this feature existed, which the RPC re-validates itself.
  */
-export function ClaimPanel({ publicId, role, token, className = "", onClaimed }: ClaimPanelProps) {
+export function ClaimPanel({
+  publicId,
+  role,
+  token,
+  className = "",
+  displayName,
+  onClaimed,
+}: ClaimPanelProps) {
   const [state, setState] = useState<ClaimState>("idle");
 
   async function handleClaim() {
@@ -79,13 +95,38 @@ export function ClaimPanel({ publicId, role, token, className = "", onClaimed }:
 
           <Button
             type="button"
-            onClick={handleClaim}
+            onClick={() => setState("confirming")}
             disabled={state === "claiming"}
             className="mt-1 self-start"
           >
-            {state === "claiming" ? "Adding…" : "Add to my tasting record"}
+            Add to my tasting record
           </Button>
         </>
+      )}
+
+      {(state === "confirming" || state === "claiming") && (
+        <Modal
+          title="Add to your record"
+          onClose={() => state !== "claiming" && setState("idle")}
+        >
+          <p>
+            {role === "participant"
+              ? `Link this tasting participation to ${displayName ? displayName : "your account"}?`
+              : "Add this hosted tasting to your account?"}
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setState("idle")}
+              disabled={state === "claiming"}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleClaim} disabled={state === "claiming"}>
+              {state === "claiming" ? "Adding…" : "Confirm"}
+            </Button>
+          </div>
+        </Modal>
       )}
     </Card>
   );

@@ -32,6 +32,22 @@ async function tryAutoLinkHost(publicId: string, hostToken: string): Promise<Acc
       p_token: hostToken,
       p_claim_source: "automatic",
     });
+    // Best-effort, additive (see README "Session rejoin"): also links the
+    // host's OWN participant/guessing guest row to their account, so their
+    // personal tasting flow benefits from account-based rejoin too. Never
+    // affects host-authorization itself, and its failure is swallowed the
+    // same way — it must never change the accountLinkStatus reported above.
+    // Awaited (unlike the client-side auto-claim in the old join flow) since
+    // this Route Handler fully controls its own lifecycle — an unawaited
+    // call here could be silently dropped once the response is sent.
+    try {
+      await authedSupabase.rpc("link_host_guest_to_account", {
+        p_public_id: publicId,
+        p_host_token: hostToken,
+      });
+    } catch {
+      // Swallowed — see comment above.
+    }
     return error ? "failed" : "linked";
   } catch {
     return "failed";
