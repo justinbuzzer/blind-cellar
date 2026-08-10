@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/Button";
@@ -14,6 +14,7 @@ import { TastingOrderList } from "@/components/host/TastingOrderList";
 import { SeenHostBottleRow } from "@/components/host/SeenHostBottleRow";
 import { FullBlindHostBottleRow } from "@/components/host/FullBlindHostBottleRow";
 import { BottleProgressControl } from "@/components/host/BottleProgressControl";
+import { CurrentTastingCard } from "@/components/host/CurrentTastingCard";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { ArchiveLink } from "@/components/navigation/ArchiveLink";
 import { AccountNav } from "@/components/navigation/AccountNav";
@@ -21,13 +22,19 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { hostControlImage } from "@/lib/appImages";
 import { WINE_STYLE_LABELS } from "@/types/tasting";
 import { formatSeenRatingStatus } from "@/lib/seenHostControls";
-import { formatGuessProgressTitle, formatProgressAccessibleLabel } from "@/lib/hostProgress";
+import {
+  formatGuessProgressTitle,
+  formatGroupProgressUpdateAnnouncement,
+  formatProgressAccessibleLabel,
+} from "@/lib/hostProgress";
+import { resolveHostCurrentTastingState } from "@/lib/hostCurrentTasting";
 import { bottleLabel } from "@/lib/codes";
 import {
   friendlyRpcError,
   HostActiveBottleDTO,
   HostBottleDTO,
   HostGuestDTO,
+  HostSeenProgressDTO,
   HostSessionResponse,
   RevealFullBlindBottleResponse,
   RevealSeenRatingsResponse,
@@ -78,6 +85,9 @@ export function HostControlClient({
   const [activeBottle, setActiveBottle] = useState<HostActiveBottleDTO | null>(
     initialData.activeBottle
   );
+  const [seenProgress, setSeenProgress] = useState<HostSeenProgressDTO | null>(
+    initialData.seenProgress
+  );
   const [showStartConfirm, setShowStartConfirm] = useState(false);
   const [showRevealBottleConfirm, setShowRevealBottleConfirm] = useState(false);
   const [showEndSeenConfirm, setShowEndSeenConfirm] = useState(false);
@@ -100,6 +110,68 @@ export function HostControlClient({
   );
   const confirmingSeenWine = wines.find((w) => w.id === confirmingSeenWineId) ?? null;
   const confirmingFullBlindWine = wines.find((w) => w.id === confirmingFullBlindWineId) ?? null;
+
+  // Current tasting summary (see README "Current tasting") — purely a
+  // display computation over data already fetched above via the
+  // host-token-authorized get_host_session RPC; introduces no new query and
+  // carries no authority of its own (every action it can trigger reuses the
+  // exact same handlers/confirmations as the detailed sections below, which
+  // independently re-validate everything server-side).
+  const currentTastingState = useMemo(
+    () =>
+      status === "registration"
+        ? null
+        : resolveHostCurrentTastingState({
+            tastingMode,
+            status,
+            wines,
+            completedCount,
+            eligibleCount: guests.length,
+            activeBottle,
+            seenProgress,
+          }),
+    [status, tastingMode, wines, completedCount, guests.length, activeBottle, seenProgress]
+  );
+
+  const [currentTastingAnnouncement, setCurrentTastingAnnouncement] = useState("");
+  const prevCurrentTastingProgressRef = useRef<{
+    bottleKey: string;
+    completed: number;
+    eligible: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (currentTastingState?.kind !== "awaiting_responses") return;
+    const progress = currentTastingState.progress;
+    const bottleKey = currentTastingState.currentBottle?.label ?? "session";
+    const prev = prevCurrentTastingProgressRef.current;
+    if (
+      prev &&
+      prev.bottleKey === bottleKey &&
+      (prev.completed !== progress.completedCount || prev.eligible !== progress.eligibleCount)
+    ) {
+      setCurrentTastingAnnouncement(
+        formatGroupProgressUpdateAnnouncement(
+          progress.completedCount,
+          progress.eligibleCount,
+          progress.noun === "rated" ? "rating" : "guess"
+        )
+      );
+    }
+    prevCurrentTastingProgressRef.current = {
+      bottleKey,
+      completed: progress.completedCount,
+      eligible: progress.eligibleCount,
+    };
+  }, [currentTastingState]);
+
+  function handleCurrentTastingRevealClick(wineId: string) {
+    if (tastingMode === "full_blind") {
+      setConfirmingFullBlindWineId(wineId);
+    } else if (tastingMode === "course_reveal") {
+      setShowRevealBottleConfirm(true);
+    }
+  }
 
   useEffect(() => {
     setJoinUrl(`${window.location.origin}/join/${publicId}`);
@@ -152,6 +224,7 @@ export function HostControlClient({
         const data: HostSessionResponse = await response.json();
         setWines(data.wines);
         setActiveBottle(data.activeBottle);
+        setSeenProgress(data.seenProgress);
       } catch {
         // Realtime will retry on the next change; a transient fetch failure
         // here isn't worth surfacing as an error banner.
@@ -257,6 +330,7 @@ export function HostControlClient({
         const data: HostSessionResponse = await response.json();
         if (!cancelled) {
           setWines(data.wines);
+          setSeenProgress(data.seenProgress);
         }
       } catch {
         // Next poll will retry.
@@ -510,6 +584,21 @@ export function HostControlClient({
           />
         </div>
       </Card>
+
+      {currentTastingState && (
+        <CurrentTastingCard
+          state={currentTastingState}
+          leaderboardHref={`/host/${publicId}/leaderboard?token=${encodeURIComponent(hostToken)}`}
+          recapHref={`/host/${publicId}/recap?token=${encodeURIComponent(hostToken)}`}
+          resultsHref={`/results/${publicId}`}
+          bottleResultHref={(wineId) =>
+            `/host/${publicId}/bottle/${wineId}/result?token=${encodeURIComponent(hostToken)}`
+          }
+          onRevealClick={handleCurrentTastingRevealClick}
+          onEndSeenTastingClick={() => setShowEndSeenConfirm(true)}
+          announcement={currentTastingAnnouncement}
+        />
+      )}
 
       {status !== "revealed" && (
         <Card className="flex flex-col gap-3">

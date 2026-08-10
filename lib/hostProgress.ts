@@ -76,18 +76,26 @@ export function formatProgressUpdateAnnouncement(
  * "Group progress · {submittedCount} of {eligibleCount} submitted" — the
  * host's own Full blind/Course-by-course guess-screen live count (see
  * README "Host per-bottle response progress" — "Host guess screen group
- * progress"). Always the "guess" kind — this line never appears on a Seen
- * rating page. Built on the same `formatProgressStatusLine` the Host
- * Controls popover uses, so the two copies can never drift.
+ * progress"), and reused by the Host Controls "Current tasting" summary
+ * (see README "Current tasting") for both that same "guess" kind and Seen's
+ * "rated" kind — `kind` defaults to `"guess"` so every pre-existing call
+ * site (which never passed a third argument) keeps its exact original
+ * behavior. Built on the same `formatProgressStatusLine` the Host Controls
+ * popover uses, so the copies can never drift.
  */
-export function formatGroupProgressLine(submittedCount: number, eligibleCount: number): string {
-  return `Group progress · ${formatProgressStatusLine("guess", submittedCount, eligibleCount)}`;
+export function formatGroupProgressLine(
+  submittedCount: number,
+  eligibleCount: number,
+  kind: BottleResponseKind = "guess"
+): string {
+  return `Group progress · ${formatProgressStatusLine(kind, submittedCount, eligibleCount)}`;
 }
 
-/** "Group progress updated: {submittedCount} of {eligibleCount} submitted." — the host guess screen's own live-region announcement text. */
+/** "Group progress updated: {submittedCount} of {eligibleCount} submitted/rated." — the live-region announcement text, shared by the host guess screen and the Host Controls "Current tasting" summary. */
 export function formatGroupProgressUpdateAnnouncement(
   submittedCount: number,
-  eligibleCount: number
+  eligibleCount: number,
+  kind: BottleResponseKind = "guess"
 ): string {
-  return `Group progress updated: ${formatProgressStatusLine("guess", submittedCount, eligibleCount)}.`;
+  return `Group progress updated: ${formatProgressStatusLine(kind, submittedCount, eligibleCount)}.`;
 }

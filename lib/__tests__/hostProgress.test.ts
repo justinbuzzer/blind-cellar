@@ -105,12 +105,26 @@ describe("formatGroupProgressLine", () => {
   it("never uses the word 'guests'", () => {
     expect(formatGroupProgressLine(6, 8)).not.toMatch(/guests/i);
   });
+
+  it("defaults to the guess/submitted wording when no kind is given", () => {
+    expect(formatGroupProgressLine(6, 8)).toBe(formatGroupProgressLine(6, 8, "guess"));
+  });
+
+  it("formats the rated variant for Seen mode's Current tasting summary", () => {
+    expect(formatGroupProgressLine(6, 8, "rating")).toBe("Group progress · 6 of 8 rated");
+  });
 });
 
 describe("formatGroupProgressUpdateAnnouncement", () => {
   it("formats the exact required host guess-screen live-region text", () => {
     expect(formatGroupProgressUpdateAnnouncement(7, 8)).toBe(
       "Group progress updated: 7 of 8 submitted."
+    );
+  });
+
+  it("formats the rated variant", () => {
+    expect(formatGroupProgressUpdateAnnouncement(7, 8, "rating")).toBe(
+      "Group progress updated: 7 of 8 rated."
     );
   });
 });
