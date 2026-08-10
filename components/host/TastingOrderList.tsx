@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Card } from "@/components/Card";
 import { SectionEyebrow } from "@/components/SectionEyebrow";
+import { formatTastingOrderAccessibleLabel, formatTastingOrderContributorLabel } from "@/lib/codes";
 import { moveItem } from "@/lib/reorder";
 import { HostBottleDTO } from "@/lib/supabase/types";
 import { WINE_STYLE_LABELS } from "@/types/tasting";
@@ -95,47 +96,56 @@ export function TastingOrderList({
         tasting starts.
       </p>
       <ol className="flex flex-col divide-y divide-cellar-border">
-        {localWines.map((wine, index) => (
-          <li
-            key={wine.id}
-            className="flex items-center justify-between gap-3 px-5 py-3"
-          >
-            <div className="flex items-center gap-3">
-              <span
-                aria-hidden="true"
-                className="flex h-8 w-8 shrink-0 items-center justify-center font-display text-lg font-semibold text-cellar-maroon"
-              >
-                {index + 1}
-              </span>
-              <span className="text-sm font-medium text-cellar-text">
-                {wine.anonymousCode}
-              </span>
-              <span className="rounded-full border border-cellar-border px-2 py-0.5 text-xs text-cellar-muted">
-                {WINE_STYLE_LABELS[wine.wineStyle]}
-              </span>
-            </div>
-            <div className="flex gap-1">
-              <button
-                type="button"
-                aria-label={`Move ${wine.anonymousCode} up`}
-                disabled={index === 0 || saveState === "saving"}
-                onClick={() => move(index, "up")}
-                className="flex h-11 w-11 items-center justify-center rounded-sm border border-cellar-border text-cellar-text transition-colors duration-150 hover:border-cellar-maroon/40 focus:outline-none focus:ring-2 focus:ring-cellar-gold disabled:opacity-30 disabled:hover:border-cellar-border"
-              >
-                <span aria-hidden="true">↑</span>
-              </button>
-              <button
-                type="button"
-                aria-label={`Move ${wine.anonymousCode} down`}
-                disabled={index === localWines.length - 1 || saveState === "saving"}
-                onClick={() => move(index, "down")}
-                className="flex h-11 w-11 items-center justify-center rounded-sm border border-cellar-border text-cellar-text transition-colors duration-150 hover:border-cellar-maroon/40 focus:outline-none focus:ring-2 focus:ring-cellar-gold disabled:opacity-30 disabled:hover:border-cellar-border"
-              >
-                <span aria-hidden="true">↓</span>
-              </button>
-            </div>
-          </li>
-        ))}
+        {localWines.map((wine, index) => {
+          const accessibleLabel = formatTastingOrderAccessibleLabel(
+            wine.bottleNumber,
+            wine.contributorName
+          );
+          return (
+            <li
+              key={wine.id}
+              className="flex flex-col gap-3 px-5 py-3 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="flex items-center gap-3">
+                <span
+                  aria-hidden="true"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center font-display text-lg font-semibold text-cellar-maroon"
+                >
+                  {index + 1}
+                </span>
+                <span className="text-sm font-medium text-cellar-text">
+                  <span aria-hidden="true">
+                    {formatTastingOrderContributorLabel(wine.bottleNumber, wine.contributorName)}
+                  </span>
+                  <span className="sr-only">{accessibleLabel}</span>
+                </span>
+                <span className="rounded-full border border-cellar-border px-2 py-0.5 text-xs text-cellar-muted">
+                  {WINE_STYLE_LABELS[wine.wineStyle]}
+                </span>
+              </div>
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  aria-label={`Move ${accessibleLabel}, up`}
+                  disabled={index === 0 || saveState === "saving"}
+                  onClick={() => move(index, "up")}
+                  className="flex h-11 w-11 items-center justify-center rounded-sm border border-cellar-border text-cellar-text transition-colors duration-150 hover:border-cellar-maroon/40 focus:outline-none focus:ring-2 focus:ring-cellar-gold disabled:opacity-30 disabled:hover:border-cellar-border"
+                >
+                  <span aria-hidden="true">↑</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Move ${accessibleLabel}, down`}
+                  disabled={index === localWines.length - 1 || saveState === "saving"}
+                  onClick={() => move(index, "down")}
+                  className="flex h-11 w-11 items-center justify-center rounded-sm border border-cellar-border text-cellar-text transition-colors duration-150 hover:border-cellar-maroon/40 focus:outline-none focus:ring-2 focus:ring-cellar-gold disabled:opacity-30 disabled:hover:border-cellar-border"
+                >
+                  <span aria-hidden="true">↓</span>
+                </button>
+              </div>
+            </li>
+          );
+        })}
       </ol>
       <div className="h-1" />
     </Card>

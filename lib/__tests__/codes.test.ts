@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { bottleLabel, formatBlindBottleLabel, generateSessionCode } from "@/lib/codes";
+import {
+  bottleLabel,
+  formatBlindBottleLabel,
+  formatTastingOrderAccessibleLabel,
+  formatTastingOrderContributorLabel,
+  generateSessionCode,
+} from "@/lib/codes";
 import {
   SESSION_STATUSES,
   TASTING_MODE_DESCRIPTIONS,
@@ -41,6 +47,52 @@ describe("formatBlindBottleLabel", () => {
   it("preserves Unicode and accented characters", () => {
     expect(formatBlindBottleLabel(5, "José")).toBe("Bottle 5 — José");
     expect(formatBlindBottleLabel(6, "François")).toBe("Bottle 6 — François");
+  });
+});
+
+describe("formatTastingOrderContributorLabel", () => {
+  it("formats the exact required em-dash copy for a standard contributor", () => {
+    expect(formatTastingOrderContributorLabel(1, "Ava")).toBe("Bottle 1 — Ava");
+    expect(formatTastingOrderContributorLabel(2, "Daniel")).toBe("Bottle 2 — Daniel");
+    expect(formatTastingOrderContributorLabel(3, "Mia")).toBe("Bottle 3 — Mia");
+  });
+
+  it("falls back to 'Contributor unavailable' when the name is missing", () => {
+    expect(formatTastingOrderContributorLabel(4, null)).toBe("Bottle 4 — Contributor unavailable");
+    expect(formatTastingOrderContributorLabel(4, undefined)).toBe("Bottle 4 — Contributor unavailable");
+    expect(formatTastingOrderContributorLabel(4)).toBe("Bottle 4 — Contributor unavailable");
+  });
+
+  it("falls back to 'Contributor unavailable' when the name is whitespace-only", () => {
+    expect(formatTastingOrderContributorLabel(5, "   ")).toBe("Bottle 5 — Contributor unavailable");
+  });
+
+  it("trims surrounding whitespace from a real name", () => {
+    expect(formatTastingOrderContributorLabel(6, "  Daniel  ")).toBe("Bottle 6 — Daniel");
+  });
+
+  it("preserves Unicode and accented characters", () => {
+    expect(formatTastingOrderContributorLabel(7, "José")).toBe("Bottle 7 — José");
+    expect(formatTastingOrderContributorLabel(8, "François")).toBe("Bottle 8 — François");
+  });
+
+  it("never invents a name — the fallback text is never mistaken for one", () => {
+    expect(formatTastingOrderContributorLabel(9, null)).not.toContain("Host");
+  });
+});
+
+describe("formatTastingOrderAccessibleLabel", () => {
+  it("spells out the relationship in words for a standard contributor", () => {
+    expect(formatTastingOrderAccessibleLabel(3, "Mia")).toBe("Bottle 3, brought by Mia");
+  });
+
+  it("spells out the fallback in words when the name is missing", () => {
+    expect(formatTastingOrderAccessibleLabel(4, null)).toBe("Bottle 4, contributor unavailable");
+    expect(formatTastingOrderAccessibleLabel(4, undefined)).toBe("Bottle 4, contributor unavailable");
+  });
+
+  it("trims whitespace and preserves accents like the visible label", () => {
+    expect(formatTastingOrderAccessibleLabel(5, "  José  ")).toBe("Bottle 5, brought by José");
   });
 });
 

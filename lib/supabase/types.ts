@@ -130,7 +130,7 @@ export interface HostBottleDTO {
   tastingOrder: number;
   /** full_blind and course_reveal only — see reveal_full_blind_bottle/reveal_bottle in supabase/schema.sql. Always null for seen bottles (see HostSeenBottleInfo.ratingsRevealedAt instead). */
   revealedAt: string | null;
-  /** full_blind/course_reveal only — same safe, never-secret label participants already see during guessing (see README "Bottle-order contributor labels"). Undefined for seen bottles (nested under `seen` instead). */
+  /** Same safe, never-secret display name shown throughout the app (see README "Bottle-order contributor labels" and "Tasting-order contributor labels"). Null only for a bottle with no recorded contributor (e.g. registered before contributor_guest_id existed) — never fabricated. Present for every tasting mode, including seen (in addition to seen's own nested wine-identity fields). */
   contributorName?: string | null;
   /** Seen mode only — see HostSeenBottleInfo. Undefined for full_blind/course_reveal. */
   seen?: HostSeenBottleInfo;

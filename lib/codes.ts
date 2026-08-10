@@ -41,3 +41,39 @@ export function formatBlindBottleLabel(
   const name = contributorDisplayName?.trim();
   return name ? `${bottleLabel(bottleNumber)} — ${name}` : bottleLabel(bottleNumber);
 }
+
+const CONTRIBUTOR_UNAVAILABLE = "Contributor unavailable";
+
+/**
+ * Visible row label for the host-only tasting-order editor (see README
+ * "Tasting-order contributor labels") — deliberately separate from
+ * formatBlindBottleLabel's pouring-cue fallback (which silently drops the
+ * dash) because a host arranging bottles benefits from an explicit
+ * "Contributor unavailable" rather than a row that looks unlabelled. A
+ * missing/blank name only happens for a bottle with no recorded
+ * contributor_guest_id (e.g. registered before that column existed) — this
+ * app has no guest-deletion path, so an active contributor's name is never
+ * blank in practice.
+ */
+export function formatTastingOrderContributorLabel(
+  bottleNumber: number,
+  contributorDisplayName?: string | null
+): string {
+  const name = contributorDisplayName?.trim();
+  return `${bottleLabel(bottleNumber)} — ${name || CONTRIBUTOR_UNAVAILABLE}`;
+}
+
+/**
+ * Screen-reader phrasing for the same tasting-order row/controls — spells
+ * out the bottle/contributor relationship in words rather than relying on
+ * the em dash alone to convey it.
+ */
+export function formatTastingOrderAccessibleLabel(
+  bottleNumber: number,
+  contributorDisplayName?: string | null
+): string {
+  const name = contributorDisplayName?.trim();
+  return name
+    ? `${bottleLabel(bottleNumber)}, brought by ${name}`
+    : `${bottleLabel(bottleNumber)}, contributor unavailable`;
+}

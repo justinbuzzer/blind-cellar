@@ -874,6 +874,12 @@ begin
   if v_session.tasting_mode = 'seen' then
     select count(*) into v_seen_eligible_count from guests where session_id = v_session.id;
 
+    -- contributorName is included here too (same lookup as the full_blind/
+    -- course_reveal branch below) purely so the host-only tasting-order
+    -- editor (components/host/TastingOrderList.tsx, rendered during
+    -- registration for every tasting mode) can show it — see README
+    -- "Tasting-order contributor labels". Seen already shows the host every
+    -- other wine field here, so this adds no new exposure.
     select coalesce(jsonb_agg(jsonb_build_object(
       'id', w.id,
       'bottleNumber', w.bottle_number,
@@ -881,6 +887,7 @@ begin
       'wineStyle', w.wine_style,
       'tastingOrder', w.tasting_order,
       'revealedAt', w.revealed_at,
+      'contributorName', (select display_name from guests where id = w.contributor_guest_id),
       'seen', jsonb_build_object(
         'producer', w.producer,
         'wineCuvee', w.wine_cuvee,
