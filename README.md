@@ -141,6 +141,15 @@ A compact, state-aware "Current tasting" panel at the top of Host Controls (`com
 - **Privacy**: the resolved state never includes participant names (submitter or otherwise), guesses, drafts, ratings, scores, or actual wine identity before its permitted reveal point — only a safe bottle label/course label and aggregate counts. Detailed non-submitter names remain exactly where they already were, in the existing detailed progress popover; this panel never duplicates them. `Group progress · X of Y submitted/rated` reuses the exact same formatter (`lib/hostProgress.ts`, extended with an optional `rating` noun) as the host's own guess-screen progress line, so the two can never quietly diverge; zero eligible participants renders "No eligible participants yet." rather than "0 of 0".
 - **Live updates**: driven by the same realtime subscription/poll that already refreshes the rest of Host Controls — no separate fetch loop. A polite `aria-live="polite"` region announces `Group progress updated: X of Y submitted.` only when the count changes for the *same* current bottle (tracked via a ref), never on initial mount and never when the current bottle itself changes.
 
+## Session join code
+
+Host Controls' "Invite the table" card shows the session's `join_code` (e.g. `CLARET-44`) as plain, selectable text directly beneath the QR code, with its own `Copy` button — for guests whose camera can't scan the QR code, or who are joining from a second device. No new code, storage, or lifecycle was introduced.
+
+- **Reuses the existing `tasting_sessions.join_code` column exactly as-is** — generated once at session creation (`generateSessionCode()`, a `WORD-NN` format, e.g. `CLARET-44`) and already fetched by `get_host_session` and already passed into `QRCodeCard`; this feature only makes the value visible as text (`components/QRCodeCard.tsx`) where before it could only be blind-copied. The code is stable for the life of the session — never regenerated on render, never rotated.
+- **The manual join-code entry flow already existed** at `/join` (`app/join/page.tsx`) — it resolves a submitted code to the session's `public_id` via the existing public, column-scoped `tasting_sessions` grant, then redirects to the normal `/join/[publicId]` flow. Nothing about this resolution path, its rate limits, or its generic not-found error copy was changed.
+- **Not a credential of any kind** — the join code grants exactly what scanning the QR code already grants (entry to the normal public join flow) and nothing more. It is never a host token, a guest rejoin/recovery code, or a participant identity credential; entering it does not create a participant record, does not authenticate as host, and reveals no session-private information. It is only ever shown to the already-authorized host viewing their own Host Controls.
+- **Copy control**: reuses the same inline `copyText`/clipboard pattern the existing "Copy join link" button already used. Visible label toggles `Copy` → `Copied`; if `navigator.clipboard` is unavailable or denied, a safe `Select and copy the code.` fallback appears instead (no browser `alert`). A polite `aria-live` region announces the same outcome for screen readers.
+
 ## Final leaderboard and tasting recap
 
 A dedicated, minimal final leaderboard and an in-app tasting recap, built on top of the results-reveal feature above — see `lib/resultsReveal.ts`. Full blind and course_reveal only; Seen tastings have no compatible blind score/reveal model and are left entirely unchanged (every new RPC here explicitly rejects `tasting_mode = 'seen'`).
@@ -934,6 +943,18 @@ Run this against a real Supabase project (see `SUPABASE_SETUP.md`) using multipl
 301. **Full blind and Course-by-course rules remain intact** — confirm reorder is still blocked once the tasting starts (`registration_closed`), and that the existing per-bottle results-reveal list (`FullBlindHostBottleRow`) and Course sequencing are unchanged by this feature.
 302. **Seen tasting shows the same labels in the same editor** — register two Seen-mode bottles under different participants during registration; confirm the tasting-order editor shows the same `Bottle {number} — {name}` format, using the newly-extended `get_host_session` Seen branch.
 303. **Mobile and keyboard/screen-reader behaviour** — at 375px, confirm each row and its Move buttons stack without horizontal overflow; confirm each row's accessible name reads "Bottle N, brought by {name}" (or "contributor unavailable"), and each Move button's accessible name reads "Move Bottle N, brought by {name}, up/down".
+
+### Session join code
+
+304. **Join code appears below the QR code in every mode** — open Host Controls for a full_blind, a course_reveal, and a Seen session; confirm "Invite the table" shows the QR code, then a "Join code" heading with the session's actual code as plain selectable text, then the Copy button, in that order, for all three modes.
+305. **Join code is stable across reload** — reload Host Controls; confirm the displayed code is byte-identical to before (never regenerated).
+306. **Copy copies only the join code** — click Copy; confirm the button reads "Copied" afterward and (in a real browser with clipboard permission) the clipboard contains only the code, not the join URL, host token, or any other value; confirm the polite live-region announces the outcome.
+307. **Clipboard-denied fallback works** — in a context where `navigator.clipboard` is unavailable or denied, click Copy; confirm the safe "Select and copy the code." message appears instead of a browser `alert`, and the code text remains selectable.
+308. **The existing manual join-code entry flow accepts the displayed code** — visit `/join` (no publicId), enter the code exactly as shown on Host Controls; confirm it resolves to the correct session and proceeds through the normal, unmodified join flow.
+309. **The join code never grants host access** — attempt to load `/host/[publicId]?token={join-code}` using the join code in place of the host token; confirm it is rejected exactly like any other invalid host token ("Host access unavailable"), never granting Host Controls.
+310. **Non-host and cross-session isolation are unchanged** — confirm a participant/guest token still cannot load Host Controls, and a different session's host token still cannot retrieve this session's join code (both pre-existing, unmodified authorization checks).
+311. **No unrelated Host Controls behaviour changed** — Current tasting, bottle order and contributor labels, progress popovers, reveal/results controls, and Seen controls all still work exactly as before.
+312. **Mobile and keyboard/screen-reader behaviour** — at 375px, confirm the code, its label, and the Copy button stack/align without horizontal overflow or overlap; confirm keyboard focus reaches the Copy button in the same order it appears visually, and the code's accessible label is announced clearly.
 
 ## Automated tests
 
