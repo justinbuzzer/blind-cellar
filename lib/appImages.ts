@@ -1,6 +1,6 @@
 /**
- * Named photograph slots for the internal application (host control,
- * course-reveal waiting, per-bottle reveal, results). Mirrors
+ * Named photograph slots for the internal application (course-reveal
+ * waiting, per-bottle reveal, results). Mirrors
  * components/landing/imageConfig.ts's pattern exactly — until a licensed
  * photo exists, `placeholder: true` renders components/ImagePlaceholder.tsx
  * instead of a broken/missing image, so nothing here can fail a production
@@ -20,13 +20,6 @@ export interface AppImageSlot {
   alt: string;
   placeholder: boolean;
 }
-
-/** Host control page, desktop-only header band. */
-export const hostControlImage: AppImageSlot = {
-  src: null,
-  alt: "A quiet vineyard at rest, seen from the host's private tasting room",
-  placeholder: true,
-};
 
 /** Course-reveal "your guess is locked" waiting screen. */
 export const waitingToRevealImage: AppImageSlot = {

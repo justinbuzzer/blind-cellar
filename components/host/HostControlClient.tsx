@@ -9,7 +9,6 @@ import { Modal } from "@/components/Modal";
 import { QRCodeCard } from "@/components/QRCodeCard";
 import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { StatusChip } from "@/components/StatusChip";
-import { ImageBand } from "@/components/ImageBand";
 import { TastingOrderList } from "@/components/host/TastingOrderList";
 import { SeenHostBottleRow } from "@/components/host/SeenHostBottleRow";
 import { FullBlindHostBottleRow } from "@/components/host/FullBlindHostBottleRow";
@@ -19,7 +18,6 @@ import { HomeLink } from "@/components/navigation/HomeLink";
 import { ArchiveLink } from "@/components/navigation/ArchiveLink";
 import { AccountNav } from "@/components/navigation/AccountNav";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { hostControlImage } from "@/lib/appImages";
 import { WINE_STYLE_LABELS } from "@/types/tasting";
 import { formatSeenRatingStatus } from "@/lib/seenHostControls";
 import {
@@ -542,8 +540,6 @@ export function HostControlClient({
           </button>
         </p>
       )}
-
-      <ImageBand image={hostControlImage} className="hidden h-36 rounded-sm sm:block" />
 
       <div>
         <SectionEyebrow>Host control</SectionEyebrow>
