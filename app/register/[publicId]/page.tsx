@@ -17,7 +17,7 @@ import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { deleteBottle, getRegistrationState } from "@/lib/supabase/guestActions";
 import { friendlyRpcError, MyBottleDTO, RegistrationStateResponse } from "@/lib/supabase/types";
-import { bottleLabel } from "@/lib/codes";
+import { formatOwnContributedBottle } from "@/lib/myBottleDisplay";
 import { getGuestToken } from "@/lib/deviceStorage";
 
 type LoadState = "loading" | "no-config" | "invalid-token" | "ready";
@@ -174,36 +174,52 @@ export default function RegistrationHomePage() {
         ) : (
           <Card className="p-0">
             <ol className="divide-y divide-cellar-border">
-              {state.myBottles.map((bottle) => (
-                <li
-                  key={bottle.id}
-                  className="flex items-center justify-between gap-3 px-5 py-4"
-                >
-                  <div>
-                    <p className="font-display text-lg font-semibold text-cellar-maroon-dark">
-                      {bottleLabel(bottle.bottleNumber)}
-                    </p>
-                    <p className="text-xs text-cellar-muted">Details saved</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Link href={`/register/${params.publicId}/${bottle.id}`}>
-                      <Button type="button" variant="secondary">
-                        Edit
+              {state.myBottles.map((bottle) => {
+                const display = formatOwnContributedBottle(bottle);
+                return (
+                  <li
+                    key={bottle.id}
+                    className="flex items-center justify-between gap-3 px-5 py-4"
+                  >
+                    <div className="min-w-0">
+                      <p className="break-words font-display text-lg font-semibold text-cellar-maroon-dark">
+                        {display.primaryLabel}
+                      </p>
+                      {display.originLine && (
+                        <p className="mt-0.5 text-sm text-cellar-muted">{display.originLine}</p>
+                      )}
+                      {display.grapeLine && (
+                        <p className="mt-0.5 text-sm text-cellar-muted">{display.grapeLine}</p>
+                      )}
+                      <p className="mt-1 text-xs text-cellar-muted">
+                        {display.bottleNumberLabel} · {display.statusLabel}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <Link href={`/register/${params.publicId}/${bottle.id}`}>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          aria-label={`Edit ${display.primaryLabel}`}
+                        >
+                          Edit
+                        </Button>
+                      </Link>
+                      <Button
+                        type="button"
+                        variant="danger"
+                        aria-label={`Delete ${display.primaryLabel}`}
+                        onClick={() => {
+                          setDeleteError(null);
+                          setDeleteTarget(bottle);
+                        }}
+                      >
+                        Delete
                       </Button>
-                    </Link>
-                    <Button
-                      type="button"
-                      variant="danger"
-                      onClick={() => {
-                        setDeleteError(null);
-                        setDeleteTarget(bottle);
-                      }}
-                    >
-                      Delete
-                    </Button>
-                  </div>
-                </li>
-              ))}
+                    </div>
+                  </li>
+                );
+              })}
             </ol>
           </Card>
         )}
@@ -217,7 +233,7 @@ export default function RegistrationHomePage() {
 
       {deleteTarget && (
         <Modal
-          title={`Remove ${bottleLabel(deleteTarget.bottleNumber)}?`}
+          title={`Remove ${formatOwnContributedBottle(deleteTarget).primaryLabel}?`}
           onClose={() => !deleting && setDeleteTarget(null)}
         >
           <p>This bottle number will not be reused.</p>

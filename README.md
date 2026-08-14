@@ -288,6 +288,17 @@ The host-only tasting-order editor (`components/host/TastingOrderList.tsx`, rend
 - **Accessibility**: each row carries a screen-reader-only phrase (`Bottle 3, brought by Mia`, or `Bottle 3, contributor unavailable`) alongside the visible em-dash text, and the Move up/down buttons' accessible names include it too (`Move Bottle 3, brought by Mia, up`) — the relationship is never conveyed by punctuation alone.
 - **Privacy**: no email, phone number, account ID, participant ID, token, cellar data, guesses, scores, or actual wine identity is exposed by this change — only the same safe display name and bottle label already visible elsewhere in this app.
 
+### Your contributed bottles
+
+"Your contribution" (`app/register/[publicId]/page.tsx`), a participant's own bottle-management page, shows each of their own registered bottles by its actual wine identity — `Producer — Wine/cuvée`, e.g. `Domaine Example — Village` — instead of the generic `Bottle N` label previously used there. This is display-only: no query, authorization, or lifecycle behaviour changed.
+
+- **No new query or DTO.** `get_registration_state` already returned every needed field (`producer`, `wineCuvee`, `vintage`, `appellation`, `region`, `country`, `grapeBlend`) in `MyBottleDTO`, already filtered server-side to `wines.contributor_guest_id = v_guest.id` (the guest resolved from the caller's own token — never a client-supplied ID) and to the current session. This feature only changes how that already-fetched, already-authorized data is displayed.
+- **`lib/myBottleDisplay.ts`'s `formatOwnContributedBottle`** is the single formatter used, reusing `compactWineLocationLabel` (`lib/appellations.ts` — the same appellation-before-region, comma-joined, duplicate-omitting helper the post-reveal wine identity card already uses) for the origin line, and `bottleLabel` for the now-secondary bottle-number text. Primary label falls back Producer-only → Wine/cuvée-only → `{vintage} {grape}` (built only from other saved fields) → `Unnamed wine` — producer and wine/cuvée are both required at registration, so every fallback past the first is a legacy-data safety net, not a normal path.
+- **Bottle number moved to secondary, tertiary-line text** (`Registered as Bottle {n} · Details saved`) — the existing "Details saved" status text and the underlying `bottle_number`/`tasting_order` behaviour are both unchanged; this only reorders what's visually primary.
+- **Strictly the participant's own records** — verified live by joining as a second participant in the same session: their own "Your contribution" page shows zero bottles and no visibility into the first participant's wine, exactly as `contributor_guest_id`-scoping already guaranteed before this change.
+- **Delete confirmation** now reads `Remove {wine name}?` instead of `Remove Bottle N?`, reusing the same formatter; Edit/Delete accessible names include the wine name too. No other action, restriction, or edit/withdraw rule changed.
+- **Full blind, Course-by-course, and Seen** all use this exact same page and component (`get_registration_state` doesn't branch on tasting mode), so all three get identical treatment automatically — verified live for each mode.
+
 ## Data model notes: grape/blend, price band, and controlled country/region
 
 - **Grape/blend** replaces the old free-text "grape/style" field everywhere in the UI. The underlying database column is still named `grape_style` (kept for migration safety — renaming a live column is riskier than mapping it internally); it now holds the canonical single-variety name or the flattened, alphabetised blend text (see "Structured grape/blend" above). A new nullable `grape_blend_mode` column (`'single' | 'blend' | null`) was added; `null` means the row predates this feature, and scoring/display fall back safely rather than guessing. See `lib/wineReferenceData.ts` for the curated grape list and alias table.
@@ -955,6 +966,18 @@ Run this against a real Supabase project (see `SUPABASE_SETUP.md`) using multipl
 310. **Non-host and cross-session isolation are unchanged** — confirm a participant/guest token still cannot load Host Controls, and a different session's host token still cannot retrieve this session's join code (both pre-existing, unmodified authorization checks).
 311. **No unrelated Host Controls behaviour changed** — Current tasting, bottle order and contributor labels, progress popovers, reveal/results controls, and Seen controls all still work exactly as before.
 312. **Mobile and keyboard/screen-reader behaviour** — at 375px, confirm the code, its label, and the Copy button stack/align without horizontal overflow or overlap; confirm keyboard focus reaches the Copy button in the same order it appears visually, and the code's accessible label is announced clearly.
+
+### Your contributed bottles
+
+313. **Registered bottle with Producer and Wine/cuvée shows the combined primary label** — register a bottle with both fields set; confirm "Your contribution" shows `Producer — Wine/cuvée`, not `Bottle N`.
+314. **Origin line orders vintage, appellation, region, country correctly** — confirm the line reads `{vintage or NV} · {appellation}, {region}, {country}`, with a missing appellation omitted cleanly (no dangling comma).
+315. **Bottle number is secondary, not primary** — confirm `Registered as Bottle N` appears only in the smaller tertiary line alongside the existing "Details saved" status, never as the heading.
+316. **A second participant cannot see the first participant's registered wine** — join the same session as a different guest; confirm their own "Your contribution" page shows only their own bottles (zero, if they haven't registered), with no visibility into another contributor's wine identity.
+317. **Delete confirmation shows the wine name** — click Delete; confirm the modal reads `Remove {wine name}?`, and confirms/cancels exactly as before.
+318. **Edit/Delete accessible names include the wine name** — confirm each button's accessible name is `Edit {wine name}`/`Delete {wine name}`, not a generic label.
+319. **Full blind, Course-by-course, and Seen all show the same treatment** — verified on the same shared page/component for all three modes, since `get_registration_state` doesn't branch on tasting mode.
+320. **No unrelated behaviour changed** — bottle numbering/order, the registration form, edit/withdraw actions, Host Controls, host order contributor labels, Current tasting, guessing, reveal/results, leaderboard/recap, Cellar, Add from cellar, and rejoin flows all remain unchanged.
+321. **Mobile and keyboard/screen-reader behaviour** — at 375px, confirm no horizontal overflow and that a long wine name wraps safely; confirm Edit/Delete remain reachable in visual order with visible focus styles.
 
 ## Automated tests
 
