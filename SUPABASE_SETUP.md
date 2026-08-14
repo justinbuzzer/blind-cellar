@@ -2091,6 +2091,83 @@ select has_table_privilege('authenticated', 'participant_access_credentials', 's
 delete from rejoin_rate_limit_events where created_at < now() - interval '7 days';
 ```
 
+## Migrating for participant readiness confirmation
+
+Adds one nullable column (`guests.ready_to_begin_at`) and one new RPC (`mark_participant_ready`) — see README "Participant readiness confirmation". No new table, and no change to `start_tasting_session`, scoring, tasting modes, bottle registration, or Cellar. **This touches `get_host_session` and `get_registration_state`, the two RPCs Host Controls and "Your contribution" already call on every load** — until this migration is applied to your project, those two pages will fail (the functions reference a column that doesn't exist yet), so re-run the full `supabase/schema.sql` promptly after pulling this change rather than leaving it staged.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+```sql
+alter table public.guests add column if not exists ready_to_begin_at timestamptz;
+
+grant select (ready_to_begin_at) on public.guests to anon, authenticated;
+
+create or replace function mark_participant_ready(
+  p_guest_token text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_guest guests%rowtype;
+  v_session tasting_sessions%rowtype;
+begin
+  select * into v_guest from guests where guest_token = p_guest_token;
+  if not found then
+    raise exception 'invalid_guest_token';
+  end if;
+
+  select * into v_session from tasting_sessions where id = v_guest.session_id;
+  if v_session.status <> 'registration' then
+    raise exception 'readiness_unavailable';
+  end if;
+
+  update guests set ready_to_begin_at = coalesce(ready_to_begin_at, now())
+  where id = v_guest.id;
+
+  return jsonb_build_object('ready', true);
+end;
+$$;
+
+grant execute on function mark_participant_ready(text) to anon, authenticated;
+```
+
+`get_host_session`'s `guests` array and `get_registration_state`'s `guest` object each gain one new field, `readyToBeginAt`, sourced directly from the new column — both changes are already included if you paste the whole `schema.sql` file.
+
+**If `mark_participant_ready` returns a 404 immediately after running this SQL** (while `get_host_session`/`get_registration_state` already work and already show `readyToBeginAt`), that's PostgREST's schema cache, not a problem with the function itself — modifying an *existing* function's body (as those two calls above did) takes effect immediately since PostgREST just proxies the call through, but a request for a function PostgREST has never seen by name won't resolve until its schema cache refreshes. This is a known Supabase behavior after pasting raw SQL rather than using a dashboard migration. Fix it with either of:
+
+```sql
+notify pgrst, 'reload schema';
+```
+
+or Supabase Dashboard → **Database → API** → **Reload schema**. It should also resolve on its own within a short time even without either step.
+
+### 2. Verification queries
+
+```sql
+-- the new column exists and defaults to null (every existing participant
+-- is "not ready" immediately after this migration, per README)
+select column_name, is_nullable, column_default
+from information_schema.columns
+where table_name = 'guests' and column_name = 'ready_to_begin_at';
+
+-- the function exists with the expected single-argument signature
+select routine_name from information_schema.routines where routine_name = 'mark_participant_ready';
+
+-- a bogus guest token is rejected the same way every other guest RPC rejects one
+select mark_participant_ready('not-a-real-token');
+-- expect: an error containing 'invalid_guest_token'
+
+-- calling it twice for the same real guest is a safe no-op (compare the two
+-- timestamps returned by re-selecting the row — they must be identical)
+select ready_to_begin_at from guests where guest_token = '<a real guest token from your project>';
+```
+
+### RLS and privacy summary
+
+No RLS policy changed. `ready_to_begin_at` is added to the same narrow, pre-existing `grant select (...) on guests` list that already exposes `completed_at` — this table's own "has this participant finished X" fields have always been treated as safe at the grant level (gated only by application UI convention, exactly like the pre-existing "Participants joined" list already shows every display name unconditionally), so this is not a new category of exposure. `mark_participant_ready` runs as `SECURITY DEFINER`, resolves the participant from the caller's own `p_guest_token` only — there is no participant-id or session-id parameter at all, so it is structurally impossible for one participant to mark another ready, or for a call scoped to one session to affect another. It rejects any call once the session has left `'registration'`, matching the same pre-start boundary `start_tasting_session` itself transitions across. No new host-only RPC or DTO was added — the Host Controls readiness count and not-ready-names popover are both computed client-side from the `guests[]` array already fetched under the existing host-token-gated `get_host_session` call.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

@@ -13,6 +13,7 @@ import { TastingOrderList } from "@/components/host/TastingOrderList";
 import { SeenHostBottleRow } from "@/components/host/SeenHostBottleRow";
 import { FullBlindHostBottleRow } from "@/components/host/FullBlindHostBottleRow";
 import { BottleProgressControl } from "@/components/host/BottleProgressControl";
+import { ReadinessControl } from "@/components/host/ReadinessControl";
 import { CurrentTastingCard } from "@/components/host/CurrentTastingCard";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { ArchiveLink } from "@/components/navigation/ArchiveLink";
@@ -193,7 +194,7 @@ export function HostControlClient({
       if (!supabase) return;
       const { data } = await supabase
         .from("guests")
-        .select("id, display_name, completed_at")
+        .select("id, display_name, completed_at, ready_to_begin_at")
         .eq("session_id", session.id)
         .order("created_at", { ascending: true });
       if (data) {
@@ -202,6 +203,7 @@ export function HostControlClient({
             id: g.id,
             displayName: g.display_name,
             completedAt: g.completed_at,
+            readyToBeginAt: g.ready_to_begin_at,
           }))
         );
       }
@@ -659,6 +661,7 @@ export function HostControlClient({
                 Start tasting
               </Button>
             </div>
+            <ReadinessControl guests={guests} />
           </div>
         </>
       )}

@@ -946,7 +946,8 @@ begin
       select jsonb_agg(jsonb_build_object(
         'id', g.id,
         'displayName', g.display_name,
-        'completedAt', g.completed_at
+        'completedAt', g.completed_at,
+        'readyToBeginAt', g.ready_to_begin_at
       ) order by g.created_at)
       from guests g where g.session_id = v_session.id
     ), '[]'::jsonb),
@@ -1270,7 +1271,11 @@ begin
   select count(*) into v_bottle_count from wines where session_id = v_session.id;
 
   select jsonb_build_object(
-    'guest', jsonb_build_object('id', v_guest.id, 'displayName', v_guest.display_name),
+    'guest', jsonb_build_object(
+      'id', v_guest.id,
+      'displayName', v_guest.display_name,
+      'readyToBeginAt', v_guest.ready_to_begin_at
+    ),
     'session', jsonb_build_object(
       'publicId', v_session.public_id,
       'title', v_session.title,
@@ -4796,3 +4801,60 @@ where atr.role = 'participant'
     select 1 from guests g2
     where g2.session_id = g.session_id and g2.user_id = atr.user_id
   );
+
+-- ---------------------------------------------------------------------------
+-- Participant readiness confirmation — see README "Participant readiness
+-- confirmation".
+--
+-- A single nullable timestamp on the existing guests row — no new table.
+-- "Eligible participant" here is the same denominator already used by
+-- get_bottle_response_progress/get_host_guess_progress (count(*) from guests
+-- where session_id = ...); the host is just one guests row like everyone
+-- else, so "host counted once when eligible" needs no special-case code.
+-- Readiness is informational only — it never touches start_tasting_session
+-- or any bottle/guess/scoring logic. ready_to_begin_at defaults to null, so
+-- every participant that already exists at migration time is "not ready"
+-- until they act, exactly as the spec requires.
+-- ---------------------------------------------------------------------------
+
+alter table public.guests add column if not exists ready_to_begin_at timestamptz;
+
+grant select (ready_to_begin_at) on public.guests to anon, authenticated;
+
+-- Participant: confirm readiness for the tasting to begin. Deliberately
+-- takes no participant/session id argument beyond the caller's own guest
+-- token — same shape as complete_guest_submission — so it is structurally
+-- impossible to mark a different participant ready. Only settable while the
+-- session is still in 'registration' (the same pre-start state
+-- start_tasting_session transitions out of); coalesce makes a repeat call a
+-- safe no-op that never overwrites the original server timestamp, so
+-- double-clicks/duplicate requests can't produce inconsistent state.
+create or replace function mark_participant_ready(
+  p_guest_token text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_guest guests%rowtype;
+  v_session tasting_sessions%rowtype;
+begin
+  select * into v_guest from guests where guest_token = p_guest_token;
+  if not found then
+    raise exception 'invalid_guest_token';
+  end if;
+
+  select * into v_session from tasting_sessions where id = v_guest.session_id;
+  if v_session.status <> 'registration' then
+    raise exception 'readiness_unavailable';
+  end if;
+
+  update guests set ready_to_begin_at = coalesce(ready_to_begin_at, now())
+  where id = v_guest.id;
+
+  return jsonb_build_object('ready', true);
+end;
+$$;
+
+grant execute on function mark_participant_ready(text) to anon, authenticated;

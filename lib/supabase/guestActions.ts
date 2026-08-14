@@ -91,6 +91,20 @@ export async function getRegistrationState(
   return { data: data as RegistrationStateResponse | null, error };
 }
 
+/**
+ * Participant: confirm readiness for the tasting to begin — see README
+ * "Participant readiness confirmation". Idempotent server-side; safe to call
+ * more than once (e.g. a double-click) with no extra effect.
+ */
+export async function markParticipantReady(
+  supabase: SupabaseClient,
+  guestToken: string
+) {
+  return supabase.rpc("mark_participant_ready", {
+    p_guest_token: guestToken,
+  });
+}
+
 // --- course_reveal only ---
 
 export async function getActiveBottleState(

@@ -15,9 +15,10 @@ import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { deleteBottle, getRegistrationState } from "@/lib/supabase/guestActions";
+import { deleteBottle, getRegistrationState, markParticipantReady } from "@/lib/supabase/guestActions";
 import { friendlyRpcError, MyBottleDTO, RegistrationStateResponse } from "@/lib/supabase/types";
 import { formatOwnContributedBottle } from "@/lib/myBottleDisplay";
+import { PARTICIPANT_READY_ANNOUNCEMENT } from "@/lib/readiness";
 import { getGuestToken } from "@/lib/deviceStorage";
 
 type LoadState = "loading" | "no-config" | "invalid-token" | "ready";
@@ -31,6 +32,9 @@ export default function RegistrationHomePage() {
   const [deleteTarget, setDeleteTarget] = useState<MyBottleDTO | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [markingReady, setMarkingReady] = useState(false);
+  const [readyError, setReadyError] = useState<string | null>(null);
+  const [readyAnnouncement, setReadyAnnouncement] = useState("");
 
   const refresh = useCallback(async () => {
     const token = getGuestToken(params.publicId);
@@ -113,6 +117,25 @@ export default function RegistrationHomePage() {
       return;
     }
     setDeleteTarget(null);
+    await refresh();
+  }
+
+  async function handleMarkReady() {
+    if (markingReady || state?.guest.readyToBeginAt) return;
+    const token = getGuestToken(params.publicId);
+    const supabase = getSupabaseBrowserClient();
+    if (!token || !supabase) return;
+
+    setMarkingReady(true);
+    setReadyError(null);
+    const { error } = await markParticipantReady(supabase, token);
+    setMarkingReady(false);
+
+    if (error) {
+      setReadyError(friendlyRpcError(error));
+      return;
+    }
+    setReadyAnnouncement(PARTICIPANT_READY_ANNOUNCEMENT);
     await refresh();
   }
 
@@ -230,6 +253,42 @@ export default function RegistrationHomePage() {
           {state.myBottles.length === 0 ? "Register a bottle" : "Add another bottle"}
         </Button>
       </Link>
+
+      <div className="flex flex-col gap-2 border-t border-cellar-border pt-5">
+        <SectionEyebrow>Ready to begin?</SectionEyebrow>
+        {state.guest.readyToBeginAt ? (
+          <div>
+            <p className="text-sm font-medium text-cellar-text">Ready to begin</p>
+            <p className="mt-0.5 text-sm text-cellar-muted">
+              You have confirmed that you are ready for the tasting.
+            </p>
+          </div>
+        ) : (
+          <>
+            <p className="text-sm text-cellar-muted">
+              Confirm when you have finished adding bottles, or if you are not contributing one.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              fullWidth
+              disabled={markingReady}
+              onClick={handleMarkReady}
+              aria-label="Mark yourself ready to begin tasting"
+            >
+              {markingReady ? "Confirming…" : "I'm ready to begin"}
+            </Button>
+            {readyError && (
+              <p role="alert" className="text-sm text-cellar-danger">
+                {readyError}
+              </p>
+            )}
+          </>
+        )}
+        <p role="status" aria-live="polite" className="sr-only">
+          {readyAnnouncement}
+        </p>
+      </div>
 
       {deleteTarget && (
         <Modal

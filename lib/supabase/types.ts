@@ -140,6 +140,8 @@ export interface HostGuestDTO {
   id: string;
   displayName: string;
   completedAt: string | null;
+  /** See README "Participant readiness confirmation" — set once, server-side, never null→null→re-null. */
+  readyToBeginAt: string | null;
 }
 
 /** course_reveal only: the current active bottle's anonymous summary + aggregate progress. */
@@ -353,7 +355,7 @@ export interface MyBottleDTO {
 }
 
 export interface RegistrationStateResponse {
-  guest: { id: string; displayName: string };
+  guest: { id: string; displayName: string; readyToBeginAt: string | null };
   session: {
     publicId: string;
     title: string;
@@ -757,6 +759,10 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   not_signed_in: "Sign in to continue with your account.",
   account_already_linked:
     "This account already has a participant record for this tasting.",
+
+  // Participant readiness confirmation (see README) — raised by
+  // mark_participant_ready once the session has left 'registration'.
+  readiness_unavailable: "Readiness can no longer be updated for this tasting.",
 };
 
 /** Turns a Supabase/Postgres error into a friendly, pre-written message when we recognize it. */

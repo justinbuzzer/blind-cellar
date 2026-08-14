@@ -104,8 +104,8 @@ function hostSession(overrides: Partial<HostSessionResponse["session"]> = {}): H
       { id: "w2", bottleNumber: 2, anonymousCode: "Bottle 2", wineStyle: "white", tastingOrder: 2, revealedAt: null },
     ],
     guests: [
-      { id: "guest-host", displayName: "Alice", completedAt: "2026-08-14T20:00:00.000Z" },
-      { id: "guest-2", displayName: "Ben", completedAt: "2026-08-14T20:05:00.000Z" },
+      { id: "guest-host", displayName: "Alice", completedAt: "2026-08-14T20:00:00.000Z", readyToBeginAt: null },
+      { id: "guest-2", displayName: "Ben", completedAt: "2026-08-14T20:05:00.000Z", readyToBeginAt: null },
     ],
     activeBottle: null,
     seenProgress: null,
