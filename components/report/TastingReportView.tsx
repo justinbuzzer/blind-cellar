@@ -8,6 +8,8 @@ import { TasterLeaderboard } from "./TasterLeaderboard";
 
 interface TastingReportViewProps {
   report: TastingReport;
+  /** See WineResultCard's `showNotes` — false (host view, unchanged) unless the caller is an authorized participant viewing the completed shared report. */
+  showNotes?: boolean;
 }
 
 function joinNames(names: string[]): string {
@@ -16,7 +18,7 @@ function joinNames(names: string[]): string {
   return `${names.slice(0, -1).join(", ")} & ${names[names.length - 1]}`;
 }
 
-export function TastingReportView({ report }: TastingReportViewProps) {
+export function TastingReportView({ report, showNotes = false }: TastingReportViewProps) {
   const { wineOfTheNight, bestTaster, mostDivisiveWine, wineResults, tasterResults } =
     report;
 
@@ -62,6 +64,7 @@ export function TastingReportView({ report }: TastingReportViewProps) {
               result={result}
               rank={index + 1}
               totalWines={wineResults.length}
+              showNotes={showNotes}
             />
           ))}
         </div>

@@ -854,8 +854,16 @@ begin
         'submittedCount', (
           select count(*) from wine_guesses
           where wine_id = v_active_wine.id and locked_at is not null
+            and (v_active_wine.contributor_guest_id is null or guest_id <> v_active_wine.contributor_guest_id)
         ),
-        'totalParticipants', (select count(*) from guests where session_id = v_session.id)
+        -- Own-bottle guessing exclusion — see README "Own-bottle guessing
+        -- exclusion": this bottle's own contributor, if any, is never
+        -- expected to submit for it.
+        'totalParticipants', (
+          select count(*) from guests
+          where session_id = v_session.id
+            and (v_active_wine.contributor_guest_id is null or id <> v_active_wine.contributor_guest_id)
+        )
       ) into v_active_bottle;
     end if;
   end if;
@@ -1686,7 +1694,14 @@ begin
         -- (get_revealed_bottle), never a new identity surface. Null when
         -- contributor_guest_id is null (a bottle with no recorded
         -- contributor), which the client renders as no name at all.
-        'contributorName', (select display_name from guests where id = w.contributor_guest_id)
+        'contributorName', (select display_name from guests where id = w.contributor_guest_id),
+        -- Own-bottle guessing exclusion (see README "Own-bottle guessing
+        -- exclusion"): the caller's canonical guests.id compared server-side
+        -- against this bottle's canonical contributor_guest_id — never
+        -- inferred from display name, client-supplied ID, or any other
+        -- signal. coalesce(...,false) so a bottle with no recorded
+        -- contributor (contributor_guest_id is null) is never "mine".
+        'isOwnBottle', coalesce(w.contributor_guest_id = v_guest.id, false)
       ) order by w.tasting_order, w.bottle_number)
       from wines w where w.session_id = v_session.id
     ), '[]'::jsonb),
@@ -1716,9 +1731,10 @@ end;
 $$;
 
 -- Guest: autosave a single wine's guess. Blocked once the session is
--- revealed or the guest has already completed their submission. Every
--- participant — including a bottle's own contributor — may guess every
--- bottle, so there is no ownership check against wines here.
+-- revealed or the guest has already completed their submission, and blocked
+-- for a bottle's own canonical contributor (see README "Own-bottle guessing
+-- exclusion") — a contributor already knows their own bottle's identity, so
+-- they are never asked to guess or scored on it.
 -- Signature changed (price band removed, grape/blend mode added, structured
 -- grape/blend components added, appellation guess added) — explicitly drop
 -- old overloads; safe/no-op on a fresh install.
@@ -1748,6 +1764,7 @@ as $$
 declare
   v_guest guests%rowtype;
   v_session tasting_sessions%rowtype;
+  v_wine wines%rowtype;
 begin
   select * into v_guest from guests where guest_token = p_guest_token;
   if not found then
@@ -1762,8 +1779,18 @@ begin
     raise exception 'session_already_revealed';
   end if;
 
-  if not exists (select 1 from wines where id = p_wine_id and session_id = v_session.id) then
+  select * into v_wine from wines where id = p_wine_id and session_id = v_session.id;
+  if not found then
     raise exception 'wine_not_in_session';
+  end if;
+
+  -- Own-bottle guessing exclusion (see README "Own-bottle guessing
+  -- exclusion"): a bottle's canonical contributor may never guess or score
+  -- it, enforced here independently of the UI — a direct RPC call for a
+  -- hidden/removed guess form can never bypass this. Checked against the
+  -- canonical guests.id, never a client-supplied identity.
+  if v_wine.contributor_guest_id = v_guest.id then
+    raise exception 'own_bottle_not_guessable';
   end if;
 
   -- course_reveal-only: a guess may only be autosaved for the current active
@@ -1911,7 +1938,10 @@ begin
       'position', v_position,
       'totalBottles', v_total_bottles,
       'styleHint', wine_style_grape_options_hint(v_active.wine_style),
-      'contributorName', (select display_name from guests where id = v_active.contributor_guest_id)
+      'contributorName', (select display_name from guests where id = v_active.contributor_guest_id),
+      -- Own-bottle guessing exclusion — see get_guest_session_state's
+      -- identical field for the full explanation.
+      'isOwnBottle', coalesce(v_active.contributor_guest_id = v_guest.id, false)
     ),
     'myGuess', case when v_my_guess.id is null then null else jsonb_build_object(
       'wineId', v_my_guess.wine_id,
@@ -1975,6 +2005,11 @@ begin
   end if;
   if v_wine.revealed_at is not null then
     raise exception 'bottle_already_revealed';
+  end if;
+
+  -- Own-bottle guessing exclusion — see upsert_wine_guess's identical check.
+  if v_wine.contributor_guest_id = v_guest.id then
+    raise exception 'own_bottle_not_guessable';
   end if;
 
   select id into v_active_wine_id from wines
@@ -2737,7 +2772,12 @@ begin
     raise exception 'session_already_revealed';
   end if;
 
-  select count(*) into v_wine_count from wines where session_id = v_session.id;
+  -- Own-bottle guessing exclusion (see README "Own-bottle guessing
+  -- exclusion"): a bottle this guest contributed is never part of their
+  -- required-submission count, since they are never permitted to guess it.
+  select count(*) into v_wine_count from wines w
+    where w.session_id = v_session.id
+      and (w.contributor_guest_id is null or w.contributor_guest_id <> v_guest.id);
   select count(*) into v_rated_count
     from wine_guesses
     where guest_id = v_guest.id and rating is not null;
@@ -4136,14 +4176,23 @@ begin
     raise exception 'wine_not_in_session';
   end if;
 
-  select count(*) into v_eligible_count from guests where session_id = v_session.id;
+  -- Own-bottle guessing exclusion (see README "Own-bottle guessing
+  -- exclusion"): this bottle's own canonical contributor, if any, is never
+  -- expected to submit for it — excluded from eligible/submitted/missing
+  -- below for full_blind and course_reveal (never applies to seen, which is
+  -- out of scope for this feature).
+  select count(*) into v_eligible_count from guests
+    where session_id = v_session.id
+      and (v_wine.contributor_guest_id is null or id <> v_wine.contributor_guest_id);
 
   if v_session.tasting_mode = 'full_blind' then
     v_response_kind := 'guess';
     select count(*) into v_submitted_count from guests
-      where session_id = v_session.id and completed_at is not null;
+      where session_id = v_session.id and completed_at is not null
+        and (v_wine.contributor_guest_id is null or id <> v_wine.contributor_guest_id);
     select coalesce(jsonb_agg(display_name order by created_at), '[]'::jsonb) into v_missing_names
-      from guests where session_id = v_session.id and completed_at is null;
+      from guests where session_id = v_session.id and completed_at is null
+        and (v_wine.contributor_guest_id is null or id <> v_wine.contributor_guest_id);
 
   elsif v_session.tasting_mode = 'course_reveal' then
     v_response_kind := 'guess';
@@ -4161,10 +4210,12 @@ begin
     end if;
 
     select count(*) into v_submitted_count from wine_guesses
-      where wine_id = p_wine_id and locked_at is not null;
+      where wine_id = p_wine_id and locked_at is not null
+        and (v_wine.contributor_guest_id is null or guest_id <> v_wine.contributor_guest_id);
     select coalesce(jsonb_agg(g.display_name order by g.created_at), '[]'::jsonb) into v_missing_names
       from guests g
       where g.session_id = v_session.id
+        and (v_wine.contributor_guest_id is null or g.id <> v_wine.contributor_guest_id)
         and not exists (
           select 1 from wine_guesses wg
           where wg.wine_id = p_wine_id and wg.guest_id = g.id and wg.locked_at is not null
@@ -4255,14 +4306,19 @@ begin
     raise exception 'wine_not_in_session';
   end if;
 
-  select count(*) into v_eligible_count from guests where session_id = v_session.id;
+  -- Own-bottle guessing exclusion — see get_bottle_response_progress's
+  -- identical exclusion. Unlike that function's full_blind branch, this one
+  -- is NOT identical across every bottle any more once a wine has its own
+  -- contributor excluded, so the caller must always pass the wine currently
+  -- being viewed, never an arbitrary stand-in bottle id.
+  select count(*) into v_eligible_count from guests
+    where session_id = v_session.id
+      and (v_wine.contributor_guest_id is null or id <> v_wine.contributor_guest_id);
 
   if v_session.tasting_mode = 'full_blind' then
-    -- Same signal as get_bottle_response_progress/complete_guest_submission
-    -- — full_blind has no per-bottle lock, so this is identical for every
-    -- bottle in the session regardless of which one p_wine_id names.
     select count(*) into v_submitted_count from guests
-      where session_id = v_session.id and completed_at is not null;
+      where session_id = v_session.id and completed_at is not null
+        and (v_wine.contributor_guest_id is null or id <> v_wine.contributor_guest_id);
   else
     -- course_reveal: same "current active bottle" guard as
     -- get_bottle_response_progress/lock_wine_guess — a not-yet-released or
@@ -4278,7 +4334,8 @@ begin
     end if;
 
     select count(*) into v_submitted_count from wine_guesses
-      where wine_id = p_wine_id and locked_at is not null;
+      where wine_id = p_wine_id and locked_at is not null
+        and (v_wine.contributor_guest_id is null or guest_id <> v_wine.contributor_guest_id);
   end if;
 
   return jsonb_build_object(

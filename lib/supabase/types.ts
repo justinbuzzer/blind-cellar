@@ -247,6 +247,8 @@ export interface GuestSessionWineDTO {
   styleHint: BlindGuessGrapeOptionsHint;
   /** The contributor's session display name — a bottle-order/pouring coordination cue only, never a wine-identity reveal. Null if the bottle has no recorded contributor. See README "Bottle-order contributor labels". */
   contributorName: string | null;
+  /** True only when the current caller is this bottle's canonical contributor — derived server-side, never from displayName/email/client state. See README "Own-bottle guessing exclusion". */
+  isOwnBottle: boolean;
 }
 
 export interface GuestSessionStateResponse {
@@ -384,6 +386,8 @@ export interface ActiveBottleDTO {
   styleHint: BlindGuessGrapeOptionsHint;
   /** The contributor's session display name — a bottle-order/pouring coordination cue only, never a wine-identity reveal. Null if the bottle has no recorded contributor. See README "Bottle-order contributor labels". */
   contributorName: string | null;
+  /** True only when the current caller is this bottle's canonical contributor — derived server-side, never from displayName/email/client state. See README "Own-bottle guessing exclusion". */
+  isOwnBottle: boolean;
 }
 
 export interface ActiveBottleStateResponse {
@@ -713,6 +717,7 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   bottle_already_revealed: "That bottle has already been revealed.",
   bottle_not_active: "That bottle isn't the current active bottle yet.",
   guess_already_locked: "Your guess for this bottle is already locked in.",
+  own_bottle_not_guessable: "You contributed this bottle, so you don't guess or score it.",
   bottle_not_revealed: "That bottle hasn't been revealed yet.",
   not_fully_revealed: "The final leaderboard and tasting recap will be available once every bottle has been revealed.",
   rating_required: "A rating is required.",

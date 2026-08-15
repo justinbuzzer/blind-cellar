@@ -22,6 +22,16 @@ interface WineResultCardProps {
   result: WineResult;
   rank: number;
   totalWines: number;
+  /**
+   * Show each participant's final saved tasting note alongside their guess
+   * (see README "Results reveal" — the completed-tasting shared report).
+   * Deliberately opt-in and false by default: the host's existing report
+   * view must render byte-identical output to before this field existed, so
+   * only the participant-role caller passes true. Every ScoredGuess already
+   * carries `note` regardless of this flag — this only controls rendering,
+   * never what's fetched.
+   */
+  showNotes?: boolean;
 }
 
 function ordinal(n: number): string {
@@ -39,7 +49,7 @@ function ordinal(n: number): string {
   }
 }
 
-export function WineResultCard({ result, rank, totalWines }: WineResultCardProps) {
+export function WineResultCard({ result, rank, totalWines, showNotes = false }: WineResultCardProps) {
   const { wine } = result;
   const isCoreV3 = result.scoringVersion === "core_v3_appellation_conditional";
   const bottlePossiblePoints = result.guesses[0]?.totalPossiblePoints;
@@ -165,6 +175,11 @@ export function WineResultCard({ result, rank, totalWines }: WineResultCardProps
                       </>
                     )}
                   </div>
+                  {showNotes && guess.note && (
+                    <p className="text-sm italic text-cellar-muted">
+                      &ldquo;{guess.note}&rdquo;
+                    </p>
+                  )}
                 </div>
               </details>
             );

@@ -18,11 +18,18 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { loadTastingReportData } from "@/lib/supabase/reportData";
 import { useAuthUser } from "@/lib/supabase/useAuthUser";
 import { getGuestToken, getHostToken } from "@/lib/deviceStorage";
+import { getGuestSessionState } from "@/lib/supabase/guestActions";
+import {
+  isReportAvailable,
+  ReportAccessResult,
+  resolveReportAccessFromGuestSession,
+  resolveReportAccessFromHostSession,
+} from "@/lib/reportAccess";
 import { ArchiveRole } from "@/lib/archive";
-import { SessionRow } from "@/lib/supabase/types";
+import { HostSessionResponse } from "@/lib/supabase/types";
 import { SeenTastingReport, TASTING_MODE_LABELS, TastingReport } from "@/types/tasting";
 
-type LoadState = "loading" | "no-config" | "not-found" | "waiting" | "ready";
+type LoadState = "loading" | "no-config" | "not-authorized" | "locked" | "ready";
 /** Which "From …" banner + "Back to …" link this report was opened with — a display marker only, never used for authorization. See README "Tasting archive" / "Account-linked tasting records". */
 type ReportContext = "none" | "archive" | "account";
 
@@ -35,7 +42,7 @@ export default function ResultsPage() {
   const params = useParams<{ publicId: string }>();
   const { user, loading: authLoading } = useAuthUser();
   const [loadState, setLoadState] = useState<LoadState>("loading");
-  const [sessionRow, setSessionRow] = useState<SessionRow | null>(null);
+  const [access, setAccess] = useState<ReportAccessResult | null>(null);
   const [report, setReport] = useState<TastingReport | null>(null);
   const [seenReport, setSeenReport] = useState<SeenTastingReport | null>(null);
   // Read once on mount (not via next/navigation's useSearchParams, which
@@ -56,7 +63,7 @@ export default function ResultsPage() {
   // reportContext: someone can reach a revealed report they hold a token for
   // without having come through the archive first.
   useEffect(() => {
-    if (loadState !== "ready" || authLoading || !user || !sessionRow) {
+    if (loadState !== "ready" || authLoading || !user || !access) {
       setClaimEligibility(null);
       return;
     }
@@ -81,7 +88,7 @@ export default function ResultsPage() {
       const { data } = await supabase
         .from("account_tasting_records")
         .select("id")
-        .eq("session_id", sessionRow.id)
+        .eq("session_id", access.session.id)
         .limit(1);
       if (!cancelled) {
         setClaimEligibility(data && data.length > 0 ? null : local);
@@ -91,16 +98,16 @@ export default function ResultsPage() {
     return () => {
       cancelled = true;
     };
-  }, [loadState, authLoading, user, sessionRow, params.publicId]);
+  }, [loadState, authLoading, user, access, params.publicId]);
 
-  const loadReport = useCallback(async (session: SessionRow) => {
+  const loadReport = useCallback(async (session: ReportAccessResult["session"]) => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
 
     const data = await loadTastingReportData(supabase, {
       id: session.id,
-      tastingMode: session.tasting_mode,
-      scoringVersion: session.scoring_version,
+      tastingMode: session.tastingMode,
+      scoringVersion: session.scoringVersion,
     });
 
     if (data.kind === "seen") {
@@ -111,38 +118,81 @@ export default function ResultsPage() {
     setLoadState("ready");
   }, []);
 
+  /**
+   * The only place this page decides who's allowed to see the report — see
+   * README "Results reveal" and lib/reportAccess.ts. Tries the browser's
+   * saved host token first, through the existing host-token Route Handler
+   * (kept server-side per the same convention every other host mutation in
+   * this app already follows, so the raw host token never appears in a
+   * client-visible Supabase REST call); then its saved guest token, through
+   * the existing guest-token RPC wrapper (called directly, exactly like
+   * every other guest action in this app). Neither resolving is
+   * indistinguishable from the session not existing at all — same generic
+   * "Tasting not found" screen either way, so a public/non-member visitor
+   * can never learn whether a real session sits behind this link. A
+   * rejoined guest (recovery code or account) reaches this the same way
+   * anyone else does: their browser's saved guest token already resolves to
+   * their original canonical participant record (see README "Session
+   * rejoin") — no separate code path needed here.
+   */
+  const resolveAccess = useCallback(async (): Promise<ReportAccessResult | null> => {
+    const hostToken = getHostToken(params.publicId);
+    if (hostToken) {
+      try {
+        const response = await fetch("/api/host/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ publicId: params.publicId, hostToken }),
+        });
+        if (response.ok) {
+          const data = (await response.json()) as HostSessionResponse;
+          return resolveReportAccessFromHostSession(data);
+        }
+      } catch {
+        // Fall through to the guest-token attempt.
+      }
+    }
+
+    const guestToken = getGuestToken(params.publicId);
+    if (guestToken) {
+      const supabase = getSupabaseBrowserClient();
+      if (supabase) {
+        const { data } = await getGuestSessionState(supabase, guestToken);
+        if (data) {
+          const resolved = resolveReportAccessFromGuestSession(data, params.publicId);
+          if (resolved) return resolved;
+        }
+      }
+    }
+
+    return null;
+  }, [params.publicId]);
+
+  const refresh = useCallback(async () => {
+    const resolved = await resolveAccess();
+    if (!resolved) {
+      setLoadState("not-authorized");
+      return;
+    }
+    setAccess(resolved);
+    if (!isReportAvailable(resolved.session)) {
+      setLoadState("locked");
+      return;
+    }
+    await loadReport(resolved.session);
+  }, [resolveAccess, loadReport]);
+
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) {
       setLoadState("no-config");
       return;
     }
-
-    (async () => {
-      const { data } = await supabase
-        .from("tasting_sessions")
-        .select(
-          "id, public_id, join_code, title, tasting_date, status, created_at, updated_at, tasting_mode, scoring_version"
-        )
-        .eq("public_id", params.publicId)
-        .maybeSingle();
-
-      if (!data) {
-        setLoadState("not-found");
-        return;
-      }
-      setSessionRow(data);
-
-      if (data.status === "revealed") {
-        await loadReport(data);
-      } else {
-        setLoadState("waiting");
-      }
-    })();
-  }, [params.publicId, loadReport]);
+    refresh();
+  }, [refresh]);
 
   useEffect(() => {
-    if (loadState !== "waiting" || !sessionRow) return;
+    if (loadState !== "locked" || !access) return;
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
 
@@ -156,11 +206,12 @@ export default function ResultsPage() {
           table: "tasting_sessions",
           filter: `public_id=eq.${params.publicId}`,
         },
-        async (payload) => {
-          const next = payload.new as { status?: string };
-          if (next.status === "revealed") {
-            await loadReport(sessionRow);
-          }
+        () => {
+          // Never trust the realtime payload's status directly — re-resolve
+          // through the same authorized path so completion is always
+          // verified server-side on every load, not inferred from a
+          // broadcast.
+          refresh();
         }
       )
       .subscribe();
@@ -168,7 +219,7 @@ export default function ResultsPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [loadState, sessionRow, params.publicId, loadReport]);
+  }, [loadState, access, params.publicId, refresh]);
 
   if (loadState === "loading") {
     return <LoadingState message="Gathering the evening's notes…" />;
@@ -183,7 +234,7 @@ export default function ResultsPage() {
     );
   }
 
-  if (loadState === "not-found") {
+  if (loadState === "not-authorized") {
     return (
       <UnavailableScreen
         title="Tasting not found"
@@ -192,7 +243,7 @@ export default function ResultsPage() {
     );
   }
 
-  if (loadState === "waiting") {
+  if (loadState === "locked") {
     return (
       <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
         <div className="flex items-center gap-2">
@@ -202,12 +253,10 @@ export default function ResultsPage() {
         </div>
         <div className="w-full border-t border-cellar-gold/40 pt-5">
           <h1 className="font-display text-2xl font-semibold text-cellar-maroon-dark">
-            Not revealed yet
+            Not available yet
           </h1>
           <p className="mt-2 text-sm text-cellar-muted">
-            {sessionRow?.title ? `"${sessionRow.title}" is` : "This tasting is"}{" "}
-            still collecting guesses. This page will update automatically once
-            the host reveals the results.
+            The tasting report will be available when the tasting is complete.
           </p>
         </div>
         <Button variant="secondary" onClick={() => window.location.reload()}>
@@ -217,11 +266,11 @@ export default function ResultsPage() {
     );
   }
 
-  if (!report && !seenReport) return null;
+  if ((!report && !seenReport) || !access) return null;
 
-  const modeLabel = sessionRow ? TASTING_MODE_LABELS[sessionRow.tasting_mode] : "";
-  const dateLabel = sessionRow?.tasting_date
-    ? new Date(sessionRow.tasting_date).toLocaleDateString(undefined, {
+  const modeLabel = TASTING_MODE_LABELS[access.session.tastingMode];
+  const dateLabel = access.session.tastingDate
+    ? new Date(access.session.tastingDate).toLocaleDateString(undefined, {
         year: "numeric",
         month: "long",
         day: "numeric",
@@ -253,7 +302,7 @@ export default function ResultsPage() {
 
       <PageHeader
         eyebrow="The tasting report"
-        title={sessionRow?.title ?? ""}
+        title={access.session.title}
         supporting={[dateLabel, modeLabel].filter(Boolean).join(" · ")}
       />
 
@@ -269,7 +318,7 @@ export default function ResultsPage() {
       {seenReport ? (
         <SeenTastingReportView report={seenReport} />
       ) : (
-        report && <TastingReportView report={report} />
+        report && <TastingReportView report={report} showNotes={access.role === "participant"} />
       )}
 
       {!authLoading && !user && (

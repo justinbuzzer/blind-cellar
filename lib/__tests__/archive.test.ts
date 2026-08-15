@@ -136,6 +136,7 @@ function guestSession(
         anonymousCode: "Bottle 1",
         styleHint: "all_skins",
         contributorName: null,
+        isOwnBottle: false,
       },
     ],
     guesses: [],

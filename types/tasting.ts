@@ -410,6 +410,15 @@ export interface ScoredGuess {
   overallAccuracyPercent: number;
   rating: number | null;
   confidence: Confidence;
+  /**
+   * The guest's own final submitted tasting note, carried straight through
+   * for display only — never scored, never compared. Undefined/null when no
+   * note was saved. Only ever rendered to viewers explicitly authorized to
+   * see other participants' notes (see README "Results reveal" — the
+   * completed-tasting shared report) — every other existing consumer of
+   * ScoredGuess simply never reads this field.
+   */
+  note?: string | null;
 }
 
 export interface TasterOnWine {

@@ -2168,6 +2168,45 @@ select ready_to_begin_at from guests where guest_token = '<a real guest token fr
 
 No RLS policy changed. `ready_to_begin_at` is added to the same narrow, pre-existing `grant select (...) on guests` list that already exposes `completed_at` — this table's own "has this participant finished X" fields have always been treated as safe at the grant level (gated only by application UI convention, exactly like the pre-existing "Participants joined" list already shows every display name unconditionally), so this is not a new category of exposure. `mark_participant_ready` runs as `SECURITY DEFINER`, resolves the participant from the caller's own `p_guest_token` only — there is no participant-id or session-id parameter at all, so it is structurally impossible for one participant to mark another ready, or for a call scoped to one session to affect another. It rejects any call once the session has left `'registration'`, matching the same pre-start boundary `start_tasting_session` itself transitions across. No new host-only RPC or DTO was added — the Host Controls readiness count and not-ready-names popover are both computed client-side from the `guests[]` array already fetched under the existing host-token-gated `get_host_session` call.
 
+## Migrating for own-bottle guessing exclusion
+
+A contributor's own bottle is excluded from their guessing/scoring obligations in Full blind and Course-by-course — see README "Own-bottle guessing exclusion". **No new table and no new column** — this is entirely `create or replace function` on six existing functions, so re-running the whole `supabase/schema.sql` file is the complete migration:
+
+- `get_guest_session_state` / `get_active_bottle_state` — each wine/active-bottle object gains one new boolean field, `isOwnBottle`, computed server-side from the existing `wines.contributor_guest_id` column against the caller's own `guests.id`. No new column, no new grant.
+- `upsert_wine_guess` / `lock_wine_guess` — both now reject a bottle's own contributor with a new error tag, `own_bottle_not_guessable`, checked against the same existing `wines.contributor_guest_id` column already used for contributor-name display elsewhere.
+- `complete_guest_submission` — the required-rating count now excludes any bottle the calling guest themself contributed, so a contributor is never blocked from completing their submission by a bottle they're not permitted to guess.
+- `get_bottle_response_progress` / `get_host_guess_progress` / `get_host_session` (course_reveal's `activeBottle.totalParticipants`) — each bottle's eligible/submitted/missing-participant counts now exclude that specific bottle's own contributor, if any.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+No standalone snippet is needed beyond re-pasting `supabase/schema.sql` in full — every changed function is a `create or replace function` over an existing signature, so this is safe to run repeatedly and requires no `alter table`.
+
+### 2. Verification queries
+
+```sql
+-- a guest token belonging to a bottle's own contributor is rejected
+select upsert_wine_guess(
+  '<a real guest token that contributed a bottle>',
+  '<that same bottle''s wine id>',
+  'France', 'Burgundy', 'single', 'Pinot Noir', '', '', '', 88, 'medium', null, null, null
+);
+-- expect: an error containing 'own_bottle_not_guessable'
+
+-- get_guest_session_state's wines[] now includes isOwnBottle
+select get_guest_session_state('<a real guest token>');
+-- expect: exactly one wines[] entry has isOwnBottle = true if this guest
+-- contributed a bottle in this session, and every other entry is false
+
+-- a contributor can complete submission without guessing their own bottle
+-- (run after guessing every OTHER bottle in the session as that guest)
+select complete_guest_submission('<that contributor''s guest token>');
+-- expect: success, with no guess ever having been required for their own bottle
+```
+
+### RLS and privacy summary
+
+No RLS policy changed, and no new column or grant was added — `isOwnBottle` is a precomputed boolean derived entirely server-side from the existing `wines.contributor_guest_id` column (already readable server-side by every function that needed contributor names), never the raw contributor id of another participant's bottle. The four mutation/count functions above independently re-derive and enforce ownership from the same canonical `wines.contributor_guest_id` column on every call — never from a client-supplied identity, never from `guests.display_name`. Historical/already-revealed sessions are never touched by this migration: it only changes what a currently-`collecting` session's live RPCs return and accept going forward.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

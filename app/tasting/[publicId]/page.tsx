@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/Button";
 import { ProgressBar } from "@/components/ProgressBar";
 import { WineGuessForm } from "@/components/WineGuessForm";
+import { OwnerBottleView } from "@/components/OwnerBottleView";
 import { GuessGroupProgress } from "@/components/GuessGroupProgress";
 import { SavingIndicator, SaveState } from "@/components/SavingIndicator";
 import { SectionEyebrow } from "@/components/SectionEyebrow";
@@ -23,7 +24,7 @@ import {
 } from "@/lib/supabase/guestActions";
 import { friendlyRpcError, GuestSessionWineDTO, HostGuessProgressDTO } from "@/lib/supabase/types";
 import { mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
-import { emptyWineGuess } from "@/lib/guess";
+import { emptyWineGuess, winesRequiringGuess } from "@/lib/guess";
 import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend, invalidOtherGrapeGuessMessage } from "@/lib/validation";
 import { getGuestToken, getHostToken } from "@/lib/deviceStorage";
 import { formatBlindBottleLabel } from "@/lib/codes";
@@ -59,10 +60,12 @@ export default function GuestTastingPage() {
   const guestTokenRef = useRef<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSaveRef = useRef<{ wineId: string; guess: WineGuess } | null>(null);
-  // Any bottle id in this session — full_blind's group-progress count is
-  // session-wide (see get_host_guess_progress), identical for every bottle,
-  // so it only needs to be fetched once and never re-fetched on Previous/Next.
-  const anyWineIdRef = useRef<string | null>(null);
+  // The currently-viewed wine's group-progress count is no longer identical
+  // for every bottle (see README "Own-bottle guessing exclusion" — a
+  // bottle's own contributor is excluded from its eligible/submitted count),
+  // so this must always be re-fetched for whichever wine is currently shown,
+  // never a fixed "any wine" stand-in.
+  const latestWineIdRef = useRef<string | null>(null);
 
   const performSave = useCallback(async () => {
     const supabase = getSupabaseBrowserClient();
@@ -148,36 +151,52 @@ export default function GuestTastingPage() {
       // HostControlsLink's — get_host_guess_progress independently
       // re-verifies this guest token actually belongs to the session's host
       // before returning anything, so a non-host can never trigger or see
-      // this fetch's result even if this check were somehow bypassed.
+      // this fetch's result even if this check were somehow bypassed. The
+      // fetch itself happens in the effect below, keyed on the currently
+      // viewed wine — see README "Own-bottle guessing exclusion".
       if (getHostToken(params.publicId) && data.wines.length > 0) {
-        anyWineIdRef.current = data.wines[0].id;
         setSessionId(data.session.id);
         setIsHost(true);
-        const { data: progress } = await getHostGuessProgress(
-          supabase,
-          token,
-          data.wines[0].id
-        );
-        setHostGuessProgress(progress);
       }
     })();
   }, [params.publicId, router]);
+
+  // Host-only group-progress fetch for whichever wine is currently shown.
+  // Re-runs on every Previous/Next navigation, unlike before this bottle's
+  // own contributor could be excluded from a bottle's eligible/submitted
+  // count (see README "Own-bottle guessing exclusion") — different bottles
+  // can now report different counts, so "any wine" is no longer a valid
+  // stand-in for "every wine".
+  useEffect(() => {
+    if (!isHost || wines.length === 0) return;
+    const supabase = getSupabaseBrowserClient();
+    const token = guestTokenRef.current;
+    if (!supabase || !token) return;
+    const wineId = wines[currentIndex]?.id;
+    if (!wineId) return;
+
+    latestWineIdRef.current = wineId;
+    getHostGuessProgress(supabase, token, wineId).then(({ data: progress }) => {
+      if (latestWineIdRef.current === wineId) {
+        setHostGuessProgress(progress);
+      }
+    });
+  }, [isHost, wines, currentIndex]);
 
   // Live refresh for the host-only group-progress count above. `guests` is
   // realtime-enabled (unlike wine_guesses — see README "Host per-bottle
   // response progress"), so a participant's completed_at flip (their final
   // submit) is broadcast here directly, the same mechanism
   // HostControlClient already uses for its own guests-table subscription.
-  // full_blind's count is session-wide (identical for every bottle), so a
-  // single subscription for the whole page is enough — no per-bottle
-  // re-subscription is needed when the host navigates Previous/Next.
+  // Always re-fetches for whichever wine is currently displayed (via
+  // latestWineIdRef, kept current by the effect above) rather than a fixed
+  // bottle.
   useEffect(() => {
     if (!isHost || !sessionId) return;
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
     const token = guestTokenRef.current;
-    const wineId = anyWineIdRef.current;
-    if (!token || !wineId) return;
+    if (!token) return;
 
     const channel = supabase
       .channel(`host-guess-progress-${sessionId}`)
@@ -185,8 +204,12 @@ export default function GuestTastingPage() {
         "postgres_changes",
         { event: "*", schema: "public", table: "guests", filter: `session_id=eq.${sessionId}` },
         async () => {
+          const wineId = latestWineIdRef.current;
+          if (!wineId) return;
           const { data: progress } = await getHostGuessProgress(supabase, token, wineId);
-          setHostGuessProgress(progress);
+          if (latestWineIdRef.current === wineId) {
+            setHostGuessProgress(progress);
+          }
         }
       )
       .subscribe();
@@ -238,7 +261,12 @@ export default function GuestTastingPage() {
   }
 
   async function handleSubmitTasting() {
-    const missingWine = wines.find((wine) => {
+    // Own-bottle guessing exclusion (see README): a contributor's own
+    // bottle is never part of their required-submission set, mirroring the
+    // exact same exclusion complete_guest_submission enforces server-side.
+    const requiredWines = winesRequiringGuess(wines);
+
+    const missingWine = requiredWines.find((wine) => {
       const guess = guesses.find((g) => g.wineId === wine.id);
       return !guess || guess.rating === null;
     });
@@ -249,7 +277,7 @@ export default function GuestTastingPage() {
       return;
     }
 
-    const incompleteBlendWine = wines.find((wine) => {
+    const incompleteBlendWine = requiredWines.find((wine) => {
       const guess = guesses.find((g) => g.wineId === wine.id);
       return guess && hasIncompleteBlend(guess);
     });
@@ -260,7 +288,7 @@ export default function GuestTastingPage() {
       return;
     }
 
-    const invalidOtherGrapeWine = wines.find((wine) => {
+    const invalidOtherGrapeWine = requiredWines.find((wine) => {
       const guess = guesses.find((g) => g.wineId === wine.id);
       return guess && invalidOtherGrapeGuessMessage(guess) !== undefined;
     });
@@ -367,27 +395,31 @@ export default function GuestTastingPage() {
         label={`${wineLabel} — ${currentIndex + 1} of ${wines.length}`}
       />
 
-      <GuessGroupProgress progress={hostGuessProgress} />
+      {!wine.isOwnBottle && <GuessGroupProgress progress={hostGuessProgress} />}
 
-      <WineGuessForm
-        key={wine.id}
-        wineCode={wineLabel}
-        value={guess}
-        onChange={(next) => updateGuess(wine.id, next)}
-        styleHint={wine.styleHint}
-        ratingError={
-          ratingErrorWineId === wine.id ? "A rating is required." : undefined
-        }
-        blendError={
-          blendErrorWineId === wine.id
-            ? BLEND_MIN_GRAPES_MESSAGE
-            : otherGrapeErrorWineId === wine.id
-              ? invalidOtherGrapeGuessMessage(guess)
-              : undefined
-        }
-      />
+      {wine.isOwnBottle ? (
+        <OwnerBottleView wineLabel={wineLabel} />
+      ) : (
+        <WineGuessForm
+          key={wine.id}
+          wineCode={wineLabel}
+          value={guess}
+          onChange={(next) => updateGuess(wine.id, next)}
+          styleHint={wine.styleHint}
+          ratingError={
+            ratingErrorWineId === wine.id ? "A rating is required." : undefined
+          }
+          blendError={
+            blendErrorWineId === wine.id
+              ? BLEND_MIN_GRAPES_MESSAGE
+              : otherGrapeErrorWineId === wine.id
+                ? invalidOtherGrapeGuessMessage(guess)
+                : undefined
+          }
+        />
+      )}
 
-      <SavingIndicator state={saveState} />
+      {!wine.isOwnBottle && <SavingIndicator state={saveState} />}
 
       {submitError && (
         <p role="alert" className="rounded-sm border border-cellar-danger/30 bg-cellar-danger/5 px-3 py-2 text-sm text-cellar-danger">

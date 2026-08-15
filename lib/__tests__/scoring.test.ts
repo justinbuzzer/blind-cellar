@@ -258,6 +258,35 @@ function makeGuess(overrides: Partial<WineGuess> = {}): WineGuess {
   };
 }
 
+describe("scoreWineGuess — tasting note passthrough", () => {
+  it("carries the guest's saved note through under legacy_v1", () => {
+    const scored = scoreWineGuess(
+      "guest-1",
+      "Alice",
+      makeGuess({ note: "Floral, savoury and tightly structured." }),
+      answer,
+      "legacy_v1"
+    );
+    expect(scored.note).toBe("Floral, savoury and tightly structured.");
+  });
+
+  it("carries the guest's saved note through under core_v3_appellation_conditional", () => {
+    const scored = scoreWineGuessCoreV3("guest-1", "Alice", makeGuess({ note: "More structured than I expected." }), answer);
+    expect(scored.note).toBe("More structured than I expected.");
+  });
+
+  it("is null (never undefined-crashes downstream consumers) when no note was saved", () => {
+    const scored = scoreWineGuess("guest-1", "Alice", makeGuess({ note: undefined }), answer, "legacy_v1");
+    expect(scored.note).toBeNull();
+  });
+
+  it("never scores or otherwise alters totals based on note content", () => {
+    const withoutNote = scoreWineGuess("guest-1", "Alice", makeGuess(), answer, "legacy_v1");
+    const withNote = scoreWineGuess("guest-1", "Alice", makeGuess({ note: "Unrelated commentary" }), answer, "legacy_v1");
+    expect(withNote.totalPoints).toBe(withoutNote.totalPoints);
+  });
+});
+
 describe("scoreWineGuess", () => {
   it("awards the full 120 points for a perfect guess (100 core + 20 bonus)", () => {
     const scored = scoreWineGuess("guest-1", "Alice", makeGuess(), answer, "legacy_v1");

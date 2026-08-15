@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/Button";
 import { ProgressBar } from "@/components/ProgressBar";
 import { WineGuessForm } from "@/components/WineGuessForm";
+import { OwnerBottleView } from "@/components/OwnerBottleView";
 import { GuessGroupProgress } from "@/components/GuessGroupProgress";
 import { SavingIndicator, SaveState } from "@/components/SavingIndicator";
 import { SectionEyebrow } from "@/components/SectionEyebrow";
@@ -244,7 +245,7 @@ export default function ActiveBottlePage() {
   }
 
   async function handleLockGuess() {
-    if (!guess || !activeBottle) return;
+    if (!guess || !activeBottle || activeBottle.isOwnBottle) return;
     if (guess.rating === null) {
       setRatingError("A rating is required.");
       return;
@@ -389,29 +390,35 @@ export default function ActiveBottlePage() {
         label={`${activeBottleLabel} — ${activeBottle.position} of ${activeBottle.totalBottles}`}
       />
 
-      <GuessGroupProgress progress={hostGuessProgress} />
+      {activeBottle.isOwnBottle ? (
+        <OwnerBottleView wineLabel={activeBottleLabel} />
+      ) : (
+        <>
+          <GuessGroupProgress progress={hostGuessProgress} />
 
-      <WineGuessForm
-        key={activeBottle.id}
-        wineCode={activeBottleLabel}
-        value={guess}
-        onChange={updateGuess}
-        styleHint={activeBottle.styleHint}
-        ratingError={ratingError ?? undefined}
-        blendError={blendError ?? otherGrapeError ?? undefined}
-      />
+          <WineGuessForm
+            key={activeBottle.id}
+            wineCode={activeBottleLabel}
+            value={guess}
+            onChange={updateGuess}
+            styleHint={activeBottle.styleHint}
+            ratingError={ratingError ?? undefined}
+            blendError={blendError ?? otherGrapeError ?? undefined}
+          />
 
-      <SavingIndicator state={saveState} />
+          <SavingIndicator state={saveState} />
 
-      {lockError && (
-        <p role="alert" className="rounded-sm border border-cellar-danger/30 bg-cellar-danger/5 px-3 py-2 text-sm text-cellar-danger">
-          {lockError}
-        </p>
+          {lockError && (
+            <p role="alert" className="rounded-sm border border-cellar-danger/30 bg-cellar-danger/5 px-3 py-2 text-sm text-cellar-danger">
+              {lockError}
+            </p>
+          )}
+
+          <Button type="button" fullWidth onClick={handleLockGuess} disabled={locking}>
+            {locking ? "Locking in…" : "Lock in my guess"}
+          </Button>
+        </>
       )}
-
-      <Button type="button" fullWidth onClick={handleLockGuess} disabled={locking}>
-        {locking ? "Locking in…" : "Lock in my guess"}
-      </Button>
     </main>
   );
 }
