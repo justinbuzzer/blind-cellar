@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/Button";
@@ -104,6 +104,37 @@ export function HostControlClient({
   const [actionError, setActionError] = useState<string | null>(null);
   const [realtimeOk, setRealtimeOk] = useState(true);
   const [joinUrl, setJoinUrl] = useState("");
+
+  // Shared de-dupe guard for the three independent triggers that can all
+  // fetch /api/host/session (the full get_host_session re-fetch) within a
+  // short window of each other: the wines-table realtime handler below, and
+  // the two 5s poll fallbacks further down. A realtime change and the next
+  // poll tick can otherwise both fire the same expensive re-fetch moments
+  // apart — this skips a fetch that would just re-confirm what the last one
+  // already returned, without changing what any of the three callers do
+  // with the data once they actually get it.
+  const lastHostSessionFetchAtRef = useRef(0);
+  const HOST_SESSION_FETCH_GUARD_MS = 2000;
+
+  const fetchHostSession = useCallback(async (): Promise<HostSessionResponse | null> => {
+    if (Date.now() - lastHostSessionFetchAtRef.current < HOST_SESSION_FETCH_GUARD_MS) {
+      return null;
+    }
+    lastHostSessionFetchAtRef.current = Date.now();
+    try {
+      const response = await fetch("/api/host/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicId, hostToken }),
+      });
+      if (!response.ok) return null;
+      return (await response.json()) as HostSessionResponse;
+    } catch {
+      // Realtime/the next poll tick will retry — a transient fetch failure
+      // here isn't worth surfacing as an error banner.
+      return null;
+    }
+  }, [publicId, hostToken]);
 
   const { session } = initialData;
   const tastingMode = session.tastingMode;
@@ -219,21 +250,12 @@ export function HostControlClient({
       // wineStyle/tastingOrder are deliberately excluded from the anon column
       // grant on `wines` (see supabase/schema.sql) — the RPC is the only path
       // that can return them, and it re-validates the host token itself.
-      try {
-        const response = await fetch("/api/host/session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ publicId, hostToken }),
-        });
-        if (!response.ok) return;
-        const data: HostSessionResponse = await response.json();
-        setWines(data.wines);
-        setActiveBottle(data.activeBottle);
-        setSeenProgress(data.seenProgress);
-      } catch {
-        // Realtime will retry on the next change; a transient fetch failure
-        // here isn't worth surfacing as an error banner.
-      }
+      // Guarded by fetchHostSession's shared de-dupe window — see its comment.
+      const data = await fetchHostSession();
+      if (!data) return;
+      setWines(data.wines);
+      setActiveBottle(data.activeBottle);
+      setSeenProgress(data.seenProgress);
     }
 
     const channel = supabase
@@ -282,7 +304,7 @@ export function HostControlClient({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [publicId, session.id, hostToken]);
+  }, [publicId, session.id, hostToken, fetchHostSession]);
 
   // Polling fallback for the active bottle's submitted count — see the
   // ACTIVE_BOTTLE_POLL_MS comment above for why this isn't realtime-driven.
@@ -291,18 +313,11 @@ export function HostControlClient({
 
     let cancelled = false;
     async function poll() {
-      try {
-        const response = await fetch("/api/host/session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ publicId, hostToken }),
-        });
-        if (!response.ok || cancelled) return;
-        const data: HostSessionResponse = await response.json();
-        if (!cancelled) setActiveBottle(data.activeBottle);
-      } catch {
-        // Next poll will retry.
-      }
+      // Guarded by fetchHostSession's shared de-dupe window, so a poll tick
+      // landing just after the realtime handler already refetched (or after
+      // the other poll below) is a no-op instead of a second round trip.
+      const data = await fetchHostSession();
+      if (data && !cancelled) setActiveBottle(data.activeBottle);
     }
 
     const intervalId = setInterval(poll, ACTIVE_BOTTLE_POLL_MS);
@@ -310,7 +325,7 @@ export function HostControlClient({
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [publicId, hostToken, tastingMode, status]);
+  }, [tastingMode, status, fetchHostSession]);
 
   // Polling fallback for seen mode's aggregate rating progress, and also the
   // per-bottle rating counts/group ratings shown in the Seen Host Controls
@@ -325,20 +340,12 @@ export function HostControlClient({
 
     let cancelled = false;
     async function poll() {
-      try {
-        const response = await fetch("/api/host/session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ publicId, hostToken }),
-        });
-        if (!response.ok || cancelled) return;
-        const data: HostSessionResponse = await response.json();
-        if (!cancelled) {
-          setWines(data.wines);
-          setSeenProgress(data.seenProgress);
-        }
-      } catch {
-        // Next poll will retry.
+      // Guarded by fetchHostSession's shared de-dupe window — see the
+      // course_reveal poll above for the full explanation.
+      const data = await fetchHostSession();
+      if (data && !cancelled) {
+        setWines(data.wines);
+        setSeenProgress(data.seenProgress);
       }
     }
 
@@ -347,7 +354,7 @@ export function HostControlClient({
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [publicId, hostToken, tastingMode, status]);
+  }, [tastingMode, status, fetchHostSession]);
 
   async function handleStartTasting() {
     setStarting(true);

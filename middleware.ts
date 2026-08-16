@@ -2,6 +2,15 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
+// Supabase's own SSR cookie helper (createServerClient/createBrowserClient)
+// names its auth cookie `sb-<project-ref>-auth-token`, chunked as
+// `sb-<project-ref>-auth-token.0`, `.1`, etc. for large tokens — see
+// @supabase/ssr's own storageKey documentation. Matching that prefix (rather
+// than re-deriving the project ref from the URL ourselves) tracks whatever
+// Supabase actually wrote, without this file needing to reimplement its
+// internal naming.
+const SUPABASE_AUTH_COOKIE_PREFIX_RE = /^sb-.*-auth-token/;
+
 /**
  * Supabase's official session-refresh pattern for @supabase/ssr — this is
  * the only thing this middleware does. It never redirects and never blocks
@@ -16,6 +25,21 @@ export async function middleware(request: NextRequest) {
 
   const env = getSupabaseEnv();
   if (!env) return response;
+
+  // Almost every request in this app carries no Supabase Auth session at
+  // all — hosting/joining/guessing/rating are entirely anonymous host/guest
+  // tokens (see README "Security model, in plain English"), and this
+  // middleware's matcher already covers every page and API route, including
+  // the 5-8s poll requests several pages run continuously. Skipping the
+  // auth-server round trip below when there's no Supabase auth cookie to
+  // refresh in the first place avoids paying that latency on every one of
+  // those requests for the common case. A visitor who has actually signed in
+  // (see "Accounts") always has this cookie, so their session-refresh
+  // behaviour is completely unchanged.
+  const hasSupabaseAuthCookie = request.cookies
+    .getAll()
+    .some((cookie) => SUPABASE_AUTH_COOKIE_PREFIX_RE.test(cookie.name));
+  if (!hasSupabaseAuthCookie) return response;
 
   const supabase = createServerClient(env.url, env.anonKey, {
     cookies: {
