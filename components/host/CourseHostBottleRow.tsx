@@ -16,6 +16,8 @@ interface CourseHostBottleRowProps {
   publicId: string;
   hostToken: string;
   onReleaseClick: (wineId: string) => void;
+  /** True while this specific bottle's release request is in flight — disables the button and shows "Releasing…" so a double-click can't fire two requests, now that release has no confirmation step. */
+  releasing?: boolean;
 }
 
 /**
@@ -33,6 +35,7 @@ export function CourseHostBottleRow({
   publicId,
   hostToken,
   onReleaseClick,
+  releasing = false,
 }: CourseHostBottleRowProps) {
   const revealed = wine.revealedAt !== null;
   const releasable = isCourseBottleReleasable(wine, activeWineId);
@@ -63,9 +66,10 @@ export function CourseHostBottleRow({
           <Button
             variant="secondary"
             onClick={() => onReleaseClick(wine.id)}
+            disabled={releasing}
             aria-label={formatReleaseBottleAriaLabel(wine.bottleNumber, wine.contributorName)}
           >
-            Release this bottle
+            {releasing ? "Releasing…" : "Release this bottle"}
           </Button>
         )}
       </div>

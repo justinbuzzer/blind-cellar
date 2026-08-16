@@ -34,14 +34,16 @@ interface BottleProgressControlProps {
 
 /**
  * Host-only per-bottle response-progress control (see README "Host
- * per-bottle response progress"): a compact icon button that opens a
- * temporary detail surface with how many eligible participants have
- * submitted the relevant response and the safe display names of who
- * hasn't — never a guess, a rating value, a score, or any wine identity
- * beyond what the caller already chooses to show via `title`/`subtitle`.
- * Reuses the existing Modal component (the only dialog primitive this app
- * has) for both desktop and mobile, rather than introducing a new anchored-
- * popover positioning system.
+ * per-bottle response progress"): a compact icon button carrying a live
+ * "{submitted}/{eligible}" count badge, so the host can see where a bottle
+ * stands at a glance without clicking anything. Clicking still opens a
+ * temporary detail surface — now instantly, with the badge's already-known
+ * count, refreshed in the background — with the safe display names of who
+ * hasn't responded yet. Never a guess, a rating value, a score, or any wine
+ * identity beyond what the caller already chooses to show via
+ * `title`/`subtitle`. Reuses the existing Modal component (the only dialog
+ * primitive this app has) for both desktop and mobile, rather than
+ * introducing a new anchored-popover positioning system.
  */
 export function BottleProgressControl({
   publicId,
@@ -86,16 +88,22 @@ export function BottleProgressControl({
     }
   }, [publicId, hostToken, wineId, responseKind]);
 
+  // Fetch once on mount, independent of the popover being open, so the
+  // button already has a count to show as a badge before the host ever
+  // clicks it — see the button markup below. Polling only resumes while the
+  // popover itself is open (unchanged from before).
+  useEffect(() => {
+    fetchProgress();
+  }, [fetchProgress]);
+
   useEffect(() => {
     if (!open) return;
-    fetchProgress();
     const intervalId = setInterval(fetchProgress, PROGRESS_POLL_MS);
     return () => clearInterval(intervalId);
   }, [open, fetchProgress]);
 
   function handleClose() {
     setOpen(false);
-    setProgress(null);
     setError(null);
     setAnnouncement("");
     previousCountsRef.current = null;
@@ -109,12 +117,24 @@ export function BottleProgressControl({
       <button
         ref={triggerRef}
         type="button"
-        aria-label={accessibleLabel}
+        aria-label={
+          progress && progress.eligibleCount > 0
+            ? `${accessibleLabel} — ${formatProgressStatusLine(responseKind, progress.submittedCount, progress.eligibleCount)}`
+            : accessibleLabel
+        }
         title={formatProgressTooltip(responseKind)}
         onClick={() => setOpen(true)}
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-sm border border-cellar-border text-cellar-text transition-colors duration-150 hover:border-cellar-maroon/40 hover:text-cellar-maroon focus:outline-none focus-visible:ring-2 focus-visible:ring-cellar-gold"
+        className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-sm border border-cellar-border text-cellar-text transition-colors duration-150 hover:border-cellar-maroon/40 hover:text-cellar-maroon focus:outline-none focus-visible:ring-2 focus-visible:ring-cellar-gold"
       >
         <ProgressIcon />
+        {progress && progress.eligibleCount > 0 && (
+          <span
+            aria-hidden="true"
+            className="absolute -right-1.5 -top-1.5 rounded-full bg-cellar-maroon px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
+          >
+            {progress.submittedCount}/{progress.eligibleCount}
+          </span>
+        )}
       </button>
 
       {open && (

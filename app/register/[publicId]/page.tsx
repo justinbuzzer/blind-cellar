@@ -71,6 +71,11 @@ export default function RegistrationHomePage() {
     refresh();
   }, [refresh]);
 
+  // Realtime signal for an instant transition, plus an 8s poll fallback
+  // (the same realtime-signal-plus-poll convention used throughout this
+  // app — see e.g. FinalLeaderboardClient.tsx) so a guest whose realtime
+  // channel never connects isn't left waiting indefinitely for the host to
+  // start the tasting with no way to know or recover.
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
@@ -96,10 +101,13 @@ export default function RegistrationHomePage() {
       )
       .subscribe();
 
+    const pollId = setInterval(refresh, 8000);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(pollId);
     };
-  }, [params.publicId, router]);
+  }, [params.publicId, router, refresh]);
 
   async function handleDelete() {
     if (!deleteTarget) return;
@@ -184,6 +192,13 @@ export default function RegistrationHomePage() {
         <span aria-hidden="true">·</span>
         <span>Registering as {state.guest.displayName}</span>
       </div>
+
+      <p className="flex items-center justify-between gap-2 rounded-sm border border-cellar-border bg-cellar-bg-deep px-3 py-2 text-sm text-cellar-muted">
+        <span>This page updates automatically once the host starts the tasting.</span>
+        <Button type="button" variant="ghost" onClick={() => refresh()}>
+          Refresh
+        </Button>
+      </p>
 
       <div className="flex flex-col gap-2 border-b border-cellar-border pb-5">
         <SectionEyebrow>Ready to begin?</SectionEyebrow>

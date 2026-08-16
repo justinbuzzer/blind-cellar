@@ -28,7 +28,6 @@ import {
   formatProgressAccessibleLabel,
 } from "@/lib/hostProgress";
 import { resolveHostCurrentTastingState } from "@/lib/hostCurrentTasting";
-import { formatReleaseBottleConfirmTitle } from "@/lib/courseRelease";
 import { bottleLabel } from "@/lib/codes";
 import {
   friendlyRpcError,
@@ -94,10 +93,9 @@ export function HostControlClient({
   const [showEndSeenConfirm, setShowEndSeenConfirm] = useState(false);
   const [confirmingSeenWineId, setConfirmingSeenWineId] = useState<string | null>(null);
   const [confirmingFullBlindWineId, setConfirmingFullBlindWineId] = useState<string | null>(null);
-  const [confirmingReleaseWineId, setConfirmingReleaseWineId] = useState<string | null>(null);
   const [revealingBottle, setRevealingBottle] = useState(false);
   const [revealingFullBlindBottle, setRevealingFullBlindBottle] = useState(false);
-  const [releasingBottle, setReleasingBottle] = useState(false);
+  const [releasingWineId, setReleasingWineId] = useState<string | null>(null);
   const [revealingSeenRatings, setRevealingSeenRatings] = useState(false);
   const [endingSeen, setEndingSeen] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -144,7 +142,6 @@ export function HostControlClient({
   );
   const confirmingSeenWine = wines.find((w) => w.id === confirmingSeenWineId) ?? null;
   const confirmingFullBlindWine = wines.find((w) => w.id === confirmingFullBlindWineId) ?? null;
-  const confirmingReleaseWine = wines.find((w) => w.id === confirmingReleaseWineId) ?? null;
 
   // Current tasting summary (see README "Current tasting") — purely a
   // display computation over data already fetched above via the
@@ -437,8 +434,14 @@ export function HostControlClient({
     }
   }
 
+  // Releases directly on click, with no confirmation step — unlike
+  // Start/Reveal/End (all genuinely irreversible), releasing a bottle never
+  // reveals its identity and bottles can be released in any order, so there
+  // is no real mistake for a confirm dialog to guard against. releasingWineId
+  // still disables the row's own button and shows "Releasing…" while the
+  // request is in flight, so a double-click can't fire two requests.
   async function handleReleaseBottle(wineId: string) {
-    setReleasingBottle(true);
+    setReleasingWineId(wineId);
     setActionError(null);
     try {
       const response = await fetch("/api/host/release-course-bottle", {
@@ -449,11 +452,10 @@ export function HostControlClient({
       const data = await response.json();
       if (!response.ok) {
         setActionError(data.error ?? "Couldn't release that bottle.");
-        setReleasingBottle(false);
+        setReleasingWineId(null);
         return;
       }
-      setConfirmingReleaseWineId(null);
-      setReleasingBottle(false);
+      setReleasingWineId(null);
       // Refetch immediately for the fully-populated activeBottle DTO
       // (position/totalBottles/submittedCount/totalParticipants) rather than
       // waiting for the next poll/realtime tick — same pattern
@@ -474,7 +476,7 @@ export function HostControlClient({
       }
     } catch {
       setActionError(friendlyRpcError(null));
-      setReleasingBottle(false);
+      setReleasingWineId(null);
     }
   }
 
@@ -859,7 +861,8 @@ export function HostControlClient({
                         activeWineId={activeBottle?.id ?? null}
                         publicId={publicId}
                         hostToken={hostToken}
-                        onReleaseClick={setConfirmingReleaseWineId}
+                        onReleaseClick={handleReleaseBottle}
+                        releasing={releasingWineId === wine.id}
                       />
                     ))}
                   </ol>
@@ -1038,33 +1041,6 @@ export function HostControlClient({
               disabled={revealingFullBlindBottle}
             >
               {revealingFullBlindBottle ? "Revealing…" : "Reveal results"}
-            </Button>
-          </div>
-        </Modal>
-      )}
-
-      {confirmingReleaseWineId && confirmingReleaseWine && (
-        <Modal
-          title={formatReleaseBottleConfirmTitle(confirmingReleaseWine.bottleNumber)}
-          onClose={() => !releasingBottle && setConfirmingReleaseWineId(null)}
-        >
-          <p>
-            This makes the bottle available for participants to taste and
-            submit guesses.
-          </p>
-          <div className="mt-4 flex justify-end gap-2">
-            <Button
-              variant="ghost"
-              onClick={() => setConfirmingReleaseWineId(null)}
-              disabled={releasingBottle}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => handleReleaseBottle(confirmingReleaseWineId)}
-              disabled={releasingBottle}
-            >
-              {releasingBottle ? "Releasing…" : "Release bottle"}
             </Button>
           </div>
         </Modal>

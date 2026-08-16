@@ -20,9 +20,15 @@ import {
   completeSubmission,
   getGuestSessionState,
   getHostGuessProgress,
+  getRevealedBottlesSummary,
   upsertGuess,
 } from "@/lib/supabase/guestActions";
-import { friendlyRpcError, GuestSessionWineDTO, HostGuessProgressDTO } from "@/lib/supabase/types";
+import {
+  friendlyRpcError,
+  GuestSessionWineDTO,
+  HostGuessProgressDTO,
+  RevealedBottlesSummaryResponse,
+} from "@/lib/supabase/types";
 import { mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
 import { emptyWineGuess, winesRequiringGuess } from "@/lib/guess";
 import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend, invalidOtherGrapeGuessMessage } from "@/lib/validation";
@@ -56,6 +62,7 @@ export default function GuestTastingPage() {
   const [isHost, setIsHost] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [hostGuessProgress, setHostGuessProgress] = useState<HostGuessProgressDTO | null>(null);
+  const [revealProgress, setRevealProgress] = useState<RevealedBottlesSummaryResponse | null>(null);
 
   const guestTokenRef = useRef<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -219,6 +226,24 @@ export default function GuestTastingPage() {
     };
   }, [isHost, sessionId]);
 
+  // Re-checks session status through the same guest-token RPC the initial
+  // load uses (never trusting a realtime payload's status directly) and
+  // redirects once revealed. Used by both the poll fallback below and the
+  // waiting screen's manual "Refresh" button.
+  const checkForReveal = useCallback(async () => {
+    const supabase = getSupabaseBrowserClient();
+    const token = guestTokenRef.current;
+    if (!supabase || !token) return;
+    const { data } = await getGuestSessionState(supabase, token);
+    if (data?.session.status === "revealed") {
+      router.push(`/results/${params.publicId}`);
+    }
+  }, [params.publicId, router]);
+
+  // Realtime signal for an instant transition to /results, plus an 8s poll
+  // fallback (see checkForReveal above) — so a guest whose realtime channel
+  // never connects isn't left on this page indefinitely once the tasting is
+  // actually revealed.
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
@@ -242,10 +267,49 @@ export default function GuestTastingPage() {
       )
       .subscribe();
 
+    const pollId = setInterval(checkForReveal, 8000);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(pollId);
     };
-  }, [params.publicId, router]);
+  }, [params.publicId, router, checkForReveal]);
+
+  // Bottle-by-bottle reveal progress for the "locked"/"submitted" waiting
+  // screen below (see README "Results reveal") — reuses the exact same
+  // get_revealed_bottles_summary the participant results hub already uses,
+  // so this never fetches anything new to the app, only earlier than the
+  // hub itself is reached. Realtime-signal-plus-poll-fallback, matching
+  // ResultsHubClient.tsx's own convention for the same data.
+  const refreshRevealProgress = useCallback(async () => {
+    const supabase = getSupabaseBrowserClient();
+    const token = guestTokenRef.current;
+    if (!supabase || !token) return;
+    const { data } = await getRevealedBottlesSummary(supabase, token);
+    if (data) setRevealProgress(data);
+  }, []);
+
+  useEffect(() => {
+    if (loadState !== "locked" && loadState !== "submitted") return;
+    refreshRevealProgress();
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+
+    const channel = supabase
+      .channel(`guest-reveal-progress-${params.publicId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "wines" }, () =>
+        refreshRevealProgress()
+      )
+      .subscribe();
+
+    const pollId = setInterval(refreshRevealProgress, 8000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(pollId);
+    };
+  }, [loadState, params.publicId, refreshRevealProgress]);
 
   function updateGuess(wineId: string, next: WineGuess) {
     setGuesses((prev) => prev.map((g) => (g.wineId === wineId ? next : g)));
@@ -362,6 +426,21 @@ export default function GuestTastingPage() {
             Waiting for the host to reveal the wines. This page will update
             automatically.
           </p>
+          {revealProgress && revealProgress.totalCount > 0 && (
+            <p className="mt-3 text-sm font-medium text-cellar-text">
+              {revealProgress.revealedCount} of {revealProgress.totalCount} bottles revealed
+            </p>
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              refreshRevealProgress();
+              checkForReveal();
+            }}
+          >
+            Refresh
+          </Button>
         </div>
       </main>
     );
