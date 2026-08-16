@@ -185,6 +185,42 @@ export default function RegistrationHomePage() {
         <span>Registering as {state.guest.displayName}</span>
       </div>
 
+      <div className="flex flex-col gap-2 border-b border-cellar-border pb-5">
+        <SectionEyebrow>Ready to begin?</SectionEyebrow>
+        {state.guest.readyToBeginAt ? (
+          <div>
+            <p className="text-sm font-medium text-cellar-text">Ready to begin</p>
+            <p className="mt-0.5 text-sm text-cellar-muted">
+              You have confirmed that you are ready for the tasting.
+            </p>
+          </div>
+        ) : (
+          <>
+            <p className="text-sm text-cellar-muted">
+              Confirm when you have finished adding bottles, or if you are not contributing one.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              fullWidth
+              disabled={markingReady}
+              onClick={handleMarkReady}
+              aria-label="Mark yourself ready to begin tasting"
+            >
+              {markingReady ? "Confirming…" : "I'm ready to begin"}
+            </Button>
+            {readyError && (
+              <p role="alert" className="text-sm text-cellar-danger">
+                {readyError}
+              </p>
+            )}
+          </>
+        )}
+        <p role="status" aria-live="polite" className="sr-only">
+          {readyAnnouncement}
+        </p>
+      </div>
+
       <div className="flex flex-col gap-3">
         <SectionEyebrow>
           Your contributed bottles ({state.myBottles.length})
@@ -253,42 +289,6 @@ export default function RegistrationHomePage() {
           {state.myBottles.length === 0 ? "Register a bottle" : "Add another bottle"}
         </Button>
       </Link>
-
-      <div className="flex flex-col gap-2 border-t border-cellar-border pt-5">
-        <SectionEyebrow>Ready to begin?</SectionEyebrow>
-        {state.guest.readyToBeginAt ? (
-          <div>
-            <p className="text-sm font-medium text-cellar-text">Ready to begin</p>
-            <p className="mt-0.5 text-sm text-cellar-muted">
-              You have confirmed that you are ready for the tasting.
-            </p>
-          </div>
-        ) : (
-          <>
-            <p className="text-sm text-cellar-muted">
-              Confirm when you have finished adding bottles, or if you are not contributing one.
-            </p>
-            <Button
-              type="button"
-              variant="secondary"
-              fullWidth
-              disabled={markingReady}
-              onClick={handleMarkReady}
-              aria-label="Mark yourself ready to begin tasting"
-            >
-              {markingReady ? "Confirming…" : "I'm ready to begin"}
-            </Button>
-            {readyError && (
-              <p role="alert" className="text-sm text-cellar-danger">
-                {readyError}
-              </p>
-            )}
-          </>
-        )}
-        <p role="status" aria-live="polite" className="sr-only">
-          {readyAnnouncement}
-        </p>
-      </div>
 
       {deleteTarget && (
         <Modal

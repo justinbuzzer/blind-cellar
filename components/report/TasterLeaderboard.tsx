@@ -22,7 +22,7 @@ export function TasterLeaderboard({ results, scoringVersion }: TasterLeaderboard
     <div className="flex flex-col gap-2">
       <p className="text-xs text-cellar-muted">
         {isCoreV3
-          ? "Country, region, grape/blend, and vintage are each worth 20 points; Appellation adds 20 more when the wine has one recorded. There is no bonus category — ranking is by percentage accuracy so tasters aren't penalised for bottles with no Appellation to guess."
+          ? "Country, region, grape/blend, vintage, producer, and wine/cuvée are each worth 20 points; Appellation adds 20 more when the wine has one recorded. There is no bonus category — ranking is by percentage accuracy so tasters aren't penalised for bottles with no Appellation to guess."
           : "Country, region, grape/blend, and vintage make up the 100-point core score. Producer and wine/cuvée are bonus categories worth up to 20 additional points."}
       </p>
       {results.map((taster) => (

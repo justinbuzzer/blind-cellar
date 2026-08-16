@@ -394,17 +394,17 @@ describe("computeBlindPalate and scope independence", () => {
     const v3Answer: WineAnswerKey = { ...legacyAnswer, id: "w2", country: "Italy", region: "Piedmont" };
     const v3GuessInput = { ...legacyGuessInput, wineId: "w2", country: "Spain", region: "Piedmont" }; // wrong country only
     const v3Scored = scoreWineGuessCoreV3("guest-1", "Alice", v3GuessInput, v3Answer);
-    expect(v3Scored.totalPoints).toBe(60); // 80 possible minus the 20 for country
-    expect(v3Scored.totalPossiblePoints).toBe(80);
+    expect(v3Scored.totalPoints).toBe(100); // 120 possible minus the 20 for country
+    expect(v3Scored.totalPossiblePoints).toBe(120);
 
     const result = computeBlindPalate([
       observation({ scoredGuess: legacyScored, wine: legacyAnswer }),
       observation({ scoredGuess: v3Scored, wine: v3Answer, sessionId: "session-2" }),
     ]);
 
-    expect(result.pointsEarned).toBe(180); // 120 + 60
-    expect(result.pointsPossible).toBe(200); // 120 + 80
-    expect(result.blindAccuracyPercent).toBe(90);
+    expect(result.pointsEarned).toBe(220); // 120 + 100
+    expect(result.pointsPossible).toBe(240); // 120 + 120
+    expect(result.blindAccuracyPercent).toBe(91.7);
   });
 
   it("never changes when the caller's scope-filtered observation set changes — only extractBlindObservations governs it", () => {

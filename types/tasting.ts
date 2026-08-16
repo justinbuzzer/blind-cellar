@@ -290,13 +290,18 @@ export const BONUS_MAX_POINTS = Object.values(BONUS_FIELD_POINTS).reduce(
 export const TOTAL_MAX_POINTS_PER_WINE = CORE_MAX_POINTS + BONUS_MAX_POINTS;
 
 /**
- * core_v3_appellation_conditional ONLY (see ScoringVersion): five potential
- * 20-point core categories, no bonus category at all. Appellation is
- * excluded entirely — from both the guess's fieldScores and the
- * possible-points denominator — whenever the actual wine has no recorded
- * Appellation; see calculateBlindScoreV3 in lib/scoring.ts. Producer and
- * wine/cuvée remain optional guess fields but are never scored under this
- * model.
+ * core_v3_appellation_conditional ONLY (see ScoringVersion): seven potential
+ * 20-point core categories, no bonus category at all — Producer and
+ * wine/cuvée are reinstated as genuine scored categories here (see README
+ * "Scoring model"), always applicable (unlike conditional Appellation)
+ * since both are required answer-key fields at bottle registration.
+ * Appellation is excluded entirely — from both the guess's fieldScores and
+ * the possible-points denominator — whenever the actual wine has no
+ * recorded Appellation; see calculateBlindScoreV3 in lib/scoring.ts.
+ * Producer/wine-cuvée use their own narrower matching rules
+ * (normalizeProducerForBlindMatch/normalizeCuveeForBlindMatch in
+ * lib/normalize.ts) — deliberately not the same lenient
+ * accent/punctuation-tolerant normalizeText every other field here uses.
  */
 export const CORE_V3_FIELD_POINTS = {
   country: 20,
@@ -304,6 +309,8 @@ export const CORE_V3_FIELD_POINTS = {
   appellation: 20,
   grapeBlend: 20,
   vintage: 20,
+  producer: 20,
+  wineName: 20,
 } as const;
 
 /** Per-field scoring breakdown for one guess against its answer key. */
@@ -332,7 +339,9 @@ export interface FieldScore {
  * one guess — see lib/scoring.ts's calculateBlindScoreV3, the pure function
  * that produces this shape, and README "Scoring model". Appellation is
  * conditionally excluded (both from scoring and from the denominator)
- * whenever the actual wine has no recorded Appellation.
+ * whenever the actual wine has no recorded Appellation; Producer and
+ * wine/cuvée are always applicable (never conditionally excluded), scored
+ * with their own narrower matchers — see CORE_V3_FIELD_POINTS.
  */
 export interface BlindScoreResult {
   countryCorrect: boolean;
@@ -357,13 +366,24 @@ export interface BlindScoreResult {
   vintagePoints: number;
   vintagePossiblePoints: 20;
 
+  /** Uses normalizeProducerForBlindMatch — case-insensitive plus tolerance for exactly one leading Château/Chateau/Domaine descriptor. Always applicable. */
+  producerCorrect: boolean;
+  producerPoints: number;
+  producerPossiblePoints: 20;
+
+  /** Uses normalizeCuveeForBlindMatch — case-insensitive only. Always applicable. */
+  wineNameCorrect: boolean;
+  wineNamePoints: number;
+  wineNamePossiblePoints: 20;
+
   corePoints: number;
-  corePossiblePoints: 80 | 100;
+  /** 120 when the actual wine has no Appellation, 140 when it does. */
+  corePossiblePoints: 120 | 140;
 
   /** Equal to corePoints under this model — there is no bonus category. */
   totalPoints: number;
   /** Equal to corePossiblePoints under this model. */
-  totalPossiblePoints: 80 | 100;
+  totalPossiblePoints: 120 | 140;
 }
 
 export interface ScoredGuess {
@@ -379,26 +399,17 @@ export interface ScoredGuess {
    * scored FieldScore instead — see fieldScores) or when left blank.
    */
   appellationGuess?: string;
-  /**
-   * core_v3_appellation_conditional only: the guest's raw producer/wine-cuvée
-   * guesses, carried straight through for an unscored reveal comparison —
-   * there is no bonus category under this model. Undefined under legacy_v1
-   * (there they're scored bonus FieldScores instead — see fieldScores) or
-   * when left blank.
-   */
-  producerGuess?: string;
-  wineCuveeGuess?: string;
   /** Which model produced every number below — see ScoringVersion. */
   scoringVersion: ScoringVersion;
   /** core_v3_appellation_conditional only: whether the actual wine had a recorded Appellation at all. Always false (unused) under legacy_v1. */
   appellationApplicable: boolean;
-  /** legacy_v1: country+region+grape/blend+vintage, 0-100. core_v3_appellation_conditional: country+region+appellation(if applicable)+grape/blend+vintage, 0-80 or 0-100. */
+  /** legacy_v1: country+region+grape/blend+vintage, 0-100. core_v3_appellation_conditional: country+region+appellation(if applicable)+grape/blend+vintage+producer+wine/cuvée, 0-120 or 0-140. */
   corePoints: number;
-  /** legacy_v1: producer+wine/cuvée, 0-20. Always 0 under core_v3_appellation_conditional — there is no bonus category in that model. */
+  /** legacy_v1: producer+wine/cuvée, 0-20. Always 0 under core_v3_appellation_conditional — Producer/wine-cuvée are scored core categories there instead (see fieldScores), not a separate bonus category. */
   bonusPoints: number;
   /** corePoints + bonusPoints. */
   totalPoints: number;
-  /** This guess's own possible core points. legacy_v1: always CORE_MAX_POINTS (100). core_v3_appellation_conditional: 80 or 100 depending on whether the actual wine had an Appellation — never a fixed session-wide constant. */
+  /** This guess's own possible core points. legacy_v1: always CORE_MAX_POINTS (100). core_v3_appellation_conditional: 120 or 140 depending on whether the actual wine had an Appellation — never a fixed session-wide constant. */
   corePossiblePoints: number;
   /** legacy_v1: always BONUS_MAX_POINTS (20). Always 0 under core_v3_appellation_conditional. */
   bonusPossiblePoints: number;

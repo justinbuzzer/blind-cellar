@@ -410,22 +410,22 @@ describe("calculateBlindScoreV3 / scoreWineGuessCoreV3 (core_v3_appellation_cond
     expect(blind.vintagePoints).toBe(20);
   });
 
-  it("totals 100/100 for a fully correct guess when the actual wine has an Appellation", () => {
+  it("totals 140/140 for a fully correct guess when the actual wine has an Appellation", () => {
     const answerWithAppellation: WineAnswerKey = { ...answer, appellation: "Barolo" };
     const blind = calculateBlindScoreV3(makeGuess({ appellation: "Barolo" }), answerWithAppellation);
-    expect(blind.corePoints).toBe(100);
-    expect(blind.corePossiblePoints).toBe(100);
-    expect(blind.totalPoints).toBe(100);
-    expect(blind.totalPossiblePoints).toBe(100);
+    expect(blind.corePoints).toBe(140);
+    expect(blind.corePossiblePoints).toBe(140);
+    expect(blind.totalPoints).toBe(140);
+    expect(blind.totalPossiblePoints).toBe(140);
   });
 
-  it("totals 80/80 for a fully correct guess when the actual wine has no Appellation", () => {
+  it("totals 120/120 for a fully correct guess when the actual wine has no Appellation", () => {
     const blind = calculateBlindScoreV3(makeGuess(), answer);
     expect(blind.appellationApplicable).toBe(false);
-    expect(blind.corePoints).toBe(80);
-    expect(blind.corePossiblePoints).toBe(80);
-    expect(blind.totalPoints).toBe(80);
-    expect(blind.totalPossiblePoints).toBe(80);
+    expect(blind.corePoints).toBe(120);
+    expect(blind.corePossiblePoints).toBe(120);
+    expect(blind.totalPoints).toBe(120);
+    expect(blind.totalPossiblePoints).toBe(120);
   });
 
   it("marks Appellation not applicable with 0 possible points when the actual wine has none, regardless of the guess", () => {
@@ -468,33 +468,85 @@ describe("calculateBlindScoreV3 / scoreWineGuessCoreV3 (core_v3_appellation_cond
     expect(blind.appellationCorrect).toBe(true);
   });
 
-  it("Producer and Wine/cuvée never affect the core_v3 score", () => {
-    const withPrecision = calculateBlindScoreV3(
-      makeGuess({ producer: "Someone Else", wineName: "Different Wine" }),
-      answer
-    );
-    const withoutPrecision = calculateBlindScoreV3(
-      makeGuess({ producer: "", wineName: "" }),
-      answer
-    );
-    expect(withPrecision.totalPoints).toBe(withoutPrecision.totalPoints);
-    expect(withPrecision.totalPossiblePoints).toBe(withoutPrecision.totalPossiblePoints);
+  it("awards 20 points for a correct Producer", () => {
+    const blind = calculateBlindScoreV3(makeGuess({ producer: "Giacomo Conterno" }), answer);
+    expect(blind.producerCorrect).toBe(true);
+    expect(blind.producerPoints).toBe(20);
   });
 
-  it("scoreWineGuessCoreV3 never produces a bonus-category FieldScore, and carries producer/wine-cuvée as unscored passthroughs", () => {
-    const scored = scoreWineGuessCoreV3("guest-1", "Alice", makeGuess({ producer: "Someone Else" }), answer);
+  it("awards 20 points for a correct Producer using the leading-descriptor-tolerant match", () => {
+    const answerWithDescriptor: WineAnswerKey = { ...answer, producer: "Domaine Leflaive" };
+    const blind = calculateBlindScoreV3(makeGuess({ producer: "Leflaive" }), answerWithDescriptor);
+    expect(blind.producerCorrect).toBe(true);
+    expect(blind.producerPoints).toBe(20);
+  });
+
+  it("awards zero points for a Producer guess beyond the narrow descriptor-tolerance scope", () => {
+    const answerWithDescriptor: WineAnswerKey = { ...answer, producer: "Domaine Leflaive" };
+    const blind = calculateBlindScoreV3(makeGuess({ producer: "Maison Leflaive" }), answerWithDescriptor);
+    expect(blind.producerCorrect).toBe(false);
+    expect(blind.producerPoints).toBe(0);
+  });
+
+  it("awards 20 points for a correct Wine/cuvée (case-insensitive only)", () => {
+    const blind = calculateBlindScoreV3(makeGuess({ wineName: "cascina francia" }), answer);
+    expect(blind.wineNameCorrect).toBe(true);
+    expect(blind.wineNamePoints).toBe(20);
+  });
+
+  it("does not extend Producer's descriptor tolerance to Wine/cuvée", () => {
+    const answerWithDescriptorLikeCuvee: WineAnswerKey = { ...answer, wineName: "Domaine Les Pucelles" };
+    const blind = calculateBlindScoreV3(
+      makeGuess({ wineName: "Les Pucelles" }),
+      answerWithDescriptorLikeCuvee
+    );
+    expect(blind.wineNameCorrect).toBe(false);
+    expect(blind.wineNamePoints).toBe(0);
+  });
+
+  it("Producer and Wine/cuvée are always applicable, unlike conditional Appellation", () => {
+    const withAppellation = calculateBlindScoreV3(makeGuess(), { ...answer, appellation: "Barolo" });
+    const withoutAppellation = calculateBlindScoreV3(makeGuess(), answer);
+    expect(withAppellation.producerPossiblePoints).toBe(20);
+    expect(withAppellation.wineNamePossiblePoints).toBe(20);
+    expect(withoutAppellation.producerPossiblePoints).toBe(20);
+    expect(withoutAppellation.wineNamePossiblePoints).toBe(20);
+  });
+
+  it("a blank Producer/Wine-cuvée guess scores zero for those categories without affecting the rest", () => {
+    const withBlank = calculateBlindScoreV3(makeGuess({ producer: "", wineName: "" }), answer);
+    expect(withBlank.producerCorrect).toBe(false);
+    expect(withBlank.producerPoints).toBe(0);
+    expect(withBlank.wineNameCorrect).toBe(false);
+    expect(withBlank.wineNamePoints).toBe(0);
+    expect(withBlank.countryPoints).toBe(20);
+    expect(withBlank.regionPoints).toBe(20);
+  });
+
+  it("scoreWineGuessCoreV3 folds Producer/Wine-cuvée into scored core FieldScores, never a bonus category or unscored passthrough", () => {
+    const scored = scoreWineGuessCoreV3(
+      "guest-1",
+      "Alice",
+      makeGuess({ producer: "Someone Else" }),
+      answer
+    );
     expect(scored.fieldScores.every((f) => f.category === "core")).toBe(true);
     expect(scored.bonusPoints).toBe(0);
     expect(scored.bonusPossiblePoints).toBe(0);
-    expect(scored.producerGuess).toBe("Someone Else");
+    expect("producerGuess" in scored).toBe(false);
+    expect("wineCuveeGuess" in scored).toBe(false);
+    const producerField = scored.fieldScores.find((f) => f.field === "producer");
+    expect(producerField?.correct).toBe(false);
+    expect(producerField?.guessedValue).toBe("Someone Else");
+    expect(producerField?.answerValue).toBe("Giacomo Conterno");
     expect(scored.scoringVersion).toBe("core_v3_appellation_conditional");
   });
 
-  it("scoreWineGuessCoreV3's possible score never exceeds 100", () => {
+  it("scoreWineGuessCoreV3's possible score never exceeds 140", () => {
     const answerWithAppellation: WineAnswerKey = { ...answer, appellation: "Barolo" };
     const scored = scoreWineGuessCoreV3("guest-1", "Alice", makeGuess({ appellation: "Barolo" }), answerWithAppellation);
-    expect(scored.totalPossiblePoints).toBeLessThanOrEqual(100);
-    expect(scored.totalPossiblePoints).toBe(100);
+    expect(scored.totalPossiblePoints).toBeLessThanOrEqual(140);
+    expect(scored.totalPossiblePoints).toBe(140);
   });
 
   it("dispatches to core_v3 via the shared scoreWineGuess entry point when given that version", () => {
@@ -507,7 +559,24 @@ describe("calculateBlindScoreV3 / scoreWineGuessCoreV3 (core_v3_appellation_cond
       "core_v3_appellation_conditional"
     );
     expect(scored.scoringVersion).toBe("core_v3_appellation_conditional");
-    expect(scored.totalPoints).toBe(100);
+    expect(scored.totalPoints).toBe(140);
     expect(scored.fieldScores.find((f) => f.field === "appellation")?.applicable).toBe(true);
+  });
+
+  it("Full blind and Course-by-course share this exact same scoring pipeline — no mode-specific scoring code exists", () => {
+    // Both /tasting/[publicId] (Full blind) and /session/[publicId]/active
+    // (Course-by-course) call the shared scoreWineGuess -> scoreWineGuessCoreV3
+    // -> calculateBlindScoreV3 pipeline via lib/results.ts; there is no
+    // separate per-mode scoring function to keep in sync. Confirmed here by
+    // asserting the new Producer/Cuvée rules apply identically regardless of
+    // which mode's guess flow produced the WineGuess.
+    const scored = scoreWineGuess(
+      "guest-1",
+      "Alice",
+      makeGuess({ producer: "Leflaive" }),
+      { ...answer, producer: "Domaine Leflaive" },
+      "core_v3_appellation_conditional"
+    );
+    expect(scored.fieldScores.find((f) => f.field === "producer")?.correct).toBe(true);
   });
 });

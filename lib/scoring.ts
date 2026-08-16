@@ -14,7 +14,7 @@ import {
   WineAnswerKey,
   WineGuess,
 } from "@/types/tasting";
-import { isNormalizedMatch } from "./normalize";
+import { isCuveeBlindMatch, isNormalizedMatch, isProducerBlindMatch } from "./normalize";
 import { blendTokensFromText, canonicalizeGrapeToken } from "./wineReferenceData";
 import { round1 } from "./math";
 
@@ -185,12 +185,20 @@ export function scoreWineGuessLegacyV1(
  * calculation, isolated from ScoredGuess/FieldScore assembly so it can be
  * unit-tested directly against the exact shape the task spec requires.
  *
- * Five potential 20-point categories: country, region, appellation (only
- * when the actual wine has one), grape/blend, vintage. No bonus category —
- * producer/wine-cuvée are never scored under this model. Appellation
+ * Seven potential 20-point categories: country, region, appellation (only
+ * when the actual wine has one), grape/blend, vintage, producer, wine/cuvée.
+ * No bonus category — Producer/wine-cuvée are scored core categories here,
+ * not a separate bonus tier (see README "Scoring model"). Appellation
  * correctness is a plain exact normalised-match comparison against the
  * guess, independent of whether country/region/grape/vintage are correct —
- * never inferred from any other field, never a partial match.
+ * never inferred from any other field, never a partial match. Producer uses
+ * normalizeProducerForBlindMatch (case-insensitive, tolerant of exactly one
+ * leading Château/Chateau/Domaine descriptor); wine/cuvée uses
+ * normalizeCuveeForBlindMatch (case-insensitive only) — both deliberately
+ * narrower than isNormalizedMatch's accent/punctuation-lenient comparison
+ * used by every other field here, and both always applicable (never
+ * conditionally excluded like Appellation), since both are required
+ * answer-key fields at bottle registration.
  */
 export function calculateBlindScoreV3(guess: WineGuess, answer: WineAnswerKey): BlindScoreResult {
   const countryCorrect = isNormalizedMatch(guess.country, answer.country);
@@ -203,6 +211,8 @@ export function calculateBlindScoreV3(guess: WineGuess, answer: WineAnswerKey): 
     CORE_V3_FIELD_POINTS.grapeBlend
   );
   const vintageCorrect = isNormalizedMatch(guess.vintage, answer.vintage);
+  const producerCorrect = isProducerBlindMatch(guess.producer, answer.producer);
+  const wineNameCorrect = isCuveeBlindMatch(guess.wineName, answer.wineName);
 
   const actualAppellation = (answer.appellation ?? "").trim();
   const appellationApplicable = actualAppellation.length > 0;
@@ -216,9 +226,18 @@ export function calculateBlindScoreV3(guess: WineGuess, answer: WineAnswerKey): 
   const appellationPossiblePoints: 0 | 20 = appellationApplicable ? CORE_V3_FIELD_POINTS.appellation : 0;
   const grapeBlendPoints = grapeBlendScore.points;
   const vintagePoints = vintageCorrect ? CORE_V3_FIELD_POINTS.vintage : 0;
+  const producerPoints = producerCorrect ? CORE_V3_FIELD_POINTS.producer : 0;
+  const wineNamePoints = wineNameCorrect ? CORE_V3_FIELD_POINTS.wineName : 0;
 
-  const corePossiblePoints: 80 | 100 = appellationApplicable ? 100 : 80;
-  const corePoints = countryPoints + regionPoints + appellationPoints + grapeBlendPoints + vintagePoints;
+  const corePossiblePoints: 120 | 140 = appellationApplicable ? 140 : 120;
+  const corePoints =
+    countryPoints +
+    regionPoints +
+    appellationPoints +
+    grapeBlendPoints +
+    vintagePoints +
+    producerPoints +
+    wineNamePoints;
 
   return {
     countryCorrect,
@@ -237,6 +256,12 @@ export function calculateBlindScoreV3(guess: WineGuess, answer: WineAnswerKey): 
     vintageCorrect,
     vintagePoints,
     vintagePossiblePoints: 20,
+    producerCorrect,
+    producerPoints,
+    producerPossiblePoints: 20,
+    wineNameCorrect,
+    wineNamePoints,
+    wineNamePossiblePoints: 20,
     corePoints,
     corePossiblePoints,
     totalPoints: corePoints,
@@ -247,9 +272,10 @@ export function calculateBlindScoreV3(guess: WineGuess, answer: WineAnswerKey): 
 /**
  * core_v3_appellation_conditional ONLY — wraps calculateBlindScoreV3 into the
  * shared ScoredGuess shape the report/leaderboard pipeline (lib/results.ts)
- * already knows how to aggregate. Producer/wine-cuvée are carried through as
- * unscored passthroughs (producerGuess/wineCuveeGuess), the same pattern
- * legacy_v1 already used for its own unscored appellationGuess.
+ * already knows how to aggregate. Producer/wine-cuvée are genuine scored
+ * FieldScores here (category "core", always applicable) — there is no
+ * unscored passthrough for them under this model, unlike legacy_v1's
+ * unscored appellationGuess.
  */
 export function scoreWineGuessCoreV3(
   guestId: string,
@@ -307,6 +333,24 @@ export function scoreWineGuessCoreV3(
       points: blind.vintagePoints,
       pointsAvailable: blind.vintagePossiblePoints,
     },
+    {
+      field: "producer",
+      category: "core",
+      guessedValue: guess.producer.trim() || "—",
+      answerValue: answer.producer || "—",
+      correct: blind.producerCorrect,
+      points: blind.producerPoints,
+      pointsAvailable: blind.producerPossiblePoints,
+    },
+    {
+      field: "wineName",
+      category: "core",
+      guessedValue: guess.wineName.trim() || "—",
+      answerValue: answer.wineName || "—",
+      correct: blind.wineNameCorrect,
+      points: blind.wineNamePoints,
+      pointsAvailable: blind.wineNamePossiblePoints,
+    },
   ];
 
   return {
@@ -315,8 +359,6 @@ export function scoreWineGuessCoreV3(
     wineId: guess.wineId,
     fieldScores,
     appellationGuess: undefined,
-    producerGuess: guess.producer.trim() || undefined,
-    wineCuveeGuess: guess.wineName.trim() || undefined,
     scoringVersion: "core_v3_appellation_conditional",
     appellationApplicable: blind.appellationApplicable,
     corePoints: blind.corePoints,

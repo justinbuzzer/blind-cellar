@@ -148,14 +148,6 @@ export function WineResultCard({ result, rank, totalWines, showNotes = false }: 
                       fields={bonusFields}
                     />
                   )}
-                  {isCoreV3 && (
-                    <PersonalPrecisionComparison
-                      producerGuess={guess.producerGuess}
-                      producerAnswer={wine.producer}
-                      wineCuveeGuess={guess.wineCuveeGuess}
-                      wineCuveeAnswer={wine.wineName}
-                    />
-                  )}
                   <div className="flex flex-wrap gap-x-4 gap-y-1 rounded-sm bg-cellar-bg-deep px-3 py-2 text-sm font-medium text-cellar-text">
                     {isCoreV3 ? (
                       <span className="text-cellar-maroon">
@@ -221,51 +213,6 @@ export function AppellationComparison({
           Wine: <span className="text-cellar-muted">{actualAppellation || "—"}</span>
         </span>
       </div>
-    </div>
-  );
-}
-
-/**
- * Non-scored Producer / Wine-cuvée comparison — core_v3_appellation_conditional
- * only (see README "Scoring model"). There is no bonus category under this
- * model, so these two fields are shown purely for personal-note comparison,
- * never with a correct/incorrect badge or points. Hidden entirely when
- * neither side has any value for either field. Shared by the final report
- * (here) and the course_reveal per-bottle reveal screen.
- */
-export function PersonalPrecisionComparison({
-  producerGuess,
-  producerAnswer,
-  wineCuveeGuess,
-  wineCuveeAnswer,
-}: {
-  producerGuess?: string;
-  producerAnswer?: string;
-  wineCuveeGuess?: string;
-  wineCuveeAnswer?: string;
-}) {
-  const rows = [
-    { label: "Producer", guess: producerGuess, answer: producerAnswer },
-    { label: "Wine / cuvée", guess: wineCuveeGuess, answer: wineCuveeAnswer },
-  ].filter((r) => r.guess || r.answer);
-  if (rows.length === 0) return null;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <p className="text-xs font-semibold uppercase tracking-wide text-cellar-muted">
-        Personal precision calls
-      </p>
-      {rows.map((r) => (
-        <div key={r.label} className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 text-sm">
-          <span className="w-28 shrink-0 text-cellar-muted">{r.label}</span>
-          <span className="text-cellar-text">
-            Guess: <span className="text-cellar-muted">{r.guess || "—"}</span>
-          </span>
-          <span className="text-cellar-text">
-            Wine: <span className="text-cellar-muted">{r.answer || "—"}</span>
-          </span>
-        </div>
-      ))}
-      <p className="text-xs text-cellar-muted">Not scored under this tasting&rsquo;s scoring model.</p>
     </div>
   );
 }

@@ -173,12 +173,12 @@ export function WineGuessForm({
         <SectionEyebrow>Precision calls</SectionEyebrow>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <TextField
-            label="Producer, optional"
+            label="Producer"
             value={value.producer}
             onChange={(e) => set("producer", e.target.value)}
           />
           <TextField
-            label="Wine / cuvée, optional"
+            label="Wine / cuvée"
             value={value.wineName}
             hint={WINE_CUVEE_HINT}
             onChange={(e) => set("wineName", e.target.value)}

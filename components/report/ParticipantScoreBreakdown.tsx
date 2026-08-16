@@ -1,10 +1,6 @@
 import { ScoredGuess, WineAnswerKey } from "@/types/tasting";
 import { Card } from "@/components/Card";
-import {
-  AppellationComparison,
-  FieldScoreTable,
-  PersonalPrecisionComparison,
-} from "@/components/report/WineResultCard";
+import { AppellationComparison, FieldScoreTable } from "@/components/report/WineResultCard";
 
 interface ParticipantScoreBreakdownProps {
   wine: WineAnswerKey;
@@ -48,14 +44,6 @@ export function ParticipantScoreBreakdown({ wine, score }: ParticipantScoreBreak
         />
       )}
       {!isCoreV3 && <FieldScoreTable heading="Bonus categories" fields={bonusFields} />}
-      {isCoreV3 && (
-        <PersonalPrecisionComparison
-          producerGuess={score.producerGuess}
-          producerAnswer={wine.producer}
-          wineCuveeGuess={score.wineCuveeGuess}
-          wineCuveeAnswer={wine.wineName}
-        />
-      )}
     </Card>
   );
 }

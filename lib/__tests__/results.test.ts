@@ -447,8 +447,13 @@ describe("calculateTasterResults ranking (core_v3_appellation_conditional)", () 
       grapeBlend: overrides.grapeBlend ?? "Nebbiolo",
       selectedGrapes: [],
       otherGrapesText: "",
-      producer: "",
-      wineName: "",
+      // Match v3Wine's fixed answer producer/wineName by default so a
+      // "fully correct" guess in these ranking-focused tests is genuinely
+      // fully correct across all seven core_v3 categories, not artificially
+      // capped by an always-blank Producer/Cuvée — Producer/Cuvée matching
+      // itself is covered separately in scoring.test.ts/normalize.test.ts.
+      producer: overrides.producer ?? "Producer",
+      wineName: overrides.wineName ?? "Cuvee",
       vintage: overrides.vintage ?? "2018",
       rating: 90,
       confidence: "medium",
@@ -473,7 +478,7 @@ describe("calculateTasterResults ranking (core_v3_appellation_conditional)", () 
         guestName: "Alice",
         sessionCode: session.code,
         locked: true,
-        // Only guesses the 80-point wine, fully correct: 80/80 = 100%.
+        // Only guesses the 120-point wine, fully correct: 120/120 = 100%.
         guesses: [v3Guess("w1")],
       },
       {
@@ -482,7 +487,7 @@ describe("calculateTasterResults ranking (core_v3_appellation_conditional)", () 
         guestName: "Ben",
         sessionCode: session.code,
         locked: true,
-        // Guesses the 100-point wine, wrong on Appellation only: 80/100 = 80%.
+        // Guesses the 140-point wine, wrong on Appellation only: 120/140 ≈ 85.7%.
         guesses: [v3Guess("w2", { appellation: "Barbaresco" })],
       },
     ];
@@ -491,12 +496,12 @@ describe("calculateTasterResults ranking (core_v3_appellation_conditional)", () 
     const alice = results.find((r) => r.guestId === "a")!;
     const ben = results.find((r) => r.guestId === "b")!;
 
-    expect(alice.totalPoints).toBe(80);
-    expect(alice.totalPossible).toBe(80);
+    expect(alice.totalPoints).toBe(120);
+    expect(alice.totalPossible).toBe(120);
     expect(alice.overallAccuracyPercent).toBe(100);
-    expect(ben.totalPoints).toBe(80);
-    expect(ben.totalPossible).toBe(100);
-    expect(ben.overallAccuracyPercent).toBe(80);
+    expect(ben.totalPoints).toBe(120);
+    expect(ben.totalPossible).toBe(140);
+    expect(ben.overallAccuracyPercent).toBe(85.7);
     expect(alice.rank).toBe(1);
     expect(ben.rank).toBe(2);
   });
@@ -523,7 +528,7 @@ describe("calculateTasterResults ranking (core_v3_appellation_conditional)", () 
       },
     ];
     const results = calculateTasterResults(session, submissions);
-    expect(results[0].totalPossible).toBe(80);
+    expect(results[0].totalPossible).toBe(120);
     expect(results[0].submittedGuessCount).toBe(1);
   });
 
@@ -549,8 +554,8 @@ describe("calculateTasterResults ranking (core_v3_appellation_conditional)", () 
       },
     ];
     const results = calculateTasterResults(session, submissions);
-    expect(results[0].totalPoints).toBe(100);
-    expect(results[0].totalPossible).toBe(100);
+    expect(results[0].totalPoints).toBe(140);
+    expect(results[0].totalPossible).toBe(140);
     expect(results[0].overallAccuracyPercent).toBe(100);
   });
 
@@ -567,7 +572,7 @@ describe("calculateTasterResults ranking (core_v3_appellation_conditional)", () 
     };
     const submissions: GuestSubmission[] = [
       {
-        // 100% on one bottle only: 80/80.
+        // 100% on one bottle only: 120/120.
         id: "a",
         guestId: "a",
         guestName: "Alice",
@@ -576,7 +581,7 @@ describe("calculateTasterResults ranking (core_v3_appellation_conditional)", () 
         guesses: [v3Guess("w1")],
       },
       {
-        // 100% on both bottles: 160/160 — same percentage, more raw points and more submitted guesses.
+        // 100% on both bottles: 240/240 — same percentage, more raw points and more submitted guesses.
         id: "b",
         guestId: "b",
         guestName: "Ben",

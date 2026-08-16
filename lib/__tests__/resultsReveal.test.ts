@@ -81,7 +81,7 @@ describe("buildHostBottleResult", () => {
     const view = buildHostBottleResult(response);
     expect(view.participants).toHaveLength(2);
     const alice = view.participants.find((p) => p.guestName === "Alice")!;
-    expect(alice.score?.totalPoints).toBe(100); // 80 core + 20 appellation, all correct
+    expect(alice.score?.totalPoints).toBe(140); // 120 core + 20 appellation, all correct
     expect(alice.score?.fieldScores.find((f) => f.field === "country")?.correct).toBe(true);
     const bob = view.participants.find((p) => p.guestName === "Bob")!;
     expect(bob.score?.fieldScores.find((f) => f.field === "country")?.correct).toBe(false);
@@ -98,7 +98,7 @@ describe("buildHostBottleResult", () => {
     expect(view.aggregate.averageScore).toBeNull();
   });
 
-  it("uses the bottle's own denominator (100 when Appellation applies) uniformly across every participant", () => {
+  it("uses the bottle's own denominator (140 when Appellation applies) uniformly across every participant", () => {
     const response = makeHostResponse({
       participants: [
         { guestName: "Alice", submitted: true, guess: makeGuess() },
@@ -106,20 +106,20 @@ describe("buildHostBottleResult", () => {
       ],
     });
     const view = buildHostBottleResult(response);
-    expect(view.aggregate.totalPossiblePoints).toBe(100);
-    expect(view.aggregate.highestScore).toBe(100);
+    expect(view.aggregate.totalPossiblePoints).toBe(140);
+    expect(view.aggregate.highestScore).toBe(140);
   });
 
-  it("drops Appellation's denominator to 80 and never penalizes a guess when the wine has no recorded Appellation", () => {
+  it("drops Appellation's denominator to 120 and never penalizes a guess when the wine has no recorded Appellation", () => {
     const response = makeHostResponse({
       wine: makeWine({ appellation: null }),
       participants: [{ guestName: "Alice", submitted: true, guess: makeGuess({ appellationGuess: null }) }],
     });
     const view = buildHostBottleResult(response);
     const alice = view.participants[0];
-    expect(alice.score?.totalPossiblePoints).toBe(80);
+    expect(alice.score?.totalPossiblePoints).toBe(120);
     expect(alice.score?.fieldScores.find((f) => f.field === "appellation")?.applicable).toBe(false);
-    expect(view.aggregate.totalPossiblePoints).toBe(80);
+    expect(view.aggregate.totalPossiblePoints).toBe(120);
   });
 
   it("computes average/highest/perfect-score count only across submitted guesses", () => {
@@ -134,7 +134,7 @@ describe("buildHostBottleResult", () => {
     expect(view.aggregate.eligibleCount).toBe(3);
     expect(view.aggregate.submittedCount).toBe(2);
     expect(view.aggregate.perfectScoreCount).toBe(1);
-    expect(view.aggregate.averageScore).toBe((100 + 80) / 2);
+    expect(view.aggregate.averageScore).toBe((140 + 120) / 2);
   });
 });
 
@@ -313,7 +313,7 @@ describe("buildProvisionalLeaderboard", () => {
     const view = buildProvisionalLeaderboard(response);
     expect(view.wineResults).toHaveLength(1);
     expect(view.wineResults[0].guesses).toHaveLength(2);
-    expect(view.wineResults[0].guesses.find((g) => g.guestId === "g1")?.totalPoints).toBe(100);
+    expect(view.wineResults[0].guesses.find((g) => g.guestId === "g1")?.totalPoints).toBe(140);
   });
 });
 
@@ -476,8 +476,8 @@ describe("buildHostRecapBottleSummaries / formatHostRecapBottleLine", () => {
   it("averages each guess's own normalized percentage, never raw points, and reports highest in native form", () => {
     const response = makeLeaderboardResponse({
       guesses: [
-        makeLeaderboardGuess({ guestId: "g1", guestName: "Alice" }), // 100/100
-        makeLeaderboardGuess({ guestId: "g2", guestName: "Bob", countryGuess: "Italy" }), // 80/100
+        makeLeaderboardGuess({ guestId: "g1", guestName: "Alice" }), // 140/140
+        makeLeaderboardGuess({ guestId: "g2", guestName: "Bob", countryGuess: "Italy" }), // 120/140
       ],
       guests: [
         { id: "g1", displayName: "Alice", completedAt: "2026-08-01T00:00:00Z" },
@@ -487,9 +487,9 @@ describe("buildHostRecapBottleSummaries / formatHostRecapBottleLine", () => {
     const view = buildProvisionalLeaderboard(response);
     const summaries = buildHostRecapBottleSummaries(view.wineResults);
     expect(summaries[0].submittedCount).toBe(2);
-    expect(summaries[0].averagePercent).toBe(90); // (100 + 80) / 2
-    expect(summaries[0].highestScore).toEqual({ earned: 100, possible: 100 });
-    expect(formatHostRecapBottleLine(summaries[0])).toBe("2 submitted · Average 90% · Highest 100 / 100");
+    expect(summaries[0].averagePercent).toBe(92.9); // (100 + 85.7) / 2
+    expect(summaries[0].highestScore).toEqual({ earned: 140, possible: 140 });
+    expect(formatHostRecapBottleLine(summaries[0])).toBe("2 submitted · Average 92.9% · Highest 140 / 140");
   });
 });
 
@@ -505,7 +505,7 @@ describe("buildParticipantBottleTotals", () => {
     const totals = buildParticipantBottleTotals(view.wineResults, "g1");
     expect(totals).toHaveLength(2);
     expect(totals[0]).toMatchObject({ code: "Bottle 1" });
-    expect(totals[0].guess?.totalPoints).toBe(100);
+    expect(totals[0].guess?.totalPoints).toBe(140);
     expect(totals[1]).toMatchObject({ code: "Bottle 2", guess: null });
   });
 });
