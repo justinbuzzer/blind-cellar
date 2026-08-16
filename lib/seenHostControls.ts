@@ -1,3 +1,4 @@
+import { formatProgressStatusLine } from "./hostProgress";
 import { normalizeText } from "./normalize";
 
 /**
@@ -50,7 +51,7 @@ export function formatSeenWineSecondaryLine(wine: SeenWineSecondary): string {
 
 /** "{ratedCount} of {eligibleCount} rated" — the exact required rating-status copy. */
 export function formatSeenRatingStatus(ratedCount: number, eligibleCount: number): string {
-  return `${ratedCount} of ${eligibleCount} rated`;
+  return formatProgressStatusLine("rating", ratedCount, eligibleCount);
 }
 
 /** "Group rating: 92.4", or "No ratings submitted" when there are no valid ratings to average. */
