@@ -459,6 +459,11 @@ export interface RevealFullBlindBottleResponse {
   sessionRevealed: boolean;
 }
 
+/** Response from release_course_bottle — see README "Course-by-course host-selected release". */
+export interface ReleaseCourseBottleResponse {
+  wineId: string;
+}
+
 /** A participant's guess content only — no guestId/guestName (those live one level up on BottleResultParticipantDTO), matching get_bottle_result_for_host's per-participant jsonb shape exactly. */
 export interface HostBottleGuessDTO {
   countryGuess: string;
@@ -716,6 +721,7 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   session_not_collecting: "This tasting isn't currently collecting guesses.",
   bottle_already_revealed: "That bottle has already been revealed.",
   bottle_not_active: "That bottle isn't the current active bottle yet.",
+  bottle_already_active: "Another bottle is already active — reveal it before releasing a different one.",
   guess_already_locked: "Your guess for this bottle is already locked in.",
   own_bottle_not_guessable: "You contributed this bottle, so you don't guess or score it.",
   bottle_not_revealed: "That bottle hasn't been revealed yet.",

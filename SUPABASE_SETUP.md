@@ -2207,6 +2207,49 @@ select complete_guest_submission('<that contributor''s guest token>');
 
 No RLS policy changed, and no new column or grant was added — `isOwnBottle` is a precomputed boolean derived entirely server-side from the existing `wines.contributor_guest_id` column (already readable server-side by every function that needed contributor names), never the raw contributor id of another participant's bottle. The four mutation/count functions above independently re-derive and enforce ownership from the same canonical `wines.contributor_guest_id` column on every call — never from a client-supplied identity, never from `guests.display_name`. Historical/already-revealed sessions are never touched by this migration: it only changes what a currently-`collecting` session's live RPCs return and accept going forward.
 
+## Migrating for Course-by-course host-selected release
+
+The host can now release any eligible unrevealed Course-by-course bottle next, in any order, from Host Controls — see README "Course-by-course host-selected release". This replaces the implicit "earliest unrevealed by `tasting_order`" auto-selection with an explicit host action, backed by one new nullable column and one new function; six existing functions are updated in place:
+
+- **New column**: `tasting_sessions.active_wine_id uuid references wines(id)`, nullable, no default (so it stays `null` — no active bottle — for every already-`collecting` session until the host next releases one; harmless for `full_blind`/`seen` sessions, which never set it).
+- **New function**: `release_course_bottle(p_public_id, p_host_token, p_wine_id)` — the host's explicit release action. Atomically sets `active_wine_id` after verifying the caller is the session's host, the session is `course_reveal` and `collecting`, no other bottle is already active, and the target wine belongs to the session and isn't already revealed.
+- **`create or replace function` on six existing functions**, replacing their "earliest unrevealed by `tasting_order`" subquery with a direct read of `active_wine_id`: `get_host_session`, `get_active_bottle_state`, `upsert_wine_guess`, `lock_wine_guess`, `get_bottle_response_progress`, `get_host_guess_progress`.
+- **`reveal_bottle`** now validates the revealed bottle against `active_wine_id` (instead of the tasting-order query) and additionally clears `active_wine_id` back to `null` once the reveal succeeds — so the next bottle is never auto-selected; the host must call `release_course_bottle` again.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+Re-pasting `supabase/schema.sql` in full is the complete migration — the new column uses `add column if not exists` (safe to re-run) and every changed function is a `create or replace function` over an existing signature (no `drop function` needed, since none of their signatures changed).
+
+### 2. Verification queries
+
+```sql
+-- starting a course_reveal tasting leaves no bottle active
+select get_host_session('<a course_reveal session''s public_id>', '<its host token>');
+-- expect: activeBottle is null immediately after start_tasting_session,
+-- even though wines[] already has entries
+
+-- host releases a non-sequential bottle (e.g. bottle 4 before 1/2/3)
+select release_course_bottle('<public_id>', '<host token>', '<bottle 4''s wine id>');
+-- expect: success; a second call for a DIFFERENT wine id fails
+select release_course_bottle('<public_id>', '<host token>', '<a different wine id>');
+-- expect: an error containing 'bottle_already_active'
+
+-- a participant can only guess the released bottle
+select upsert_wine_guess('<a guest token>', '<bottle 4''s wine id>', ...);
+-- expect: success
+select upsert_wine_guess('<a guest token>', '<bottle 1''s wine id>', ...);
+-- expect: an error containing 'bottle_not_active'
+
+-- revealing clears active_wine_id — no auto-advance
+select reveal_bottle('<public_id>', '<host token>', '<bottle 4''s wine id>');
+select get_host_session('<public_id>', '<host token>');
+-- expect: activeBottle is null again until the host releases another bottle
+```
+
+### RLS and privacy summary
+
+`active_wine_id` is never added to the anon/authenticated column grant on `tasting_sessions` (it stays exactly the existing narrow `(id, public_id, join_code, title, tasting_date, status, created_at, updated_at, tasting_mode, scoring_version)` list) — it is reachable only through the SECURITY DEFINER RPCs above, never a direct table read, matching every other session-state column in this file. `release_course_bottle` independently re-verifies the host token against `tasting_sessions.host_token_hash` on every call — never trusting a client-supplied session/mode/status/eligibility claim — and the `select ... for update` row lock makes its "no other bottle already active" check-and-set atomic, so two concurrent release requests can never both succeed. No historical/already-revealed session is touched: `active_wine_id` only ever affects a currently-`collecting` `course_reveal` session's live RPC behaviour going forward, and `full_blind`/`seen` sessions never read or write it at all.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

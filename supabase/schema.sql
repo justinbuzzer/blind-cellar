@@ -834,12 +834,15 @@ begin
   -- active bottle's anonymous label/position plus an aggregate "N of M
   -- submitted" count — never any other participant's individual guess
   -- content (see get_revealed_bottle for the only path to that, and only
-  -- once revealed_at is set).
-  if v_session.tasting_mode = 'course_reveal' and v_session.status = 'collecting' then
-    select * into v_active_wine from wines
-    where session_id = v_session.id and revealed_at is null
-    order by tasting_order asc
-    limit 1;
+  -- once revealed_at is set). "Active" is whichever bottle the host
+  -- explicitly released via release_course_bottle (see README "Course-by-
+  -- course host-selected release") — never an earliest-unrevealed
+  -- computation — so this is null whenever the host hasn't released a
+  -- bottle yet (including right after a reveal, until the host picks the
+  -- next one).
+  if v_session.tasting_mode = 'course_reveal' and v_session.status = 'collecting'
+     and v_session.active_wine_id is not null then
+    select * into v_active_wine from wines where id = v_session.active_wine_id;
 
     if found then
       select jsonb_build_object(
@@ -1042,11 +1045,14 @@ end;
 $$;
 
 -- Host: reveal the current active bottle in a course_reveal session (see
--- README "Tasting modes"). The "active bottle" is always the earliest
--- unrevealed bottle by tasting_order — p_wine_id must match it exactly, so a
--- host can never skip ahead, reveal out of order, or reveal the same bottle
--- twice. Sets wines.revealed_at, then flips the session to 'revealed' if
--- that was the last unrevealed bottle (course_reveal's equivalent of
+-- README "Tasting modes" — "Course-by-course host-selected release"). The
+-- "active bottle" is whichever one the host explicitly released via
+-- release_course_bottle below (tasting_sessions.active_wine_id) — p_wine_id
+-- must match it exactly, so a host can never reveal a bottle that was never
+-- released, or reveal the same bottle twice. Sets wines.revealed_at, clears
+-- active_wine_id back to null (so the host must explicitly release the next
+-- bottle — there is no auto-advance), then flips the session to 'revealed'
+-- if that was the last unrevealed bottle (course_reveal's equivalent of
 -- reveal_tasting_session's one-shot final reveal).
 create or replace function reveal_bottle(
   p_public_id uuid,
@@ -1060,7 +1066,6 @@ as $$
 declare
   v_session tasting_sessions%rowtype;
   v_wine wines%rowtype;
-  v_active_wine_id uuid;
   v_remaining_count int;
   v_session_revealed boolean := false;
 begin
@@ -1086,17 +1091,12 @@ begin
     raise exception 'bottle_already_revealed';
   end if;
 
-  select id into v_active_wine_id
-  from wines
-  where session_id = v_session.id and revealed_at is null
-  order by tasting_order asc
-  limit 1;
-
-  if v_active_wine_id is distinct from p_wine_id then
+  if v_session.active_wine_id is distinct from p_wine_id then
     raise exception 'bottle_not_active';
   end if;
 
   update wines set revealed_at = now() where id = p_wine_id;
+  update tasting_sessions set active_wine_id = null where id = v_session.id;
 
   select count(*) into v_remaining_count
   from wines where session_id = v_session.id and revealed_at is null;
@@ -1794,16 +1794,15 @@ begin
   end if;
 
   -- course_reveal-only: a guess may only be autosaved for the current active
-  -- bottle (earliest unrevealed by tasting_order) — this is what stops a
-  -- participant from reaching ahead to an upcoming bottle's guess form.
-  -- No-op for full_blind, which has never restricted which of its (already
-  -- fully visible during collecting) bottles a guest may guess at once.
-  if v_session.tasting_mode = 'course_reveal' and p_wine_id <> (
-    select id from wines
-    where session_id = v_session.id and revealed_at is null
-    order by tasting_order asc
-    limit 1
-  ) then
+  -- bottle — the one the host explicitly released via release_course_bottle
+  -- (see README "Course-by-course host-selected release") — this is what
+  -- stops a participant from reaching ahead to an unreleased bottle's guess
+  -- form. is distinct from correctly rejects every guess while no bottle is
+  -- active at all (active_wine_id is null). No-op for full_blind, which has
+  -- never restricted which of its (already fully visible during collecting)
+  -- bottles a guest may guess at once.
+  if v_session.tasting_mode = 'course_reveal'
+     and v_session.active_wine_id is distinct from p_wine_id then
     raise exception 'bottle_not_active';
   end if;
 
@@ -1862,12 +1861,17 @@ begin
 end;
 $$;
 
--- Guest: fetch course_reveal's current active bottle (earliest unrevealed by
--- tasting_order) plus the caller's own draft/locked guess for it. Never
--- returns any answer-key field — only what the guess-entry form itself
--- needs (anonymous code, position, own draft). Returns activeBottle: null
--- once every bottle is revealed (the session will already be 'revealed' by
--- then; the participant-side route treats that as "go to final results").
+-- Guest: fetch course_reveal's current active bottle — the one the host
+-- explicitly released via release_course_bottle, never an earliest-
+-- unrevealed-by-tasting_order computation (see README "Course-by-course
+-- host-selected release") — plus the caller's own draft/locked guess for
+-- it. Never returns any answer-key field — only what the guess-entry form
+-- itself needs (anonymous code, position, own draft). Returns
+-- activeBottle: null both once every bottle is revealed (the session will
+-- already be 'revealed' by then; the participant-side route treats that as
+-- "go to final results") and, now, whenever the host simply hasn't released
+-- the next bottle yet (the participant-side route shows a "waiting for the
+-- host" state instead).
 create or replace function get_active_bottle_state(
   p_guest_token text
 ) returns jsonb
@@ -1895,12 +1899,7 @@ begin
 
   select count(*) into v_total_bottles from wines where session_id = v_session.id;
 
-  select * into v_active from wines
-  where session_id = v_session.id and revealed_at is null
-  order by tasting_order asc
-  limit 1;
-
-  if not found then
+  if v_session.active_wine_id is null then
     return jsonb_build_object(
       'session', jsonb_build_object(
         'publicId', v_session.public_id,
@@ -1915,6 +1914,8 @@ begin
       'locked', false
     );
   end if;
+
+  select * into v_active from wines where id = v_session.active_wine_id;
 
   select count(*) + 1 into v_position
   from wines where session_id = v_session.id and tasting_order < v_active.tasting_order;
@@ -1984,7 +1985,6 @@ declare
   v_guest guests%rowtype;
   v_session tasting_sessions%rowtype;
   v_wine wines%rowtype;
-  v_active_wine_id uuid;
   v_rating int;
 begin
   select * into v_guest from guests where guest_token = p_guest_token;
@@ -2012,11 +2012,10 @@ begin
     raise exception 'own_bottle_not_guessable';
   end if;
 
-  select id into v_active_wine_id from wines
-  where session_id = v_session.id and revealed_at is null
-  order by tasting_order asc
-  limit 1;
-  if v_active_wine_id is distinct from p_wine_id then
+  -- The current active bottle — the one the host explicitly released via
+  -- release_course_bottle (see README "Course-by-course host-selected
+  -- release"), never an earliest-unrevealed-by-tasting_order computation.
+  if v_session.active_wine_id is distinct from p_wine_id then
     raise exception 'bottle_not_active';
   end if;
 
@@ -4157,7 +4156,6 @@ as $$
 declare
   v_session tasting_sessions%rowtype;
   v_wine wines%rowtype;
-  v_active_wine_id uuid;
   v_response_kind text;
   v_submitted_count int;
   v_eligible_count int;
@@ -4197,15 +4195,12 @@ begin
   elsif v_session.tasting_mode = 'course_reveal' then
     v_response_kind := 'guess';
 
-    -- Same lookup lock_wine_guess uses: the single earliest-tasting_order
-    -- unrevealed bottle. A not-yet-released or already-revealed bottle id
+    -- Same check lock_wine_guess uses: p_wine_id must be the session's
+    -- host-released active bottle (see README "Course-by-course host-
+    -- selected release"). A not-yet-released or already-revealed bottle id
     -- (including a manually-substituted one) can never match, so this can't
     -- be used to peek at a bottle the host isn't currently working through.
-    select id into v_active_wine_id from wines
-      where session_id = v_session.id and revealed_at is null
-      order by tasting_order asc
-      limit 1;
-    if v_active_wine_id is distinct from p_wine_id then
+    if v_session.active_wine_id is distinct from p_wine_id then
       raise exception 'bottle_not_active';
     end if;
 
@@ -4276,7 +4271,6 @@ declare
   v_guest guests%rowtype;
   v_session tasting_sessions%rowtype;
   v_wine wines%rowtype;
-  v_active_wine_id uuid;
   v_submitted_count int;
   v_eligible_count int;
 begin
@@ -4325,11 +4319,7 @@ begin
     -- already-revealed bottle id can never be queried, so this can never
     -- expose progress for a future or past bottle from the host's own
     -- guess screen either.
-    select id into v_active_wine_id from wines
-      where session_id = v_session.id and revealed_at is null
-      order by tasting_order asc
-      limit 1;
-    if v_active_wine_id is distinct from p_wine_id then
+    if v_session.active_wine_id is distinct from p_wine_id then
       raise exception 'bottle_not_active';
     end if;
 
@@ -4915,3 +4905,91 @@ end;
 $$;
 
 grant execute on function mark_participant_ready(text) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Host-selected non-sequential Course-by-course bottle release — see README
+-- "Tasting modes" — "Course-by-course host-selected release".
+--
+-- Previously, course_reveal had no explicit "release" action at all: every
+-- function that needed "the current active bottle" (get_host_session,
+-- get_active_bottle_state, upsert_wine_guess, lock_wine_guess, reveal_bottle,
+-- get_bottle_response_progress, get_host_guess_progress) independently
+-- computed it as the same live query — the earliest still-unrevealed bottle
+-- by tasting_order — so a bottle became guessable automatically the instant
+-- every earlier-ordered bottle had been revealed, with no host action in
+-- between. This column replaces that computed value with an explicit,
+-- host-controlled one: null means no bottle is currently active (the host
+-- must choose one from Host Controls' bottle list), non-null is the single
+-- canonical bottle every one of those functions now serves. tasting_order is
+-- deliberately left completely alone by this feature — it remains only the
+-- default host-organisational *presentation* order (registration ordering,
+-- the "Bottle X of Y" position shown in reveals/reports), never again the
+-- release *sequence*. No separate "actual release order" column was added:
+-- since only one course_reveal bottle can ever be active at a time, the
+-- relative order of wines.revealed_at across a session's bottles already IS
+-- the true, non-sequential completion order, with no risk of ever being
+-- confused with tasting_order — nothing in this codebase orders a completed
+-- report/recap/leaderboard by anything other than tasting_order for display,
+-- and that was already true before this feature (see get_revealed_bottle's
+-- position field), so nothing there needed to change.
+-- ---------------------------------------------------------------------------
+
+alter table tasting_sessions add column if not exists active_wine_id uuid references wines(id);
+
+-- Host: explicitly select any eligible unrevealed course_reveal bottle to
+-- become the single current active bottle — the host-controlled replacement
+-- for the old "earliest unrevealed by tasting_order" auto-selection. Every
+-- other RPC that used to compute that value now simply reads
+-- tasting_sessions.active_wine_id instead (see reveal_bottle,
+-- get_host_session, get_active_bottle_state, upsert_wine_guess,
+-- lock_wine_guess, get_bottle_response_progress, get_host_guess_progress
+-- above). `for update` on the session row makes the
+-- "no other bottle already active" check-and-set atomic under concurrent
+-- host requests (e.g. a host double-clicking, or two browser tabs) — the
+-- second racing call always sees the first's already-set active_wine_id and
+-- fails safely with bottle_already_active rather than silently replacing it.
+create or replace function release_course_bottle(
+  p_public_id uuid,
+  p_host_token text,
+  p_wine_id uuid
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_session tasting_sessions%rowtype;
+  v_wine wines%rowtype;
+begin
+  select * into v_session from tasting_sessions where public_id = p_public_id for update;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+  if v_session.host_token_hash <> encode(digest(p_host_token, 'sha256'), 'hex') then
+    raise exception 'invalid_host_token';
+  end if;
+  if v_session.tasting_mode <> 'course_reveal' then
+    raise exception 'invalid_tasting_mode';
+  end if;
+  if v_session.status <> 'collecting' then
+    raise exception 'session_not_collecting';
+  end if;
+  if v_session.active_wine_id is not null then
+    raise exception 'bottle_already_active';
+  end if;
+
+  select * into v_wine from wines where id = p_wine_id and session_id = v_session.id;
+  if not found then
+    raise exception 'wine_not_in_session';
+  end if;
+  if v_wine.revealed_at is not null then
+    raise exception 'bottle_already_revealed';
+  end if;
+
+  update tasting_sessions set active_wine_id = p_wine_id where id = v_session.id;
+
+  return jsonb_build_object('wineId', p_wine_id);
+end;
+$$;
+
+grant execute on function release_course_bottle(uuid, text, uuid) to anon, authenticated;

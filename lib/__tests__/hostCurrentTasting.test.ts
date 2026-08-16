@@ -142,7 +142,7 @@ describe("resolveHostCurrentTastingState — course_reveal", () => {
     expect(serialized).not.toContain("Bottle 3");
   });
 
-  it("shows the most recently revealed bottle with a view_results action when no bottle is currently active", () => {
+  it("resolves choose_next_bottle with the most recently revealed bottle when no bottle is currently active", () => {
     const state = resolveHostCurrentTastingState(
       makeInput({
         tastingMode: "course_reveal",
@@ -153,21 +153,45 @@ describe("resolveHostCurrentTastingState — course_reveal", () => {
         activeBottle: null,
       })
     );
-    expect(state.kind).toBe("revealed");
-    if (state.kind !== "revealed") throw new Error("unreachable");
-    expect(state.currentBottle.label).toBe("Bottle 2");
-    expect(state.primaryAction).toEqual({
-      type: "view_results",
-      label: "View results",
-      wineId: "w2",
+    expect(state).toEqual({
+      kind: "choose_next_bottle",
+      lastRevealedBottle: { label: "Bottle 2" },
     });
   });
 
-  it("resolves no_eligible_bottles when there is no active bottle and nothing has ever been revealed", () => {
+  it("resolves choose_next_bottle with no lastRevealedBottle when nothing has ever been revealed yet", () => {
     const state = resolveHostCurrentTastingState(
       makeInput({ tastingMode: "course_reveal", wines: [makeWine()], activeBottle: null })
     );
-    expect(state).toEqual({ kind: "no_eligible_bottles" });
+    expect(state).toEqual({ kind: "choose_next_bottle", lastRevealedBottle: undefined });
+  });
+
+  it("choose_next_bottle carries no primaryAction — the bottle list below is the only picker", () => {
+    const state = resolveHostCurrentTastingState(
+      makeInput({
+        tastingMode: "course_reveal",
+        wines: [makeWine({ revealedAt: "2026-01-01T00:00:00Z" })],
+        activeBottle: null,
+      })
+    );
+    expect(state.kind).toBe("choose_next_bottle");
+    expect(state).not.toHaveProperty("primaryAction");
+  });
+
+  it("choose_next_bottle never surfaces an unrevealed bottle's identity — only the most recently revealed one, if any", () => {
+    const state = resolveHostCurrentTastingState(
+      makeInput({
+        tastingMode: "course_reveal",
+        wines: [
+          makeWine({ id: "w1", bottleNumber: 1, anonymousCode: "Bottle 1", revealedAt: "2026-01-01T00:00:00Z" }),
+          makeWine({ id: "w2", bottleNumber: 2, anonymousCode: "Bottle 2", revealedAt: null }),
+        ],
+        activeBottle: null,
+      })
+    );
+    const serialized = JSON.stringify(state);
+    expect(serialized).not.toContain("w2");
+    expect(serialized).not.toContain("Bottle 2");
   });
 });
 

@@ -17,9 +17,15 @@ import { SessionStatus, TastingMode } from "@/types/tasting";
  *
  * Canonical definitions reused, never reinvented:
  *   - course_reveal "current bottle" = the server-computed `activeBottle`
- *     (get_host_session's earliest-unrevealed-by-tasting_order row — the
- *     same predicate get_active_bottle_state/lock_wine_guess/
- *     get_bottle_response_progress all already use).
+ *     (get_host_session's tasting_sessions.active_wine_id row — the bottle
+ *     the host explicitly released via release_course_bottle; see README
+ *     "Course-by-course host-selected release". The same predicate
+ *     get_active_bottle_state/lock_wine_guess/get_bottle_response_progress
+ *     all already use). Null both once every bottle is revealed and,
+ *     ordinarily, whenever the host simply hasn't released the next bottle
+ *     yet — the "choose_next_bottle" state below covers that case, driven
+ *     entirely by the existing host-only bottle list, never a predicted or
+ *     fabricated "next" bottle.
  *   - full_blind has no server-side "current" bottle at all (any bottle may
  *     be revealed in any order) — the lowest-bottleNumber still-unrevealed
  *     bottle is used here purely as a display suggestion; the existing
@@ -29,10 +35,10 @@ import { SessionStatus, TastingMode } from "@/types/tasting";
  *     same value HostControlClient already computes for its Submissions
  *     stat and get_bottle_response_progress's full_blind branch use.
  *   - Seen has no per-bottle "current" concept at all (every bottle is
- *     ratable simultaneously; there is no earliest-unrevealed predicate
- *     anywhere in get_seen_tasting_state) — see README "Current tasting"
- *     for why Seen's summary is a session-wide rating-progress line plus
- *     the existing "End tasting" action, not a fabricated current bottle.
+ *     ratable simultaneously; there is no active-bottle predicate anywhere
+ *     in get_seen_tasting_state) — see README "Current tasting" for why
+ *     Seen's summary is a session-wide rating-progress line plus the
+ *     existing "End tasting" action, not a fabricated current bottle.
  */
 
 export type HostCurrentTastingActionType =
@@ -70,7 +76,7 @@ export interface HostCurrentTastingBottle {
 export type HostCurrentTastingKind =
   | "no_eligible_bottles"
   | "awaiting_responses"
-  | "revealed"
+  | "choose_next_bottle"
   | "complete";
 
 interface HostCurrentTastingNoBottles {
@@ -87,10 +93,18 @@ export interface HostCurrentTastingAwaitingResponses {
   primaryAction: HostCurrentTastingAction;
 }
 
-export interface HostCurrentTastingRevealed {
-  kind: "revealed";
-  currentBottle: HostCurrentTastingBottle;
-  primaryAction: HostCurrentTastingAction & { wineId: string };
+/**
+ * course_reveal only: no bottle is currently active and the host must
+ * explicitly pick the next one from the bottle list below (see README
+ * "Course-by-course host-selected release") — there is deliberately no
+ * primaryAction/button here, unlike every other kind: the action lives
+ * entirely in the existing host-only bottle list, never a second release
+ * control duplicated into this summary panel.
+ */
+export interface HostCurrentTastingChooseNext {
+  kind: "choose_next_bottle";
+  /** The bottle most recently revealed, if any — absent the very first time a course_reveal session has no active bottle, before anything has ever been revealed. */
+  lastRevealedBottle?: HostCurrentTastingBottle;
 }
 
 export interface HostCurrentTastingComplete {
@@ -102,7 +116,7 @@ export interface HostCurrentTastingComplete {
 export type HostCurrentTastingState =
   | HostCurrentTastingNoBottles
   | HostCurrentTastingAwaitingResponses
-  | HostCurrentTastingRevealed
+  | HostCurrentTastingChooseNext
   | HostCurrentTastingComplete;
 
 export interface HostCurrentTastingInput {
@@ -216,28 +230,25 @@ export function resolveHostCurrentTastingState(
     };
   }
 
-  // No server-computed active bottle while still collecting: the client's
-  // own optimistic reveal handler clears activeBottle immediately (see
-  // HostControlClient.tsx's handleRevealBottle), ahead of the realtime/poll
-  // refetch that will hand back the next course's bottle (or flip status to
-  // "revealed" if none remain). Show the most recently revealed bottle
-  // (derived from the existing `wines` array, never new client state) so
-  // the host always sees a next action rather than a dead panel.
+  // No server-computed active bottle while still collecting: the host
+  // hasn't released a bottle yet — either nothing has ever been revealed
+  // (very first entry into "collecting"), or the previously active bottle
+  // was just revealed and the host must explicitly choose what's next (see
+  // README "Course-by-course host-selected release" — there is no
+  // auto-advance by tasting_order any more). The existing host-only bottle
+  // list below this panel is the actual picker; this state deliberately
+  // carries no primaryAction of its own. `lastRevealedBottle` (derived from
+  // the existing `wines` array, never new client state) is shown only when
+  // something has actually been revealed, so the panel never fabricates a
+  // "revealed" bottle on a session's very first release.
   const mostRecentlyRevealed = wines
     .filter((w): w is HostBottleDTO & { revealedAt: string } => w.revealedAt !== null)
     .sort((a, b) => b.revealedAt.localeCompare(a.revealedAt))[0];
 
-  if (mostRecentlyRevealed) {
-    return {
-      kind: "revealed",
-      currentBottle: { label: mostRecentlyRevealed.anonymousCode },
-      primaryAction: {
-        type: "view_results",
-        label: "View results",
-        wineId: mostRecentlyRevealed.id,
-      },
-    };
-  }
-
-  return { kind: "no_eligible_bottles" };
+  return {
+    kind: "choose_next_bottle",
+    lastRevealedBottle: mostRecentlyRevealed
+      ? { label: mostRecentlyRevealed.anonymousCode }
+      : undefined,
+  };
 }

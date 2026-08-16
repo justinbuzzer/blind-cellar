@@ -139,8 +139,11 @@ export default function ActiveBottlePage() {
     setGuestName(data.guestName);
 
     if (!data.activeBottle) {
-      // Edge case: the last bottle was just revealed but this device hasn't
-      // seen the session flip to 'revealed' yet. Keep polling briefly.
+      // No bottle is currently active — either the host hasn't released one
+      // yet (a genuine, possibly extended wait — see README "Course-by-
+      // course host-selected release"), or the last bottle was just revealed
+      // and this device hasn't seen the session flip to 'revealed' yet. This
+      // page never predicts or fetches which bottle might come next.
       setLoadState("waiting-for-next");
       return;
     }
@@ -282,8 +285,32 @@ export default function ActiveBottlePage() {
     setLoadState("locked");
   }
 
-  if (loadState === "loading" || loadState === "waiting-for-next") {
+  if (loadState === "loading") {
     return <LoadingState message="Gathering the evening's notes…" />;
+  }
+
+  if (loadState === "waiting-for-next") {
+    return (
+      <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-6 px-6 py-6">
+        <div className="flex items-center gap-2">
+          <HomeLink />
+          <HostControlsLink sessionPublicId={params.publicId} />
+          <ResultsLink href={`/session/${params.publicId}/results`} />
+        </div>
+        <div className="relative flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden rounded-sm px-6 py-16 text-center">
+          <ImageBand image={waitingToRevealImage} className="absolute inset-0" />
+          <div className="relative flex flex-col items-center gap-2">
+            <h1 className="font-display text-2xl font-semibold text-cellar-bg">
+              Waiting for the host
+            </h1>
+            <p className="text-sm text-cellar-bg/80">
+              The host hasn&rsquo;t released the next bottle yet. This page
+              will update automatically.
+            </p>
+          </div>
+        </div>
+      </main>
+    );
   }
 
   if (loadState === "no-config") {

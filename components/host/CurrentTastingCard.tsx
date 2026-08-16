@@ -14,7 +14,6 @@ interface CurrentTastingCardProps {
   leaderboardHref: string;
   recapHref: string;
   resultsHref: string;
-  bottleResultHref: (wineId: string) => string;
   /** Opens the correct existing confirmation — the same one the detailed per-bottle/active-bottle controls already use. */
   onRevealClick: (wineId: string) => void;
   onEndSeenTastingClick: () => void;
@@ -37,7 +36,6 @@ export function CurrentTastingCard({
   leaderboardHref,
   recapHref,
   resultsHref,
-  bottleResultHref,
   onRevealClick,
   onEndSeenTastingClick,
   announcement,
@@ -61,19 +59,14 @@ export function CurrentTastingCard({
         />
       )}
 
-      {state.kind === "revealed" && state.currentBottle && state.primaryAction?.wineId && (
+      {state.kind === "choose_next_bottle" && (
         <>
-          <p className="font-display text-xl font-semibold text-cellar-maroon-dark">
-            {bottleDisplayLabel(state.currentBottle)} revealed
-          </p>
-          <Link href={bottleResultHref(state.primaryAction.wineId)}>
-            <Button
-              fullWidth
-              aria-label={`View results for ${bottleDisplayLabel(state.currentBottle)}`}
-            >
-              {state.primaryAction.label}
-            </Button>
-          </Link>
+          {state.lastRevealedBottle && (
+            <p className="font-display text-xl font-semibold text-cellar-maroon-dark">
+              {bottleDisplayLabel(state.lastRevealedBottle)} revealed
+            </p>
+          )}
+          <p className="text-sm text-cellar-muted">Choose the next bottle from the list below.</p>
         </>
       )}
 

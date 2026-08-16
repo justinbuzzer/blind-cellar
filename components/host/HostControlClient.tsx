@@ -12,6 +12,7 @@ import { StatusChip } from "@/components/StatusChip";
 import { TastingOrderList } from "@/components/host/TastingOrderList";
 import { SeenHostBottleRow } from "@/components/host/SeenHostBottleRow";
 import { FullBlindHostBottleRow } from "@/components/host/FullBlindHostBottleRow";
+import { CourseHostBottleRow } from "@/components/host/CourseHostBottleRow";
 import { BottleProgressControl } from "@/components/host/BottleProgressControl";
 import { ReadinessControl } from "@/components/host/ReadinessControl";
 import { CurrentTastingCard } from "@/components/host/CurrentTastingCard";
@@ -27,6 +28,7 @@ import {
   formatProgressAccessibleLabel,
 } from "@/lib/hostProgress";
 import { resolveHostCurrentTastingState } from "@/lib/hostCurrentTasting";
+import { formatReleaseBottleConfirmTitle } from "@/lib/courseRelease";
 import { bottleLabel } from "@/lib/codes";
 import {
   friendlyRpcError,
@@ -92,8 +94,10 @@ export function HostControlClient({
   const [showEndSeenConfirm, setShowEndSeenConfirm] = useState(false);
   const [confirmingSeenWineId, setConfirmingSeenWineId] = useState<string | null>(null);
   const [confirmingFullBlindWineId, setConfirmingFullBlindWineId] = useState<string | null>(null);
+  const [confirmingReleaseWineId, setConfirmingReleaseWineId] = useState<string | null>(null);
   const [revealingBottle, setRevealingBottle] = useState(false);
   const [revealingFullBlindBottle, setRevealingFullBlindBottle] = useState(false);
+  const [releasingBottle, setReleasingBottle] = useState(false);
   const [revealingSeenRatings, setRevealingSeenRatings] = useState(false);
   const [endingSeen, setEndingSeen] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -109,6 +113,7 @@ export function HostControlClient({
   );
   const confirmingSeenWine = wines.find((w) => w.id === confirmingSeenWineId) ?? null;
   const confirmingFullBlindWine = wines.find((w) => w.id === confirmingFullBlindWineId) ?? null;
+  const confirmingReleaseWine = wines.find((w) => w.id === confirmingReleaseWineId) ?? null;
 
   // Current tasting summary (see README "Current tasting") — purely a
   // display computation over data already fetched above via the
@@ -406,19 +411,63 @@ export function HostControlClient({
         setRevealingBottle(false);
         return;
       }
+      const revealedWineId = activeBottle.id;
+      setWines((prev) =>
+        prev.map((w) => (w.id === revealedWineId ? { ...w, revealedAt: new Date().toISOString() } : w))
+      );
       if (data.sessionRevealed) {
         setStatus("revealed");
-        setActiveBottle(null);
-      } else {
-        // The next active bottle will arrive via the realtime-triggered
-        // refetch (the wines UPDATE this just caused) or the poll above.
-        setActiveBottle(null);
       }
+      // No bottle is active again until the host explicitly releases the
+      // next one from the bottle list below (see README "Course-by-course
+      // host-selected release") — there is no auto-advance.
+      setActiveBottle(null);
       setShowRevealBottleConfirm(false);
       setRevealingBottle(false);
     } catch {
       setActionError(friendlyRpcError(null));
       setRevealingBottle(false);
+    }
+  }
+
+  async function handleReleaseBottle(wineId: string) {
+    setReleasingBottle(true);
+    setActionError(null);
+    try {
+      const response = await fetch("/api/host/release-course-bottle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicId, hostToken, wineId }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setActionError(data.error ?? "Couldn't release that bottle.");
+        setReleasingBottle(false);
+        return;
+      }
+      setConfirmingReleaseWineId(null);
+      setReleasingBottle(false);
+      // Refetch immediately for the fully-populated activeBottle DTO
+      // (position/totalBottles/submittedCount/totalParticipants) rather than
+      // waiting for the next poll/realtime tick — same pattern
+      // handleStartTasting already uses for course_reveal's first bottle.
+      try {
+        const sessionResponse = await fetch("/api/host/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ publicId, hostToken }),
+        });
+        if (sessionResponse.ok) {
+          const sessionData: HostSessionResponse = await sessionResponse.json();
+          setWines(sessionData.wines);
+          setActiveBottle(sessionData.activeBottle);
+        }
+      } catch {
+        // The poll/realtime refetch will pick this up shortly after.
+      }
+    } catch {
+      setActionError(friendlyRpcError(null));
+      setReleasingBottle(false);
     }
   }
 
@@ -589,9 +638,6 @@ export function HostControlClient({
           leaderboardHref={`/host/${publicId}/leaderboard?token=${encodeURIComponent(hostToken)}`}
           recapHref={`/host/${publicId}/recap?token=${encodeURIComponent(hostToken)}`}
           resultsHref={`/results/${publicId}`}
-          bottleResultHref={(wineId) =>
-            `/host/${publicId}/bottle/${wineId}/result?token=${encodeURIComponent(hostToken)}`
-          }
           onRevealClick={handleCurrentTastingRevealClick}
           onEndSeenTastingClick={() => setShowEndSeenConfirm(true)}
           announcement={currentTastingAnnouncement}
@@ -788,54 +834,30 @@ export function HostControlClient({
 
           {tastingMode === "course_reveal" && (
             <>
-              {activeBottle ? (
-                <Card className="flex flex-col gap-3">
-                  <div>
-                    <SectionEyebrow>Active bottle</SectionEyebrow>
-                    <p className="mt-1 font-display text-xl font-semibold text-cellar-maroon-dark">
-                      {activeBottle.anonymousCode}
-                    </p>
-                    <p className="text-sm text-cellar-muted">
-                      Position {activeBottle.position} of {activeBottle.totalBottles}
-                    </p>
-                  </div>
-                  <p className="text-sm text-cellar-muted">
-                    {activeBottle.submittedCount} of {activeBottle.totalParticipants}{" "}
-                    participants submitted
-                  </p>
+              <div className="flex flex-col gap-2">
+                <SectionEyebrow>Bottles</SectionEyebrow>
+                <p className="text-sm text-cellar-muted">
+                  Release any eligible bottle next, in any order — the
+                  tasting order above is an organisational aid only and
+                  doesn&rsquo;t restrict release order. Only one bottle can
+                  be active at a time.
+                </p>
+                <Card className="p-0">
+                  <ol className="divide-y divide-cellar-border">
+                    {wines.map((wine) => (
+                      <CourseHostBottleRow
+                        key={wine.id}
+                        wine={wine}
+                        isActive={activeBottle?.id === wine.id}
+                        activeWineId={activeBottle?.id ?? null}
+                        publicId={publicId}
+                        hostToken={hostToken}
+                        onReleaseClick={setConfirmingReleaseWineId}
+                      />
+                    ))}
+                  </ol>
                 </Card>
-              ) : (
-                <Card className="text-sm text-cellar-muted">
-                  Every bottle has been revealed.
-                </Card>
-              )}
-
-              {wines.some((w) => w.revealedAt !== null) && (
-                <div className="flex flex-col gap-2">
-                  <SectionEyebrow>Revealed bottles</SectionEyebrow>
-                  <Card className="p-0">
-                    <ol className="divide-y divide-cellar-border">
-                      {wines
-                        .filter((w) => w.revealedAt !== null)
-                        .map((wine) => (
-                          <li
-                            key={wine.id}
-                            className="flex items-center justify-between gap-3 px-4 py-3"
-                          >
-                            <span className="text-sm font-medium text-cellar-text">
-                              {wine.anonymousCode}
-                            </span>
-                            <Link
-                              href={`/host/${publicId}/bottle/${wine.id}/result?token=${encodeURIComponent(hostToken)}`}
-                            >
-                              <Button variant="secondary">View results</Button>
-                            </Link>
-                          </li>
-                        ))}
-                    </ol>
-                  </Card>
-                </div>
-              )}
+              </div>
 
               <div className="flex flex-col gap-3 border-t border-cellar-border pt-5">
                 <SectionEyebrow>Host actions</SectionEyebrow>
@@ -1009,6 +1031,33 @@ export function HostControlClient({
               disabled={revealingFullBlindBottle}
             >
               {revealingFullBlindBottle ? "Revealing…" : "Reveal results"}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {confirmingReleaseWineId && confirmingReleaseWine && (
+        <Modal
+          title={formatReleaseBottleConfirmTitle(confirmingReleaseWine.bottleNumber)}
+          onClose={() => !releasingBottle && setConfirmingReleaseWineId(null)}
+        >
+          <p>
+            This makes the bottle available for participants to taste and
+            submit guesses.
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setConfirmingReleaseWineId(null)}
+              disabled={releasingBottle}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => handleReleaseBottle(confirmingReleaseWineId)}
+              disabled={releasingBottle}
+            >
+              {releasingBottle ? "Releasing…" : "Release bottle"}
             </Button>
           </div>
         </Modal>
