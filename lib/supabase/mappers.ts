@@ -1,6 +1,7 @@
 import { GuestSubmission, TastingSession, WineAnswerKey, WineGuess, WineResult } from "@/types/tasting";
 import { isCustomSingleGrape, reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
 import { calculateWineResults } from "@/lib/results";
+import { wineStyleToContributorBucket } from "@/lib/contributorLabel";
 import {
   GuestGuessDTO,
   GuestVisibleWineRow,
@@ -33,6 +34,8 @@ export function mapRevealedWineRowToAnswerKey(row: GuestVisibleWineRow): WineAns
     tastingOrder: row.tasting_order,
     hostNotes: row.host_notes ?? undefined,
     contributorGuestId: row.contributor_guest_id ?? undefined,
+    contributorStyleBucket: row.wine_style ? wineStyleToContributorBucket(row.wine_style) : undefined,
+    contributorStyleSequence: row.contributor_style_sequence ?? undefined,
   };
 }
 

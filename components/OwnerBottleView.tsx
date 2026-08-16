@@ -1,8 +1,11 @@
 import { SectionEyebrow } from "./SectionEyebrow";
+import { BottleDisplayLabels } from "@/lib/contributorLabel";
 
 interface OwnerBottleViewProps {
-  /** The same safe blind-bottle label (e.g. "Bottle 2 — Ava") used in the guess form's own heading — see lib/codes.ts formatBlindBottleLabel. Never the actual wine identity. */
-  wineLabel: string;
+  /** Primary "Bottle N" + secondary contributor label — see README "Bottle labels". Never the actual wine identity. */
+  bottleLabels: BottleDisplayLabels;
+  /** Screen-reader phrasing spelling out both labels in one sentence — see lib/contributorLabel.ts formatBottleAccessibleLabel. */
+  bottleAccessibleLabel: string;
 }
 
 /**
@@ -15,10 +18,15 @@ interface OwnerBottleViewProps {
  * guessing flows (no large banner, no dashboard treatment, no celebratory
  * copy).
  */
-export function OwnerBottleView({ wineLabel }: OwnerBottleViewProps) {
+export function OwnerBottleView({ bottleLabels, bottleAccessibleLabel }: OwnerBottleViewProps) {
   return (
     <div className="flex flex-col gap-3 border-t border-cellar-gold/40 pt-5">
-      <SectionEyebrow>{wineLabel}</SectionEyebrow>
+      <div aria-label={bottleAccessibleLabel}>
+        <SectionEyebrow>{bottleLabels.tastingOrderLabel}</SectionEyebrow>
+        {bottleLabels.contributorLabel && (
+          <p className="mt-0.5 text-xs text-cellar-muted">{bottleLabels.contributorLabel}</p>
+        )}
+      </div>
       <h2 className="font-display text-2xl font-semibold text-cellar-maroon-dark">
         This is your bottle
       </h2>

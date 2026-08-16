@@ -2250,6 +2250,45 @@ select get_host_session('<public_id>', '<host token>');
 
 `active_wine_id` is never added to the anon/authenticated column grant on `tasting_sessions` (it stays exactly the existing narrow `(id, public_id, join_code, title, tasting_date, status, created_at, updated_at, tasting_mode, scoring_version)` list) — it is reachable only through the SECURITY DEFINER RPCs above, never a direct table read, matching every other session-state column in this file. `release_course_bottle` independently re-verifies the host token against `tasting_sessions.host_token_hash` on every call — never trusting a client-supplied session/mode/status/eligibility claim — and the `select ... for update` row lock makes its "no other bottle already active" check-and-set atomic, so two concurrent release requests can never both succeed. No historical/already-revealed session is touched: `active_wine_id` only ever affects a currently-`collecting` `course_reveal` session's live RPC behaviour going forward, and `full_blind`/`seen` sessions never read or write it at all.
 
+## Migrating for Bottle labels
+
+Full blind/Course-by-course guessing screens and every mode's revealed report/result card now show a richer secondary label under the contributor's name — `{Name} — {Red|White|Bubbles|Other} #{sequence}` — see README "Bottle labels". This adds one new column, computed at registration time in three existing insert functions, plus additive output fields on several existing read functions; no existing function's signature or return-shape guarantee changes, and no historical data needed guessing.
+
+- **New column**: `wines.contributor_style_sequence int`, nullable. Backfilled once, for every pre-existing row with a recorded `contributor_guest_id`, using a single windowed `row_number()` query partitioned by `(session_id, contributor_guest_id, style bucket)` and ordered by `bottle_number` (which already *is* each bottle's registration order) — the same rule new rows use going forward, so historical and newly-registered bottles are computed identically.
+- **`register_bottle`, `register_bottle_from_cellar`, `register_bottles_from_cellar_group`** each now compute this contributor's next sequence number within its style bucket (`count(existing matching rows) + 1`) and store it at insert time — permanently; nothing ever recalculates it afterward, even across a later `delete_bottle`.
+- **Additive output fields** on `get_host_session`, `get_seen_tasting_state`, `get_revealed_bottle`, `get_bottle_result_for_host`: `contributorStyleSequence`. On `get_guest_session_state` and `get_active_bottle_state` (the two pre-reveal guest-facing RPCs, which never send raw `wine_style`): both `contributorStyleBucket` (the coarse Red/White/Bubbles/Other word only, never the raw style enum) and `contributorStyleSequence`. On `get_revealed_bottles_summary` (the participant results hub, which lists still-unrevealed bottles too): both fields, but masked to `null` until that specific bottle's `revealed_at` is set — mirroring the existing `wine_style` masking pattern in `guest_visible_wines`, so a future Course bottle's style can never leak through this list.
+- **`guest_visible_wines` view** gained one more masked column, `contributor_style_sequence`, following the exact same `case when s.status = 'revealed' then … else null end` pattern already used for `wine_style`/`country`/`region`/etc.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+Re-pasting `supabase/schema.sql` in full is the complete migration — the new column uses `add column if not exists` (safe to re-run), the backfill `update … where contributor_style_sequence is null` only ever touches rows that don't already have a value (so re-running the file is a no-op the second time), and every changed function is a `create or replace function` over an existing signature.
+
+### 2. Verification queries
+
+```sql
+-- a contributor's second red bottle gets sequence 2, independent of a
+-- different contributor's or a different style's sequence
+select register_bottle('<guest token>', 'France', 'Bordeaux', 'single', 'Merlot', 'Dom A', 'Cuvée 1', '2020', null, 'red', null, null);
+select register_bottle('<guest token>', 'France', 'Bordeaux', 'single', 'Merlot', 'Dom A', 'Cuvée 2', '2021', null, 'red', null, null);
+-- expect: the second call's bottle has contributor_style_sequence = 2
+
+-- a still-unrevealed course_reveal bottle never exposes its style/sequence
+-- on the participant results hub
+select get_revealed_bottles_summary('<a guest token in that session>');
+-- expect: contributorStyleBucket/contributorStyleSequence are null for
+-- every bottle whose isRevealed is false, populated once revealed
+
+-- deleting a bottle leaves a gap, never renumbers the survivors
+select delete_bottle('<guest token>', '<the wine id just registered above with sequence 1>');
+select get_registration_state('<guest token>');
+-- then re-check the report after reveal: the remaining red bottle still
+-- reads "Red #2", not renumbered down to "Red #1"
+```
+
+### RLS and privacy summary
+
+`contributor_style_sequence` is never added to the narrow `anon`/`authenticated` column grant on `wines` (it stays exactly the existing `(id, session_id, bottle_number, anonymous_code, created_at)` list) — reachable only through the `SECURITY DEFINER` RPCs and the masked `guest_visible_wines` view above, exactly like `wine_style`/`contributor_guest_id`. The two pre-reveal guest RPCs send only the coarse `contributorStyleBucket` word, never the raw `wine_style` enum, keeping the `sweet`-vs-`other` distinction (which this app has never shown a participant) out of the pre-reveal payload even though this feature does deliberately expose the coarser Red/White/Bubbles/Other signal before reveal. Nothing about this column is client-supplied or client-recalculated: it is computed once, server-side, at insert time, from canonical `contributor_guest_id`/`wine_style`/`bottle_number` values already trusted elsewhere in this file.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

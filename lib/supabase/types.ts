@@ -2,6 +2,7 @@ import {
   BottleFormat,
   CellarBottleStatus,
   Confidence,
+  ContributorStyleBucket,
   GrapeBlendMode,
   ScoringVersion,
   SessionStatus,
@@ -71,6 +72,8 @@ export interface GuestVisibleWineRow {
   tasting_order: number;
   /** Masked the same way as region/country — null until the session is revealed. See README "Region and Appellation". */
   appellation: string | null;
+  /** Masked the same way as wine_style — null until the session is revealed. See README "Bottle labels". */
+  contributor_style_sequence: number | null;
 }
 
 export interface RevealedWineGuessRow {
@@ -132,6 +135,8 @@ export interface HostBottleDTO {
   revealedAt: string | null;
   /** Same safe, never-secret display name shown throughout the app (see README "Bottle-order contributor labels" and "Tasting-order contributor labels"). Null only for a bottle with no recorded contributor (e.g. registered before contributor_guest_id existed) — never fabricated. Present for every tasting mode, including seen (in addition to seen's own nested wine-identity fields). */
   contributorName?: string | null;
+  /** This contributor's stable 1-based ordinal within their same-style bottles for this session — see README "Bottle labels". Null under the same conditions as contributorName. */
+  contributorStyleSequence?: number | null;
   /** Seen mode only — see HostSeenBottleInfo. Undefined for full_blind/course_reveal. */
   seen?: HostSeenBottleInfo;
 }
@@ -247,6 +252,10 @@ export interface GuestSessionWineDTO {
   styleHint: BlindGuessGrapeOptionsHint;
   /** The contributor's session display name — a bottle-order/pouring coordination cue only, never a wine-identity reveal. Null if the bottle has no recorded contributor. See README "Bottle-order contributor labels". */
   contributorName: string | null;
+  /** The minimal bucketed style word for the contributor label (see README "Bottle labels") — never the raw five-value WineStyle, which would also distinguish sweet from other. Null under the same condition as contributorName. */
+  contributorStyleBucket: ContributorStyleBucket | null;
+  /** This contributor's stable 1-based ordinal within contributorStyleBucket for this session. Null under the same condition as contributorName. */
+  contributorStyleSequence: number | null;
   /** True only when the current caller is this bottle's canonical contributor — derived server-side, never from displayName/email/client state. See README "Own-bottle guessing exclusion". */
   isOwnBottle: boolean;
 }
@@ -386,6 +395,10 @@ export interface ActiveBottleDTO {
   styleHint: BlindGuessGrapeOptionsHint;
   /** The contributor's session display name — a bottle-order/pouring coordination cue only, never a wine-identity reveal. Null if the bottle has no recorded contributor. See README "Bottle-order contributor labels". */
   contributorName: string | null;
+  /** The minimal bucketed style word for the contributor label (see README "Bottle labels") — never the raw five-value WineStyle. Null under the same condition as contributorName. */
+  contributorStyleBucket: ContributorStyleBucket | null;
+  /** This contributor's stable 1-based ordinal within contributorStyleBucket for this session. Null under the same condition as contributorName. */
+  contributorStyleSequence: number | null;
   /** True only when the current caller is this bottle's canonical contributor — derived server-side, never from displayName/email/client state. See README "Own-bottle guessing exclusion". */
   isOwnBottle: boolean;
 }
@@ -438,6 +451,8 @@ export interface RevealedBottleWineDTO {
   vintage: string;
   wineStyle: WineStyle;
   contributorName: string | null;
+  /** This contributor's stable 1-based ordinal within their same-style bottles for this session (see README "Bottle labels") — bucket is derived client-side from wineStyle above via wineStyleToContributorBucket, since wineStyle is already present on this post-reveal DTO. Null under the same condition as contributorName. */
+  contributorStyleSequence: number | null;
 }
 
 export interface RevealedBottleResponse {
@@ -498,6 +513,10 @@ export interface RevealedBottleSummaryDTO {
   wineId: string;
   bottleNumber: number;
   contributorName: string | null;
+  /** Only ever populated when isRevealed is true — see README "Bottle labels". This list mixes revealed and still-future/unrevealed rows (course_reveal in particular), and an unrevealed row's style must never leak here. */
+  contributorStyleBucket: ContributorStyleBucket | null;
+  /** Only ever populated when isRevealed is true — see contributorStyleBucket above. */
+  contributorStyleSequence: number | null;
   isRevealed: boolean;
 }
 
@@ -604,6 +623,8 @@ export interface SeenBottleDTO {
   wineCuvee: string;
   vintage: string;
   contributorName: string | null;
+  /** This contributor's stable 1-based ordinal within their same-style bottles for this session (see README "Bottle labels") — bucket is derived client-side from wineStyle above via wineStyleToContributorBucket, since Seen mode always shows wineStyle unmasked. Null under the same condition as contributorName. */
+  contributorStyleSequence: number | null;
   myRating: number | null;
   myConfidence: Confidence | null;
   myNote: string | null;

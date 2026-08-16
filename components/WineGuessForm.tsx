@@ -8,6 +8,7 @@ import {
 import { getAppellations, hasAppellations } from "@/lib/appellations";
 import { useGrapeAssistance } from "@/lib/useGrapeAssistance";
 import { BlindGuessGrapeOptionsHint, styleFilterKeyForHint } from "@/lib/grapeAssistance";
+import { BottleDisplayLabels } from "@/lib/contributorLabel";
 import { Card } from "./Card";
 import { TextField } from "./TextField";
 import { SelectField } from "./SelectField";
@@ -23,7 +24,10 @@ const APPELLATION_HINT = "Optional. Select an appellation if you have a specific
 const APPELLATION_CLEARED_MESSAGE = "Appellation cleared because the region changed.";
 
 interface WineGuessFormProps {
-  wineCode: string;
+  /** Primary "Bottle N" + secondary contributor label — see README "Bottle labels". */
+  bottleLabels: BottleDisplayLabels;
+  /** Screen-reader phrasing spelling out both labels in one sentence — see lib/contributorLabel.ts formatBottleAccessibleLabel. */
+  bottleAccessibleLabel: string;
   value: WineGuess;
   onChange: (value: WineGuess) => void;
   ratingError?: string;
@@ -39,7 +43,8 @@ interface WineGuessFormProps {
 }
 
 export function WineGuessForm({
-  wineCode,
+  bottleLabels,
+  bottleAccessibleLabel,
   value,
   onChange,
   ratingError,
@@ -106,8 +111,16 @@ export function WineGuessForm({
 
   return (
     <Card className="flex flex-col gap-0 p-0">
-      <h2 className="border-b border-cellar-border p-5 font-display text-2xl font-semibold text-cellar-maroon-dark">
-        {wineCode}
+      <h2
+        aria-label={bottleAccessibleLabel}
+        className="border-b border-cellar-border p-5 font-display text-2xl font-semibold text-cellar-maroon-dark"
+      >
+        {bottleLabels.tastingOrderLabel}
+        {bottleLabels.contributorLabel && (
+          <span className="mt-1 block text-sm font-normal text-cellar-muted">
+            {bottleLabels.contributorLabel}
+          </span>
+        )}
       </h2>
 
       <div className="flex flex-col gap-4 border-b border-cellar-border p-5">

@@ -27,7 +27,7 @@ import { mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
 import { emptyWineGuess, winesRequiringGuess } from "@/lib/guess";
 import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend, invalidOtherGrapeGuessMessage } from "@/lib/validation";
 import { getGuestToken, getHostToken } from "@/lib/deviceStorage";
-import { formatBlindBottleLabel } from "@/lib/codes";
+import { buildBottleDisplayLabels, formatBottleAccessibleLabel } from "@/lib/contributorLabel";
 import { WineGuess } from "@/types/tasting";
 
 type LoadState =
@@ -371,7 +371,13 @@ export default function GuestTastingPage() {
   const guess = guesses.find((g) => g.wineId === wine.id);
   if (!guess) return null;
   const isLast = currentIndex === wines.length - 1;
-  const wineLabel = formatBlindBottleLabel(wine.bottleNumber, wine.contributorName);
+  const contributorLabelInput = {
+    contributorDisplayName: wine.contributorName,
+    styleBucket: wine.contributorStyleBucket,
+    contributorStyleSequence: wine.contributorStyleSequence,
+  };
+  const bottleLabels = buildBottleDisplayLabels(wine.bottleNumber, contributorLabelInput);
+  const bottleAccessibleLabel = formatBottleAccessibleLabel(wine.bottleNumber, contributorLabelInput);
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-6 px-6 py-10">
@@ -392,17 +398,18 @@ export default function GuestTastingPage() {
       <ProgressBar
         current={currentIndex + 1}
         total={wines.length}
-        label={`${wineLabel} — ${currentIndex + 1} of ${wines.length}`}
+        label={`${bottleLabels.tastingOrderLabel} — ${currentIndex + 1} of ${wines.length}`}
       />
 
       {!wine.isOwnBottle && <GuessGroupProgress progress={hostGuessProgress} />}
 
       {wine.isOwnBottle ? (
-        <OwnerBottleView wineLabel={wineLabel} />
+        <OwnerBottleView bottleLabels={bottleLabels} bottleAccessibleLabel={bottleAccessibleLabel} />
       ) : (
         <WineGuessForm
           key={wine.id}
-          wineCode={wineLabel}
+          bottleLabels={bottleLabels}
+          bottleAccessibleLabel={bottleAccessibleLabel}
           value={guess}
           onChange={(next) => updateGuess(wine.id, next)}
           styleHint={wine.styleHint}

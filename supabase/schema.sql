@@ -474,6 +474,36 @@ begin
   end if;
 end $$;
 
+-- 13. Contributor style sequence (see README "Bottle labels"): a bottle's
+-- 1-based ordinal among that same contributor's bottles in the same style
+-- category (red/white/bubbles; sweet and other both collapse into "other"
+-- for this grouping/display, matching WINE_STYLE_LABELS' fallback) within
+-- one tasting session. Computed once, at registration time, from each
+-- insert RPC (register_bottle, register_bottle_from_cellar,
+-- register_bottles_from_cellar_group, further down this file) and never
+-- recalculated afterward — the exact same permanence contract as
+-- bottle_number itself, so a later withdrawal (delete_bottle) leaves a gap
+-- rather than renumbering the contributor's surviving bottles, and a host
+-- reordering tasting_order or releasing Course bottles non-sequentially can
+-- never affect it. Backfilled once here for pre-existing rows using the same
+-- ordering rule (bottle_number, which is itself exactly each bottle's
+-- registration order). MUST run before the guest_visible_wines view below,
+-- which reads this column.
+alter table wines add column if not exists contributor_style_sequence int;
+
+update wines w
+set contributor_style_sequence = ranked.seq
+from (
+  select id, row_number() over (
+    partition by session_id, contributor_guest_id,
+      (case wine_style when 'red' then 'red' when 'white' then 'white' when 'bubbles' then 'bubbles' else 'other' end)
+    order by bottle_number asc
+  ) as seq
+  from wines
+  where contributor_guest_id is not null
+) ranked
+where w.id = ranked.id and w.contributor_style_sequence is null;
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security (enabled everywhere; anon gets no default table grants,
 -- see the GRANT section below — RLS is defense-in-depth on top of that).
@@ -552,7 +582,12 @@ select
   -- same way as region/country above. Appended at the end for the same
   -- CREATE OR REPLACE VIEW column-ordering reason as grape_blend_mode/
   -- wine_style.
-  case when s.status = 'revealed' then w.appellation else null end as appellation
+  case when s.status = 'revealed' then w.appellation else null end as appellation,
+  -- Contributor style sequence (see README "Bottle labels"): masked the same
+  -- way as wine_style above, though in practice this view is only ever
+  -- queried once a session has already reached 'revealed' (see
+  -- lib/supabase/reportData.ts) — masked anyway for defense-in-depth.
+  case when s.status = 'revealed' then w.contributor_style_sequence else null end as contributor_style_sequence
 from wines w
 join tasting_sessions s on s.id = w.session_id;
 
@@ -899,6 +934,7 @@ begin
       'tastingOrder', w.tasting_order,
       'revealedAt', w.revealed_at,
       'contributorName', (select display_name from guests where id = w.contributor_guest_id),
+      'contributorStyleSequence', w.contributor_style_sequence,
       'seen', jsonb_build_object(
         'producer', w.producer,
         'wineCuvee', w.wine_cuvee,
@@ -933,7 +969,8 @@ begin
       'wineStyle', w.wine_style,
       'tastingOrder', w.tasting_order,
       'revealedAt', w.revealed_at,
-      'contributorName', (select display_name from guests where id = w.contributor_guest_id)
+      'contributorName', (select display_name from guests where id = w.contributor_guest_id),
+      'contributorStyleSequence', w.contributor_style_sequence
     ) order by w.tasting_order), '[]'::jsonb)
     into v_wines
     from wines w where w.session_id = v_session.id;
@@ -1360,6 +1397,8 @@ declare
   v_session tasting_sessions%rowtype;
   v_next_number int;
   v_next_order int;
+  v_style_bucket text;
+  v_contributor_style_sequence int;
   v_wine_id uuid;
 begin
   select * into v_guest from guests where guest_token = p_guest_token;
@@ -1399,14 +1438,24 @@ begin
   select coalesce(max(tasting_order), 0) + 1 into v_next_order
   from wines where session_id = v_session.id;
 
+  -- See "Contributor style sequence" above — this contributor's next 1-based
+  -- ordinal within this style bucket, computed from already-registered rows
+  -- only (never recalculated once assigned).
+  v_style_bucket := case p_wine_style when 'red' then 'red' when 'white' then 'white' when 'bubbles' then 'bubbles' else 'other' end;
+  select count(*) + 1 into v_contributor_style_sequence
+  from wines
+  where session_id = v_session.id
+    and contributor_guest_id = v_guest.id
+    and (case wine_style when 'red' then 'red' when 'white' then 'white' when 'bubbles' then 'bubbles' else 'other' end) = v_style_bucket;
+
   insert into wines (
     session_id, display_order, bottle_number, tasting_order, anonymous_code, contributor_guest_id,
     country, region, appellation, grape_style, grape_blend_mode, grape_blend_components, producer, wine_cuvee,
-    vintage, wine_style, host_notes
+    vintage, wine_style, host_notes, contributor_style_sequence
   ) values (
     v_session.id, v_next_number - 1, v_next_number, v_next_order, 'Bottle ' || v_next_number, v_guest.id,
     btrim(p_country), btrim(p_region), nullif(btrim(coalesce(p_appellation, '')), ''), btrim(p_grape_blend), p_grape_blend_mode, p_grape_blend_components,
-    btrim(p_producer), btrim(p_wine_cuvee), btrim(p_vintage), p_wine_style, nullif(btrim(coalesce(p_notes, '')), '')
+    btrim(p_producer), btrim(p_wine_cuvee), btrim(p_vintage), p_wine_style, nullif(btrim(coalesce(p_notes, '')), ''), v_contributor_style_sequence
   )
   returning wines.id into v_wine_id;
 
@@ -1695,6 +1744,15 @@ begin
         -- contributor_guest_id is null (a bottle with no recorded
         -- contributor), which the client renders as no name at all.
         'contributorName', (select display_name from guests where id = w.contributor_guest_id),
+        -- Bottle labels (see README "Bottle labels"): the minimal bucketed
+        -- style word only — never the raw wine_style enum (which would also
+        -- distinguish sweet from other, a distinction this app never shows
+        -- pre-reveal) — plus this contributor's stable per-style sequence.
+        -- Both null when contributor_guest_id is null, same as
+        -- contributorName above.
+        'contributorStyleBucket', case when w.contributor_guest_id is null then null
+          else (case w.wine_style when 'red' then 'red' when 'white' then 'white' when 'bubbles' then 'bubbles' else 'other' end) end,
+        'contributorStyleSequence', w.contributor_style_sequence,
         -- Own-bottle guessing exclusion (see README "Own-bottle guessing
         -- exclusion"): the caller's canonical guests.id compared server-side
         -- against this bottle's canonical contributor_guest_id — never
@@ -1940,6 +1998,12 @@ begin
       'totalBottles', v_total_bottles,
       'styleHint', wine_style_grape_options_hint(v_active.wine_style),
       'contributorName', (select display_name from guests where id = v_active.contributor_guest_id),
+      -- Bottle labels — see get_guest_session_state's identical fields for
+      -- the full explanation of why this is the bucketed style, not the raw
+      -- wine_style enum.
+      'contributorStyleBucket', case when v_active.contributor_guest_id is null then null
+        else (case v_active.wine_style when 'red' then 'red' when 'white' then 'white' when 'bubbles' then 'bubbles' else 'other' end) end,
+      'contributorStyleSequence', v_active.contributor_style_sequence,
       -- Own-bottle guessing exclusion — see get_guest_session_state's
       -- identical field for the full explanation.
       'isOwnBottle', coalesce(v_active.contributor_guest_id = v_guest.id, false)
@@ -2121,7 +2185,8 @@ begin
       'wineCuvee', v_wine.wine_cuvee,
       'vintage', v_wine.vintage,
       'wineStyle', v_wine.wine_style,
-      'contributorName', (select display_name from guests where id = v_wine.contributor_guest_id)
+      'contributorName', (select display_name from guests where id = v_wine.contributor_guest_id),
+      'contributorStyleSequence', v_wine.contributor_style_sequence
     ),
     'submitted', v_submitted,
     'guesses', case when v_submitted then coalesce((
@@ -2267,7 +2332,8 @@ begin
       'wineCuvee', v_wine.wine_cuvee,
       'vintage', v_wine.vintage,
       'wineStyle', v_wine.wine_style,
-      'contributorName', (select display_name from guests where id = v_wine.contributor_guest_id)
+      'contributorName', (select display_name from guests where id = v_wine.contributor_guest_id),
+      'contributorStyleSequence', v_wine.contributor_style_sequence
     ),
     'participants', v_participants
   );
@@ -2315,6 +2381,12 @@ begin
       'wineId', w.id,
       'bottleNumber', w.bottle_number,
       'contributorName', (select display_name from guests where id = w.contributor_guest_id),
+      -- Bottle labels: only ever populated for an already-revealed bottle —
+      -- this list mixes revealed and still-future/unrevealed rows (course_reveal
+      -- in particular), and an unrevealed row's style must never leak here.
+      'contributorStyleBucket', case when w.revealed_at is null then null
+        else (case w.wine_style when 'red' then 'red' when 'white' then 'white' when 'bubbles' then 'bubbles' else 'other' end) end,
+      'contributorStyleSequence', case when w.revealed_at is null then null else w.contributor_style_sequence end,
       'isRevealed', w.revealed_at is not null
     ) order by w.tasting_order), '[]'::jsonb),
     count(*),
@@ -2625,6 +2697,7 @@ begin
         'wineCuvee', w.wine_cuvee,
         'vintage', w.vintage,
         'contributorName', (select display_name from guests where id = w.contributor_guest_id),
+        'contributorStyleSequence', w.contributor_style_sequence,
         'myRating', (select rating from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
         'myConfidence', (select confidence from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
         'myNote', (select tasting_note from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
@@ -3641,6 +3714,8 @@ declare
   v_cellar cellar_bottles%rowtype;
   v_next_number int;
   v_next_order int;
+  v_style_bucket text;
+  v_contributor_style_sequence int;
   v_wine_id uuid;
 begin
   select * into v_guest from guests where guest_token = p_guest_token;
@@ -3668,14 +3743,22 @@ begin
   select coalesce(max(tasting_order), 0) + 1 into v_next_order
   from wines where session_id = v_session.id;
 
+  -- See register_bottle's identical "Contributor style sequence" comment above.
+  v_style_bucket := case v_cellar.wine_style when 'red' then 'red' when 'white' then 'white' when 'bubbles' then 'bubbles' else 'other' end;
+  select count(*) + 1 into v_contributor_style_sequence
+  from wines
+  where session_id = v_session.id
+    and contributor_guest_id = v_guest.id
+    and (case wine_style when 'red' then 'red' when 'white' then 'white' when 'bubbles' then 'bubbles' else 'other' end) = v_style_bucket;
+
   insert into wines (
     session_id, display_order, bottle_number, tasting_order, anonymous_code, contributor_guest_id,
     country, region, appellation, grape_style, grape_blend_mode, grape_blend_components, producer, wine_cuvee,
-    vintage, wine_style, cellar_bottle_id
+    vintage, wine_style, cellar_bottle_id, contributor_style_sequence
   ) values (
     v_session.id, v_next_number - 1, v_next_number, v_next_order, 'Bottle ' || v_next_number, v_guest.id,
     v_cellar.country, v_cellar.region, v_cellar.appellation, v_cellar.grape_blend, v_cellar.grape_blend_mode, v_cellar.grape_blend_components,
-    v_cellar.producer, v_cellar.wine_cuvee, v_cellar.vintage, v_cellar.wine_style, v_cellar.id
+    v_cellar.producer, v_cellar.wine_cuvee, v_cellar.vintage, v_cellar.wine_style, v_cellar.id, v_contributor_style_sequence
   )
   returning wines.id into v_wine_id;
 
@@ -3731,6 +3814,8 @@ declare
   v_next_number int;
   v_next_order int;
   v_first_bottle_number int;
+  v_style_bucket text;
+  v_first_contributor_style_sequence int;
   v_wine_ids uuid[];
 begin
   select * into v_guest from guests where guest_token = p_guest_token;
@@ -3795,11 +3880,23 @@ begin
   from wines where session_id = v_session.id;
   v_first_bottle_number := v_next_number;
 
+  -- See register_bottle's "Contributor style sequence" comment above. Every
+  -- row in this group shares one wine_style (enforced by the matching WHERE
+  -- clause above), so one base ordinal computed here plus each row's (ord -
+  -- 1) offset gives every inserted bottle its own stable, gap-free sequence
+  -- within this batch.
+  v_style_bucket := case v_anchor.wine_style when 'red' then 'red' when 'white' then 'white' when 'bubbles' then 'bubbles' else 'other' end;
+  select count(*) + 1 into v_first_contributor_style_sequence
+  from wines
+  where session_id = v_session.id
+    and contributor_guest_id = v_guest.id
+    and (case wine_style when 'red' then 'red' when 'white' then 'white' when 'bubbles' then 'bubbles' else 'other' end) = v_style_bucket;
+
   with inserted as (
     insert into wines (
       session_id, display_order, bottle_number, tasting_order, anonymous_code, contributor_guest_id,
       country, region, appellation, grape_style, grape_blend_mode, grape_blend_components, producer, wine_cuvee,
-      vintage, wine_style, cellar_bottle_id
+      vintage, wine_style, cellar_bottle_id, contributor_style_sequence
     )
     select
       v_session.id,
@@ -3809,7 +3906,7 @@ begin
       'Bottle ' || (v_first_bottle_number + (u.ord - 1)),
       v_guest.id,
       cb.country, cb.region, cb.appellation, cb.grape_blend, cb.grape_blend_mode, cb.grape_blend_components,
-      cb.producer, cb.wine_cuvee, cb.vintage, cb.wine_style, cb.id
+      cb.producer, cb.wine_cuvee, cb.vintage, cb.wine_style, cb.id, v_first_contributor_style_sequence + (u.ord - 1)
     from unnest(v_ids) with ordinality as u(cellar_id, ord)
     join cellar_bottles cb on cb.id = u.cellar_id
     returning wines.id as wine_id, wines.cellar_bottle_id as cellar_id, wines.bottle_number as bottle_number

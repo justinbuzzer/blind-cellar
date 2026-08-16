@@ -71,6 +71,7 @@ function makeResponse(
       vintage: "2016",
       wineStyle: "red",
       contributorName: "Alice",
+      contributorStyleSequence: 1,
       ...overrides,
     },
     submitted: guesses.length > 0,

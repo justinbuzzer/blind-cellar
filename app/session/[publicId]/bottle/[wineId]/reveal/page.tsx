@@ -18,6 +18,7 @@ import { getRevealedBottle } from "@/lib/supabase/guestActions";
 import { buildRevealedBottleResult } from "@/lib/supabase/mappers";
 import { ParticipantScoreBreakdown } from "@/components/report/ParticipantScoreBreakdown";
 import { RevealedBottleWineDTO } from "@/lib/supabase/types";
+import { formatContributorBottleLabel, wineStyleToContributorBucket } from "@/lib/contributorLabel";
 import { WINE_STYLE_LABELS, WineResult } from "@/types/tasting";
 import { getGuestToken } from "@/lib/deviceStorage";
 
@@ -142,7 +143,14 @@ export default function BottleRevealPage() {
           <AnswerRow label="Producer" value={wine.producer} />
           <AnswerRow label="Wine / cuvée" value={wine.wineName} />
           <AnswerRow label="Style" value={WINE_STYLE_LABELS[wine.wineStyle]} />
-          <AnswerRow label="Contributed by" value={wine.contributorName} />
+          <AnswerRow
+            label="Contributed by"
+            value={formatContributorBottleLabel({
+              contributorDisplayName: wine.contributorName,
+              styleBucket: wineStyleToContributorBucket(wine.wineStyle),
+              contributorStyleSequence: wine.contributorStyleSequence,
+            })}
+          />
         </dl>
         <p className="border-t border-cellar-border pt-3 text-xs text-cellar-muted">
           Bottle {wineInfo.position} of {wineInfo.totalBottles}

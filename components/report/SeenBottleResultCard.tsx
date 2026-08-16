@@ -2,6 +2,7 @@ import { SeenBottleResult, WINE_STYLE_LABELS } from "@/types/tasting";
 import { compactWineLocationLabel } from "@/lib/appellations";
 import { Card } from "@/components/Card";
 import { Stat } from "@/components/Stat";
+import { ContributorLine } from "./ContributorLine";
 
 interface SeenBottleResultCardProps {
   result: SeenBottleResult;
@@ -47,11 +48,11 @@ export function SeenBottleResultCard({ result, totalWines }: SeenBottleResultCar
           Style: {WINE_STYLE_LABELS[wine.wineStyle]} · Served {ordinal(wine.tastingOrder)}{" "}
           (tasting order {wine.tastingOrder} of {totalWines})
         </p>
-        {wine.contributorName && (
-          <p className="mt-1 text-sm text-cellar-muted">
-            Contributed by <span className="font-medium text-cellar-text">{wine.contributorName}</span>
-          </p>
-        )}
+        <ContributorLine
+          contributorName={wine.contributorName}
+          wineStyle={wine.wineStyle}
+          contributorStyleSequence={wine.contributorStyleSequence}
+        />
       </div>
 
       <div className="grid grid-cols-3 gap-3 rounded-sm bg-cellar-bg-deep p-3 text-center sm:grid-cols-5">

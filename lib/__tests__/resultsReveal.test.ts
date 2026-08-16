@@ -39,6 +39,7 @@ function makeWine(overrides: Partial<RevealedBottleWineDTO> = {}): RevealedBottl
     vintage: "2019",
     wineStyle: "red",
     contributorName: "Alice",
+    contributorStyleSequence: 1,
     ...overrides,
   };
 }

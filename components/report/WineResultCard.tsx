@@ -7,6 +7,7 @@ import { compactWineLocationLabel } from "@/lib/appellations";
 import { Card } from "@/components/Card";
 import { MatchBadge } from "@/components/MatchBadge";
 import { Stat } from "@/components/Stat";
+import { ContributorLine } from "./ContributorLine";
 
 const FIELD_LABELS: Record<string, string> = {
   country: "Country",
@@ -70,11 +71,11 @@ export function WineResultCard({ result, rank, totalWines, showNotes = false }: 
           Style: {WINE_STYLE_LABELS[wine.wineStyle]} · Served {ordinal(wine.tastingOrder)}{" "}
           (tasting order {wine.tastingOrder} of {totalWines})
         </p>
-        {wine.contributorName && (
-          <p className="mt-1 text-sm text-cellar-muted">
-            Contributed by <span className="font-medium text-cellar-text">{wine.contributorName}</span>
-          </p>
-        )}
+        <ContributorLine
+          contributorName={wine.contributorName}
+          wineStyle={wine.wineStyle}
+          contributorStyleSequence={wine.contributorStyleSequence}
+        />
         {wine.hostNotes && (
           <p className="mt-1 text-sm italic text-cellar-muted">
             &ldquo;{wine.hostNotes}&rdquo;

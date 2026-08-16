@@ -17,6 +17,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { getSeenTastingState, upsertSeenRating } from "@/lib/supabase/guestActions";
 import { friendlyRpcError, SeenBottleDTO } from "@/lib/supabase/types";
 import { formatSeenGroupRating } from "@/lib/seenHostControls";
+import { formatContributorBottleLabel, wineStyleToContributorBucket } from "@/lib/contributorLabel";
 import { Confidence, WINE_STYLE_LABELS } from "@/types/tasting";
 import { getGuestToken } from "@/lib/deviceStorage";
 
@@ -160,6 +161,12 @@ export default function SeenBottleRatingPage() {
     );
   }
 
+  const contributorLabel = formatContributorBottleLabel({
+    contributorDisplayName: bottle.contributorName,
+    styleBucket: wineStyleToContributorBucket(bottle.wineStyle),
+    contributorStyleSequence: bottle.contributorStyleSequence,
+  });
+
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-6 px-6 py-10">
       <div className="flex items-center gap-2">
@@ -180,13 +187,7 @@ export default function SeenBottleRatingPage() {
           </p>
           <p className="mt-1 text-sm text-cellar-muted">
             Style: {WINE_STYLE_LABELS[bottle.wineStyle]}
-            {bottle.contributorName && (
-              <>
-                {" "}
-                · Contributed by{" "}
-                <span className="font-medium text-cellar-text">{bottle.contributorName}</span>
-              </>
-            )}
+            {contributorLabel && <> · {contributorLabel}</>}
           </p>
         </div>
 

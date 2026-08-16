@@ -1,5 +1,6 @@
 import { WineAnswerKey } from "@/types/tasting";
 import { compactWineLocationLabel } from "@/lib/appellations";
+import { ContributorLine } from "./ContributorLine";
 
 /**
  * The actual-wine identity block shown once a bottle is revealed — see
@@ -19,11 +20,11 @@ export function RevealedWineIdentity({ wine }: { wine: WineAnswerKey }) {
       <p className="mt-1 text-sm text-cellar-muted">
         {[compactWineLocationLabel(wine), wine.grapeBlend].filter(Boolean).join(" · ")}
       </p>
-      {wine.contributorName && (
-        <p className="mt-1 text-sm text-cellar-muted">
-          Contributed by <span className="font-medium text-cellar-text">{wine.contributorName}</span>
-        </p>
-      )}
+      <ContributorLine
+        contributorName={wine.contributorName}
+        wineStyle={wine.wineStyle}
+        contributorStyleSequence={wine.contributorStyleSequence}
+      />
     </div>
   );
 }

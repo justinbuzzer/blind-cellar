@@ -136,6 +136,8 @@ function guestSession(
         anonymousCode: "Bottle 1",
         styleHint: "all_skins",
         contributorName: null,
+        contributorStyleBucket: null,
+        contributorStyleSequence: null,
         isOwnBottle: false,
       },
     ],

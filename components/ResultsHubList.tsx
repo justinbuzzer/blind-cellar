@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
-import { formatBlindBottleLabel } from "@/lib/codes";
+import { bottleLabel } from "@/lib/codes";
+import { formatContributorBottleLabel } from "@/lib/contributorLabel";
 import { RevealedBottleSummaryDTO } from "@/lib/supabase/types";
 
 interface ResultsHubListProps {
@@ -28,23 +29,33 @@ export function ResultsHubList({ bottles, allRevealed, resultHref, leaderboardHr
     <div className="flex flex-col gap-6">
       <Card className="p-0">
         <ol className="divide-y divide-cellar-border">
-          {bottles.map((bottle) => (
-            <li key={bottle.wineId} className="flex items-center justify-between gap-3 px-4 py-3">
-              <div>
-                <p className="text-sm font-medium text-cellar-text">
-                  {formatBlindBottleLabel(bottle.bottleNumber, bottle.contributorName)}
-                </p>
-                <p className="text-xs text-cellar-muted">
-                  {bottle.isRevealed ? "Revealed" : "Unrevealed"}
-                </p>
-              </div>
-              {bottle.isRevealed && (
-                <Link href={resultHref(bottle.wineId)}>
-                  <Button variant="secondary">View results</Button>
-                </Link>
-              )}
-            </li>
-          ))}
+          {bottles.map((bottle) => {
+            // Style/sequence come back null for a still-unrevealed bottle
+            // (see get_revealed_bottles_summary in supabase/schema.sql) — the
+            // contributor's name alone (never secret) still comes through,
+            // so this naturally falls back to the bare name for those rows.
+            const contributorLabel = formatContributorBottleLabel({
+              contributorDisplayName: bottle.contributorName,
+              styleBucket: bottle.contributorStyleBucket,
+              contributorStyleSequence: bottle.contributorStyleSequence,
+            });
+            return (
+              <li key={bottle.wineId} className="flex items-center justify-between gap-3 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium text-cellar-text">{bottleLabel(bottle.bottleNumber)}</p>
+                  {contributorLabel && <p className="text-xs text-cellar-muted">{contributorLabel}</p>}
+                  <p className="text-xs text-cellar-muted">
+                    {bottle.isRevealed ? "Revealed" : "Unrevealed"}
+                  </p>
+                </div>
+                {bottle.isRevealed && (
+                  <Link href={resultHref(bottle.wineId)}>
+                    <Button variant="secondary">View results</Button>
+                  </Link>
+                )}
+              </li>
+            );
+          })}
         </ol>
       </Card>
 

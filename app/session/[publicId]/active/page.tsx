@@ -29,7 +29,7 @@ import { emptyWineGuess } from "@/lib/guess";
 import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend, invalidOtherGrapeGuessMessage } from "@/lib/validation";
 import { getGuestToken, getHostToken } from "@/lib/deviceStorage";
 import { waitingToRevealImage } from "@/lib/appImages";
-import { formatBlindBottleLabel } from "@/lib/codes";
+import { buildBottleDisplayLabels, formatBottleAccessibleLabel, formatContributorBottleLabel } from "@/lib/contributorLabel";
 import { WineGuess } from "@/types/tasting";
 
 type LoadState =
@@ -360,6 +360,13 @@ export default function ActiveBottlePage() {
   }
 
   if (loadState === "locked") {
+    const lockedContributorLabel = activeBottle
+      ? formatContributorBottleLabel({
+          contributorDisplayName: activeBottle.contributorName,
+          styleBucket: activeBottle.contributorStyleBucket,
+          contributorStyleSequence: activeBottle.contributorStyleSequence,
+        })
+      : null;
     return (
       <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-6 px-6 py-6">
         <div className="flex items-center gap-2">
@@ -371,10 +378,11 @@ export default function ActiveBottlePage() {
           <ImageBand image={waitingToRevealImage} className="absolute inset-0" />
           <div className="relative flex flex-col items-center gap-2">
             <p className="text-xs font-medium uppercase tracking-[0.2em] text-cellar-gold">
-              {activeBottle
-                ? formatBlindBottleLabel(activeBottle.bottleNumber, activeBottle.contributorName)
-                : "Your bottle"}
+              {activeBottle ? `Bottle ${activeBottle.bottleNumber}` : "Your bottle"}
             </p>
+            {lockedContributorLabel && (
+              <p className="text-xs text-cellar-bg/70">{lockedContributorLabel}</p>
+            )}
             <h1 className="font-display text-2xl font-semibold text-cellar-bg">
               Your guess is locked
             </h1>
@@ -390,9 +398,15 @@ export default function ActiveBottlePage() {
 
   if (!activeBottle || !guess) return null;
 
-  const activeBottleLabel = formatBlindBottleLabel(
+  const activeContributorLabelInput = {
+    contributorDisplayName: activeBottle.contributorName,
+    styleBucket: activeBottle.contributorStyleBucket,
+    contributorStyleSequence: activeBottle.contributorStyleSequence,
+  };
+  const activeBottleLabels = buildBottleDisplayLabels(activeBottle.bottleNumber, activeContributorLabelInput);
+  const activeBottleAccessibleLabel = formatBottleAccessibleLabel(
     activeBottle.bottleNumber,
-    activeBottle.contributorName
+    activeContributorLabelInput
   );
 
   return (
@@ -414,18 +428,19 @@ export default function ActiveBottlePage() {
       <ProgressBar
         current={activeBottle.position}
         total={activeBottle.totalBottles}
-        label={`${activeBottleLabel} — ${activeBottle.position} of ${activeBottle.totalBottles}`}
+        label={`${activeBottleLabels.tastingOrderLabel} — ${activeBottle.position} of ${activeBottle.totalBottles}`}
       />
 
       {activeBottle.isOwnBottle ? (
-        <OwnerBottleView wineLabel={activeBottleLabel} />
+        <OwnerBottleView bottleLabels={activeBottleLabels} bottleAccessibleLabel={activeBottleAccessibleLabel} />
       ) : (
         <>
           <GuessGroupProgress progress={hostGuessProgress} />
 
           <WineGuessForm
             key={activeBottle.id}
-            wineCode={activeBottleLabel}
+            bottleLabels={activeBottleLabels}
+            bottleAccessibleLabel={activeBottleAccessibleLabel}
             value={guess}
             onChange={updateGuess}
             styleHint={activeBottle.styleHint}

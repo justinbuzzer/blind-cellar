@@ -3,6 +3,7 @@ import { Button } from "@/components/Button";
 import { SeenBottleDTO } from "@/lib/supabase/types";
 import { compactWineLocationLabel } from "@/lib/appellations";
 import { formatSeenGroupRating } from "@/lib/seenHostControls";
+import { formatContributorBottleLabel, wineStyleToContributorBucket } from "@/lib/contributorLabel";
 import { WINE_STYLE_LABELS } from "@/types/tasting";
 
 interface SeenBottleCardProps {
@@ -19,6 +20,11 @@ interface SeenBottleCardProps {
 export function SeenBottleCard({ publicId, bottle }: SeenBottleCardProps) {
   const rated = bottle.myRating !== null;
   const revealed = bottle.ratingsRevealedAt !== null;
+  const contributorLabel = formatContributorBottleLabel({
+    contributorDisplayName: bottle.contributorName,
+    styleBucket: wineStyleToContributorBucket(bottle.wineStyle),
+    contributorStyleSequence: bottle.contributorStyleSequence,
+  });
 
   return (
     <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -34,13 +40,7 @@ export function SeenBottleCard({ publicId, bottle }: SeenBottleCardProps) {
         </p>
         <p className="mt-1 text-sm text-cellar-muted">
           Style: {WINE_STYLE_LABELS[bottle.wineStyle]}
-          {bottle.contributorName && (
-            <>
-              {" "}
-              · Contributed by{" "}
-              <span className="font-medium text-cellar-text">{bottle.contributorName}</span>
-            </>
-          )}
+          {contributorLabel && <> · {contributorLabel}</>}
         </p>
       </div>
 

@@ -32,6 +32,23 @@ export const WINE_STYLE_LABELS: Record<WineStyle, string> = {
 };
 
 /**
+ * The coarser style grouping used for contributor bottle labels (see README
+ * "Bottle labels") — "Ava — Red #1". Distinct from WineStyle/WINE_STYLE_LABELS
+ * above: sweet and other both collapse into "other" here (display "Other"),
+ * since this app has never distinguished them from each other in any
+ * participant-facing copy, and a contributor label groups/sequences bottles
+ * by this same bucket, not by the raw five-value WineStyle.
+ */
+export type ContributorStyleBucket = "red" | "white" | "bubbles" | "other";
+
+export const CONTRIBUTOR_STYLE_BUCKET_LABELS: Record<ContributorStyleBucket, string> = {
+  red: "Red",
+  white: "White",
+  bubbles: "Bubbles",
+  other: "Other",
+};
+
+/**
  * The wine-identity fields shared, unchanged, by both the tasting bottle
  * form and the Personal Cellar bottle form (see README "Personal Cellar")
  * — kept as one shape so the two can never drift into divergent field sets
@@ -131,6 +148,10 @@ export interface WineAnswerKey {
   contributorName?: string;
   /** Contributor's guest id. Only ever populated after reveal — used by the Palate Profile ledger's "Contributed by you" label (see README "Palate Profile"); never inferred from display name. */
   contributorGuestId?: string;
+  /** Bucketed style for the contributor bottle label (see README "Bottle labels") — derived client-side from wineStyle via wineStyleToContributorBucket, since this field is only ever populated after reveal, same as wineStyle/contributorName. */
+  contributorStyleBucket?: ContributorStyleBucket;
+  /** This contributor's stable 1-based ordinal within contributorStyleBucket for this session — see lib/contributorLabel.ts formatContributorBottleLabel. Only ever populated after reveal. */
+  contributorStyleSequence?: number;
 }
 
 /**
