@@ -16,6 +16,7 @@ import { SeenTastingReportView } from "@/components/report/SeenTastingReportView
 import { ClaimPanel } from "@/components/archive/ClaimPanel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { loadTastingReportData } from "@/lib/supabase/reportData";
+import { buildReportPdfFilename } from "@/lib/pdfFilename";
 import { useAuthUser } from "@/lib/supabase/useAuthUser";
 import { getGuestToken, getHostToken } from "@/lib/deviceStorage";
 import { getGuestSessionState } from "@/lib/supabase/guestActions";
@@ -50,6 +51,7 @@ export default function ResultsPage() {
   // no benefit here).
   const [reportContext, setReportContext] = useState<ReportContext>("none");
   const [claimEligibility, setClaimEligibility] = useState<ClaimEligibility | null>(null);
+  const [pdfState, setPdfState] = useState<"idle" | "generating" | "error">("idle");
 
   useEffect(() => {
     const from = new URLSearchParams(window.location.search).get("from");
@@ -167,6 +169,70 @@ export default function ResultsPage() {
 
     return null;
   }, [params.publicId]);
+
+  /**
+   * Builds the same downloadable PDF for host and participant alike, from
+   * data this page has already fetched and been authorized to see — no new
+   * fetch, no new RPC (see README "Downloadable PDF summary"). Dynamically
+   * imports both @react-pdf/renderer and the matching document component so
+   * that ~1MB PDF-generation library only ever loads into a browser that
+   * actually clicks the button, never into this page's initial bundle.
+   */
+  const handleDownloadPdf = useCallback(async () => {
+    if (!access || (!report && !seenReport)) return;
+    setPdfState("generating");
+    try {
+      const { pdf } = await import("@react-pdf/renderer");
+      const modeLabelForPdf = TASTING_MODE_LABELS[access.session.tastingMode];
+      const dateLabelForPdf = access.session.tastingDate
+        ? new Date(access.session.tastingDate).toLocaleDateString(undefined, {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          })
+        : "";
+
+      let blob: Blob;
+      if (seenReport) {
+        const { SeenTastingReportPdfDocument } = await import(
+          "@/components/report/pdf/SeenTastingReportPdfDocument"
+        );
+        blob = await pdf(
+          <SeenTastingReportPdfDocument
+            report={seenReport}
+            title={access.session.title}
+            dateLabel={dateLabelForPdf}
+            modeLabel={modeLabelForPdf}
+          />
+        ).toBlob();
+      } else {
+        const { TastingReportPdfDocument } = await import(
+          "@/components/report/pdf/TastingReportPdfDocument"
+        );
+        blob = await pdf(
+          <TastingReportPdfDocument
+            report={report!}
+            title={access.session.title}
+            dateLabel={dateLabelForPdf}
+            modeLabel={modeLabelForPdf}
+            showNotes={access.role === "participant"}
+          />
+        ).toBlob();
+      }
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = buildReportPdfFilename(access.session.title, access.session.tastingDate);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setPdfState("idle");
+    } catch {
+      setPdfState("error");
+    }
+  }, [access, report, seenReport]);
 
   const refresh = useCallback(async () => {
     const resolved = await resolveAccess();
@@ -305,6 +371,15 @@ export default function ResultsPage() {
         title={access.session.title}
         supporting={[dateLabel, modeLabel].filter(Boolean).join(" · ")}
       />
+
+      <div className="flex flex-col items-start gap-1.5">
+        <Button type="button" variant="secondary" onClick={handleDownloadPdf} disabled={pdfState === "generating"}>
+          {pdfState === "generating" ? "Preparing PDF…" : "Download PDF summary"}
+        </Button>
+        {pdfState === "error" && (
+          <p className="text-xs text-cellar-danger">Couldn&rsquo;t generate the PDF. Please try again.</p>
+        )}
+      </div>
 
       {claimEligibility && (
         <ClaimPanel
