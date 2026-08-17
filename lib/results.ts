@@ -184,18 +184,22 @@ function calculateTasterResultsLegacyV1(
 }
 
 /**
- * core_v3_appellation_conditional ONLY — because bottles can be scored out
- * of either 80 or 100 points (depending on whether the actual wine has an
- * Appellation), raw cumulative points are never a fair ranking basis here.
- * Instead: percentage accuracy = sum(earned) / sum(possible for the bottles
- * this taster actually submitted a guess for) * 100, primary key. Bottles
- * the taster never guessed on are excluded from both sums, so a taster who
- * only saw 80-point wines is compared fairly against one who only saw
- * 100-point wines. Ties break on: raw points earned, then number of
- * submitted guesses, then exact core-category matches (the same final
- * tie-break legacy_v1 uses).
+ * Any non-legacy_v1 session (core_v3_appellation_conditional or
+ * core_v4_partial_credit) — because bottles can be scored out of either 120
+ * or 140 points (depending on whether the actual wine has an Appellation),
+ * raw cumulative points are never a fair ranking basis here. Instead:
+ * percentage accuracy = sum(earned) / sum(possible for the bottles this
+ * taster actually submitted a guess for) * 100, primary key. Bottles the
+ * taster never guessed on are excluded from both sums, so a taster who only
+ * saw 120-point wines is compared fairly against one who only saw 140-point
+ * wines. Ties break on: raw points earned, then number of submitted
+ * guesses, then exact core-category matches (the same final tie-break
+ * legacy_v1 uses). This function's own math is version-agnostic — it just
+ * sums whatever points/possible-points scoreWineGuess already computed for
+ * the session's own scoringVersion, so it needs no changes to support a
+ * further non-legacy version beyond passing that version through.
  */
-function calculateTasterResultsCoreV3(
+function calculateTasterResultsPercentageBased(
   session: TastingSession,
   submissions: GuestSubmission[]
 ): TasterResult[] {
@@ -218,7 +222,7 @@ function calculateTasterResultsCoreV3(
         submission.guestName,
         guess,
         wine,
-        "core_v3_appellation_conditional"
+        session.scoringVersion
       );
       corePoints += scored.corePoints;
       totalPoints += scored.totalPoints;
@@ -266,15 +270,15 @@ function calculateTasterResultsCoreV3(
 /**
  * Computes the taster leaderboard for a session, dispatching to the version
  * whose math actually applies to it — see calculateTasterResultsLegacyV1 /
- * calculateTasterResultsCoreV3. Never used for Seen tastings, which have no
- * scoring or leaderboard at all (see lib/seenResults.ts).
+ * calculateTasterResultsPercentageBased. Never used for Seen tastings, which
+ * have no scoring or leaderboard at all (see lib/seenResults.ts).
  */
 export function calculateTasterResults(
   session: TastingSession,
   submissions: GuestSubmission[]
 ): TasterResult[] {
-  return session.scoringVersion === "core_v3_appellation_conditional"
-    ? calculateTasterResultsCoreV3(session, submissions)
+  return session.scoringVersion !== "legacy_v1"
+    ? calculateTasterResultsPercentageBased(session, submissions)
     : calculateTasterResultsLegacyV1(session, submissions);
 }
 

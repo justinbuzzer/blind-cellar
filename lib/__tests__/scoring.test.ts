@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   calculateBlindScoreV3,
+  calculateBlindScoreV4,
   scoreBonusTextField,
   scoreCoreTextField,
+  scoreCuveeWithPartialCredit,
   scoreGrapeBlend,
+  scoreProducerWithPartialCredit,
+  scoreVintageWithPartialCredit,
   scoreWineGuess,
   scoreWineGuessCoreV3,
+  scoreWineGuessCoreV4,
 } from "@/lib/scoring";
 import { combineBlendComponents } from "@/lib/wineReferenceData";
 import {
@@ -18,12 +23,16 @@ import {
 } from "@/types/tasting";
 
 describe("scoring version constants", () => {
-  it("assigns new sessions core_v3_appellation_conditional, never a client-influenced value", () => {
-    expect(CURRENT_SCORING_VERSION).toBe("core_v3_appellation_conditional");
+  it("assigns new sessions core_v4_partial_credit, never a client-influenced value", () => {
+    expect(CURRENT_SCORING_VERSION).toBe("core_v4_partial_credit");
   });
 
-  it("supports exactly the two scoring versions that have ever actually been deployed", () => {
-    expect(SCORING_VERSIONS).toEqual(["legacy_v1", "core_v3_appellation_conditional"]);
+  it("supports exactly the three scoring versions that have ever actually been deployed", () => {
+    expect(SCORING_VERSIONS).toEqual([
+      "legacy_v1",
+      "core_v3_appellation_conditional",
+      "core_v4_partial_credit",
+    ]);
   });
 });
 
@@ -179,6 +188,65 @@ describe("scoreGrapeBlend", () => {
   it("does not crash or special-case a custom guess against a curated actual grape (and vice versa)", () => {
     expect(scoreGrapeBlend("single", "Mondeuse Blanche", "single", "Chardonnay").correct).toBe(false);
     expect(scoreGrapeBlend("single", "Chardonnay", "single", "Mondeuse Blanche").correct).toBe(false);
+  });
+});
+
+describe("scoreGrapeBlend with allowPartialCredit (core_v4_partial_credit only)", () => {
+  it("still awards full points for an exact blend match, correct: true", () => {
+    const result = scoreGrapeBlend(
+      "blend",
+      "Merlot / Cabernet Sauvignon",
+      "blend",
+      "Cabernet Sauvignon / Merlot",
+      20,
+      true
+    );
+    expect(result.correct).toBe(true);
+    expect(result.points).toBe(20);
+  });
+
+  it("awards proportional Jaccard-overlap credit for a partial blend overlap, correct: false", () => {
+    // guess {Cabernet Sauvignon, Merlot}, answer {Cabernet Sauvignon, Merlot,
+    // Cabernet Franc} -> intersection 2, union 3 -> 2/3 * 20 = 13.33 -> 13
+    const result = scoreGrapeBlend(
+      "blend",
+      "Cabernet Sauvignon / Merlot",
+      "blend",
+      "Cabernet Sauvignon / Merlot / Cabernet Franc",
+      20,
+      true
+    );
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(13);
+  });
+
+  it("awards zero points for zero overlap", () => {
+    const result = scoreGrapeBlend("blend", "Merlot / Cabernet Sauvignon", "blend", "Syrah / Grenache", 20, true);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+
+  it("never awards partial credit for a mode mismatch, even with allowPartialCredit: true", () => {
+    const result = scoreGrapeBlend("single", "Grenache", "blend", "Grenache / Syrah / Mourvèdre", 20, true);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+
+  it("does not affect single-variety scoring", () => {
+    const result = scoreGrapeBlend("single", "Merlot", "single", "Malbec", 20, true);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+
+  it("defaults to false, reproducing the exact same all-or-nothing behaviour as every existing call site", () => {
+    const withoutFlag = scoreGrapeBlend(
+      "blend",
+      "Cabernet Sauvignon / Merlot",
+      "blend",
+      "Cabernet Sauvignon / Merlot / Cabernet Franc"
+    );
+    expect(withoutFlag.correct).toBe(false);
+    expect(withoutFlag.points).toBe(0);
   });
 });
 
@@ -578,5 +646,158 @@ describe("calculateBlindScoreV3 / scoreWineGuessCoreV3 (core_v3_appellation_cond
       "core_v3_appellation_conditional"
     );
     expect(scored.fieldScores.find((f) => f.field === "producer")?.correct).toBe(true);
+  });
+});
+
+describe("scoreVintageWithPartialCredit (core_v4_partial_credit only)", () => {
+  it("awards full points for an exact match, correct: true", () => {
+    const result = scoreVintageWithPartialCredit("2016", "2016", 20);
+    expect(result.correct).toBe(true);
+    expect(result.points).toBe(20);
+  });
+
+  it("matches NV against NV and awards full points", () => {
+    const result = scoreVintageWithPartialCredit("nv", "NV", 20);
+    expect(result.correct).toBe(true);
+    expect(result.points).toBe(20);
+  });
+
+  it("awards half credit for a guess exactly one year off, either direction", () => {
+    expect(scoreVintageWithPartialCredit("2017", "2016", 20)).toMatchObject({ correct: false, points: 10 });
+    expect(scoreVintageWithPartialCredit("2015", "2016", 20)).toMatchObject({ correct: false, points: 10 });
+  });
+
+  it("awards zero points for a guess two or more years off", () => {
+    const result = scoreVintageWithPartialCredit("2014", "2016", 20);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+
+  it("never awards partial credit between NV and a specific year, either direction", () => {
+    expect(scoreVintageWithPartialCredit("NV", "2016", 20)).toMatchObject({ correct: false, points: 0 });
+    expect(scoreVintageWithPartialCredit("2016", "NV", 20)).toMatchObject({ correct: false, points: 0 });
+  });
+
+  it("awards zero points for a blank guess", () => {
+    const result = scoreVintageWithPartialCredit("", "2016", 20);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+
+  it("awards zero points for a malformed guess", () => {
+    const result = scoreVintageWithPartialCredit("202X", "2016", 20);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+});
+
+describe("scoreProducerWithPartialCredit / scoreCuveeWithPartialCredit (core_v4_partial_credit only)", () => {
+  it("awards full points for an exact Producer match, reusing isProducerBlindMatch's descriptor tolerance unchanged", () => {
+    const result = scoreProducerWithPartialCredit("Leflaive", "Domaine Leflaive", 20);
+    expect(result.correct).toBe(true);
+    expect(result.points).toBe(20);
+  });
+
+  it("awards half credit for a small Producer typo within the relative-distance threshold", () => {
+    // "giacomo conterno" normalizes to 16 chars; floor(16 * 0.15) = 2.
+    // "Giacono Conterno" is a single substitution away (m -> n), distance 1.
+    const result = scoreProducerWithPartialCredit("Giacono Conterno", "Giacomo Conterno", 20);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(10);
+  });
+
+  it("awards zero points for a Producer name materially different from the answer", () => {
+    const result = scoreProducerWithPartialCredit("Domaine Leflaive", "Giacomo Conterno", 20);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+
+  it("awards zero points for a blank Producer guess, never partial credit", () => {
+    const result = scoreProducerWithPartialCredit("", "Giacomo Conterno", 20);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+
+  it("never awards partial credit on a short Producer name, even for a single-character edit (floored threshold is 0)", () => {
+    // "krug" normalizes to 4 chars; floor(4 * 0.15) = 0.
+    const result = scoreProducerWithPartialCredit("Krue", "Krug", 20);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+
+  it("awards full points for an exact Wine/cuvée match (case-insensitive only, no descriptor tolerance)", () => {
+    const result = scoreCuveeWithPartialCredit("cascina francia", "Cascina Francia", 20);
+    expect(result.correct).toBe(true);
+    expect(result.points).toBe(20);
+  });
+
+  it("awards half credit for a small Wine/cuvée typo within the relative-distance threshold", () => {
+    // "cascina francia" normalizes to 15 chars; floor(15 * 0.15) = 2.
+    // "Cascina Francis" is a single substitution away (a -> s), distance 1.
+    const result = scoreCuveeWithPartialCredit("Cascina Francis", "Cascina Francia", 20);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(10);
+  });
+
+  it("awards zero points for a Wine/cuvée materially different from the answer", () => {
+    const result = scoreCuveeWithPartialCredit("Special Cuvee", "Cascina Francia", 20);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+
+  it("awards zero points for a blank Wine/cuvée guess, never partial credit", () => {
+    const result = scoreCuveeWithPartialCredit("", "Cascina Francia", 20);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+});
+
+describe("calculateBlindScoreV4 / scoreWineGuessCoreV4 (core_v4_partial_credit)", () => {
+  it("totals 140/140 for a fully correct guess when the actual wine has an Appellation — same shape as core_v3", () => {
+    const answerWithAppellation: WineAnswerKey = { ...answer, appellation: "Barolo" };
+    const blind = calculateBlindScoreV4(makeGuess({ appellation: "Barolo" }), answerWithAppellation);
+    expect(blind.corePoints).toBe(140);
+    expect(blind.corePossiblePoints).toBe(140);
+    expect(blind.totalPoints).toBe(140);
+    expect(blind.totalPossiblePoints).toBe(140);
+  });
+
+  it("totals 120/120 for a fully correct guess when the actual wine has no Appellation", () => {
+    const blind = calculateBlindScoreV4(makeGuess(), answer);
+    expect(blind.appellationApplicable).toBe(false);
+    expect(blind.corePoints).toBe(120);
+    expect(blind.corePossiblePoints).toBe(120);
+  });
+
+  it("sums a mix of exact and partial-credit fields correctly, without changing the 120-point denominator", () => {
+    // country (20, exact) + region (20, exact) + appellation (n/a, 0/0) +
+    // grapeBlend (20, exact) + vintage (10, one year off) + producer (10,
+    // one-character typo) + wineName (20, exact) = 100 / 120.
+    const guess = makeGuess({ vintage: "2017", producer: "Giacomo Contern" });
+    const blind = calculateBlindScoreV4(guess, answer);
+    expect(blind.vintageCorrect).toBe(false);
+    expect(blind.vintagePoints).toBe(10);
+    expect(blind.producerCorrect).toBe(false);
+    expect(blind.producerPoints).toBe(10);
+    expect(blind.corePoints).toBe(100);
+    expect(blind.corePossiblePoints).toBe(120);
+    expect(blind.totalPossiblePoints).toBe(120);
+  });
+
+  it("scoreWineGuessCoreV4 folds every field into scored core FieldScores, no bonus tier, correct scoringVersion", () => {
+    const scored = scoreWineGuessCoreV4("guest-1", "Alice", makeGuess({ vintage: "2017" }), answer);
+    expect(scored.fieldScores.every((f) => f.category === "core")).toBe(true);
+    expect(scored.bonusPoints).toBe(0);
+    expect(scored.bonusPossiblePoints).toBe(0);
+    expect(scored.scoringVersion).toBe("core_v4_partial_credit");
+    const vintageField = scored.fieldScores.find((f) => f.field === "vintage");
+    expect(vintageField?.correct).toBe(false);
+    expect(vintageField?.points).toBe(10);
+  });
+
+  it("dispatches to core_v4 via the shared scoreWineGuess entry point when given that version", () => {
+    const scored = scoreWineGuess("guest-1", "Alice", makeGuess(), answer, "core_v4_partial_credit");
+    expect(scored.scoringVersion).toBe("core_v4_partial_credit");
+    expect(scored.totalPoints).toBe(120);
   });
 });

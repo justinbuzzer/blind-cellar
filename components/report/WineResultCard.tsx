@@ -53,7 +53,10 @@ function ordinal(n: number): string {
 
 export function WineResultCard({ result, rank, totalWines, showNotes = false }: WineResultCardProps) {
   const { wine } = result;
-  const isCoreV3 = result.scoringVersion === "core_v3_appellation_conditional";
+  // True for core_v3_appellation_conditional and core_v4_partial_credit alike
+  // — both share the same no-bonus-tier, percentage-first-ranking display
+  // shape; only legacy_v1 differs.
+  const isPercentageBased = result.scoringVersion !== "legacy_v1";
   const bottlePossiblePoints = result.guesses[0]?.totalPossiblePoints;
 
   return (
@@ -141,20 +144,20 @@ export function WineResultCard({ result, rank, totalWines, showNotes = false }: 
                     heading="Core categories"
                     fields={coreFields}
                   />
-                  {!isCoreV3 && (
+                  {!isPercentageBased && (
                     <AppellationComparison
                       guessedAppellation={guess.appellationGuess}
                       actualAppellation={wine.appellation}
                     />
                   )}
-                  {!isCoreV3 && (
+                  {!isPercentageBased && (
                     <FieldScoreTable
                       heading="Bonus categories"
                       fields={bonusFields}
                     />
                   )}
                   <div className="flex flex-wrap gap-x-4 gap-y-1 rounded-sm bg-cellar-bg-deep px-3 py-2 text-sm font-medium text-cellar-text">
-                    {isCoreV3 ? (
+                    {isPercentageBased ? (
                       <span className="text-cellar-maroon">
                         Total: {guess.totalPoints}/{guess.totalPossiblePoints}
                       </span>
@@ -265,7 +268,7 @@ export function FieldScoreTable({
             <span className="truncate text-cellar-muted">
               {fieldScore.answerValue}
             </span>
-            <MatchBadge correct={fieldScore.correct} />
+            <MatchBadge correct={fieldScore.correct} points={fieldScore.points} pointsAvailable={fieldScore.pointsAvailable} />
           </div>
         )
       )}

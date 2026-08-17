@@ -229,16 +229,26 @@ export function PdfStatGrid({ stats }: { stats: { label: string; value: string |
   );
 }
 
-export function PdfMatchIndicator({ correct }: { correct: boolean }) {
+/** PDF mirror of components/MatchBadge.tsx — same three-state (correct/partial/incorrect) logic, see that component's doc comment. */
+export function PdfMatchIndicator({
+  correct,
+  points,
+  pointsAvailable,
+}: {
+  correct: boolean;
+  points: number;
+  pointsAvailable: number;
+}) {
+  const partial = !correct && points > 0;
   return (
     <Text
       style={{
         fontSize: 8.5,
         fontFamily: "Helvetica-Bold",
-        color: correct ? pdfColors.success : pdfColors.danger,
+        color: correct ? pdfColors.success : partial ? pdfColors.warning : pdfColors.danger,
       }}
     >
-      {correct ? "Correct" : "Incorrect"}
+      {correct ? "Correct" : partial ? `Partial (${points}/${pointsAvailable})` : "Incorrect"}
     </Text>
   );
 }

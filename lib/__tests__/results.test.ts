@@ -600,6 +600,103 @@ describe("calculateTasterResults ranking (core_v3_appellation_conditional)", () 
   });
 });
 
+describe("calculateTasterResults ranking (core_v4_partial_credit)", () => {
+  // core_v4_partial_credit shares calculateTasterResultsPercentageBased with
+  // core_v3_appellation_conditional (see lib/results.ts) — the exhaustive
+  // percentage-ranking/mixed-denominator/tie-break coverage lives in the
+  // core_v3 describe block above and needs no duplicating here. These two
+  // tests only confirm the rename/broadened dispatcher actually routes a
+  // third scoring version correctly.
+  function v4Wine(id: string, code: string): WineAnswerKey {
+    return {
+      id,
+      code,
+      country: "Italy",
+      region: "Piedmont",
+      grapeBlendMode: "single",
+      grapeBlend: "Nebbiolo",
+      producer: "Producer",
+      wineName: "Cuvee",
+      vintage: "2018",
+      wineStyle: "red",
+      tastingOrder: 1,
+    };
+  }
+
+  function v4Guess(wineId: string, overrides: Partial<WineAnswerKey> = {}): GuestSubmission["guesses"][number] {
+    return {
+      wineId,
+      country: overrides.country ?? "Italy",
+      region: overrides.region ?? "Piedmont",
+      appellation: "",
+      grapeBlendMode: "single",
+      grapeBlend: overrides.grapeBlend ?? "Nebbiolo",
+      selectedGrapes: [],
+      otherGrapesText: "",
+      producer: overrides.producer ?? "Producer",
+      wineName: overrides.wineName ?? "Cuvee",
+      vintage: overrides.vintage ?? "2018",
+      rating: 90,
+      confidence: "medium",
+    };
+  }
+
+  it("routes a core_v4_partial_credit session through the same percentage-based ranking core_v3 uses", () => {
+    const session: TastingSession = {
+      id: "s1",
+      code: "MAROON-1",
+      title: "Partial Credit Tasting",
+      date: "2026-01-01",
+      status: "revealed",
+      createdAt: "2026-01-01T00:00:00Z",
+      scoringVersion: "core_v4_partial_credit",
+      wines: [v4Wine("w1", "Bottle 1")],
+    };
+    const submissions: GuestSubmission[] = [
+      {
+        id: "a",
+        guestId: "a",
+        guestName: "Alice",
+        sessionCode: session.code,
+        locked: true,
+        guesses: [v4Guess("w1")],
+      },
+    ];
+    const results = calculateTasterResults(session, submissions);
+    expect(results[0].totalPoints).toBe(120);
+    expect(results[0].totalPossible).toBe(120);
+    expect(results[0].overallAccuracyPercent).toBe(100);
+  });
+
+  it("reflects partial credit in the taster's total, not just full-or-nothing", () => {
+    const session: TastingSession = {
+      id: "s1",
+      code: "MAROON-1",
+      title: "Partial Credit Tasting",
+      date: "2026-01-01",
+      status: "revealed",
+      createdAt: "2026-01-01T00:00:00Z",
+      scoringVersion: "core_v4_partial_credit",
+      wines: [v4Wine("w1", "Bottle 1")],
+    };
+    const submissions: GuestSubmission[] = [
+      {
+        id: "a",
+        guestId: "a",
+        guestName: "Alice",
+        sessionCode: session.code,
+        locked: true,
+        // Vintage one year off: half credit (10/20) instead of 0 or 20 —
+        // total 110/120 rather than either extreme.
+        guesses: [v4Guess("w1", { vintage: "2019" })],
+      },
+    ];
+    const results = calculateTasterResults(session, submissions);
+    expect(results[0].totalPoints).toBe(110);
+    expect(results[0].totalPossible).toBe(120);
+  });
+});
+
 describe("buildTastingReport empty state", () => {
   it("produces empty leaderboard and no superlatives when nobody submitted", () => {
     const session: TastingSession = {

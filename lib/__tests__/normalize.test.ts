@@ -3,6 +3,7 @@ import {
   isCuveeBlindMatch,
   isNormalizedMatch,
   isProducerBlindMatch,
+  levenshteinDistance,
   normalizeCuveeForBlindMatch,
   normalizeProducerForBlindMatch,
   normalizeText,
@@ -47,6 +48,40 @@ describe("isNormalizedMatch", () => {
     expect(isNormalizedMatch("", "Barolo")).toBe(false);
     expect(isNormalizedMatch("Barolo", "")).toBe(false);
     expect(isNormalizedMatch("", "")).toBe(false);
+  });
+});
+
+describe("levenshteinDistance", () => {
+  it("is zero for identical strings", () => {
+    expect(levenshteinDistance("barolo", "barolo")).toBe(0);
+    expect(levenshteinDistance("", "")).toBe(0);
+  });
+
+  it("is the length of the other string when one side is empty", () => {
+    expect(levenshteinDistance("", "barolo")).toBe(6);
+    expect(levenshteinDistance("barolo", "")).toBe(6);
+  });
+
+  it("is 1 for a single substitution", () => {
+    expect(levenshteinDistance("barolo", "barolu")).toBe(1);
+  });
+
+  it("is 1 for a single insertion or deletion", () => {
+    expect(levenshteinDistance("barolo", "barollo")).toBe(1);
+    expect(levenshteinDistance("barollo", "barolo")).toBe(1);
+  });
+
+  it("is case-sensitive — callers are responsible for normalising first", () => {
+    expect(levenshteinDistance("Barolo", "barolo")).toBe(1);
+  });
+
+  it("counts every difference for completely different strings", () => {
+    expect(levenshteinDistance("abc", "xyz")).toBe(3);
+  });
+
+  it("is symmetric", () => {
+    expect(levenshteinDistance("kitten", "sitting")).toBe(levenshteinDistance("sitting", "kitten"));
+    expect(levenshteinDistance("kitten", "sitting")).toBe(3);
   });
 });
 

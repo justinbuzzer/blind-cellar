@@ -2326,6 +2326,38 @@ The SQL in step 1 creates the `bottle-photos` bucket for you — this is just a 
 
 `photo_path` follows the exact same reveal-gating discipline as every other identity column in this file — never in the direct `anon`/`authenticated` table grant on `wines`, only ever reachable through a `SECURITY DEFINER` RPC or the masked `guest_visible_wines` view. What's different about this feature is the *storage* layer: the `bottle-photos` bucket is public-read, which is safe specifically because the object path itself is an unguessable server-generated UUID (see step 3 above) that is never included in any pre-reveal API response — a client that hasn't been told the path has no way to construct or guess it. This mirrors how this app already treats `anonymous_code` (safe to expose) versus the raw `id`/answer-key fields (never exposed pre-reveal) elsewhere. The service-role key introduced by this feature has no elevated access to any *tasting* data — it is used exclusively to mint a Storage signed-upload URL for one specific path, inside one Route Handler, after that Route Handler has already independently verified the caller's guest token via the normal anon-key client.
 
+## Migrating for partial-credit scoring
+
+Adds a third `scoring_version`, `core_v4_partial_credit`, which becomes the new default for **new** sessions while leaving every historic `legacy_v1`/`core_v3_appellation_conditional` session's scoring completely untouched — see README "Scoring model" for the full rules. Re-running the full `supabase/schema.sql` brings an existing project up to date; every statement here is additive and safe to re-run.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+1. **`tasting_sessions_scoring_version_check` is widened** using this file's drop-then-recreate idiom for widening an already-existing constraint (the same pattern used for `tasting_sessions_tasting_mode_check` earlier in this file):
+   ```sql
+   alter table tasting_sessions drop constraint if exists tasting_sessions_scoring_version_check;
+   alter table tasting_sessions add constraint tasting_sessions_scoring_version_check
+     check (scoring_version in ('legacy_v1', 'core_v3_appellation_conditional', 'core_v4_partial_credit'));
+   ```
+   Every existing row keeps its current value — this only widens the set of values allowed going forward.
+2. **`create_tasting_session` is modified** to insert the literal `'core_v4_partial_credit'` for `scoring_version` on every new session, in place of the previous `'core_v3_appellation_conditional'` literal — still hardcoded in the function body, still not a client-supplied parameter.
+3. **No other RPC, view, grant, or column changes.** Every function that already returns `scoring_version` (`get_host_session`, `get_guest_session_state`, `get_revealed_bottle`, and everything added since) passes the column through generically — none of them hardcode or enumerate the allowed values themselves, so none needed touching. All field-level scoring math (including the new partial-credit rules) happens in TypeScript at report-build time from raw guess/answer text, exactly as before — no score is ever persisted.
+
+### 2. Verification queries
+
+```sql
+-- scoring_version distribution across existing sessions is unchanged
+select scoring_version, count(*) from tasting_sessions group by scoring_version;
+
+-- create_tasting_session's new sessions get the new default
+-- (create a test session via the app, then:)
+select scoring_version from tasting_sessions order by created_at desc limit 1;
+-- expect: core_v4_partial_credit
+```
+
+### RLS summary
+
+No RLS policy, grant, or access path changed. `scoring_version` is still written exactly once, at creation, inside `create_tasting_session` (a `SECURITY DEFINER` function that already fully owns session creation) as a hardcoded literal — there is still no RPC parameter, no update path, and no other function that ever writes this column. This migration only widens the set of values the column's check constraint accepts and changes which literal `create_tasting_session` inserts; it does not change who can read or write it, or how.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

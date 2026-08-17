@@ -161,24 +161,36 @@ export interface WineAnswerKey {
  * creation (see supabase/schema.sql `create_tasting_session`) and never
  * client-controlled or editable afterwards. Historic sessions keep whatever
  * they were created with forever; scoring is never recalculated under a
- * different version. Only two versions have ever actually existed:
+ * different version. Three versions have ever actually existed:
  * 'legacy_v1' is the country(20)/region(30)/grapeBlend(30)/vintage(20) core
  * (100 max) plus producer(10)/wineName(10) bonus (20 max), 120 max total,
- * every session ever shipped before this feature. The previously-planned
- * 140-point Appellation-bonus model was never actually deployed (Appellation
- * guesses existed but were always explicitly unscored), so there is no
- * intermediate legacy version to support. 'core_v3_appellation_conditional'
- * is the current model — see CORE_V3_FIELD_POINTS and lib/scoring.ts.
+ * every session shipped before the scoring-model replacement. The
+ * previously-planned 140-point Appellation-bonus model was never actually
+ * deployed (Appellation guesses existed but were always explicitly
+ * unscored), so there is no intermediate legacy version to support.
+ * 'core_v3_appellation_conditional' is the seven-category, no-bonus-tier
+ * model — see CORE_V3_FIELD_POINTS and lib/scoring.ts — every session
+ * created between the scoring-model replacement and the partial-credit
+ * feature. 'core_v4_partial_credit' is the current model: identical to
+ * core_v3_appellation_conditional's shape and point weights, but Vintage,
+ * Grape/blend, and Producer/Wine-cuvée guesses that are close-but-not-exact
+ * earn partial credit instead of scoring zero (see calculateBlindScoreV4 in
+ * lib/scoring.ts) — Country, Region, and Appellation stay exact-match-only,
+ * unchanged from core_v3_appellation_conditional.
  */
-export type ScoringVersion = "legacy_v1" | "core_v3_appellation_conditional";
+export type ScoringVersion =
+  | "legacy_v1"
+  | "core_v3_appellation_conditional"
+  | "core_v4_partial_credit";
 
 export const SCORING_VERSIONS: ScoringVersion[] = [
   "legacy_v1",
   "core_v3_appellation_conditional",
+  "core_v4_partial_credit",
 ];
 
 /** Every newly created session is assigned this version, server-side only — never a client-supplied value. See create_tasting_session in supabase/schema.sql. */
-export const CURRENT_SCORING_VERSION: ScoringVersion = "core_v3_appellation_conditional";
+export const CURRENT_SCORING_VERSION: ScoringVersion = "core_v4_partial_credit";
 
 export type SessionStatus = "registration" | "collecting" | "revealed";
 
@@ -288,7 +300,7 @@ export const CORE_FIELD_POINTS = {
   vintage: 20,
 } as const;
 
-/** legacy_v1 only — see CORE_FIELD_POINTS. Producer/wine-cuvée are never scored under core_v3_appellation_conditional. */
+/** legacy_v1 only — see CORE_FIELD_POINTS. Producer/wine-cuvée are genuine core categories, not a bonus tier, under core_v3_appellation_conditional and core_v4_partial_credit — see CORE_V3_FIELD_POINTS. */
 export const BONUS_FIELD_POINTS = {
   producer: 10,
   wineName: 10,
@@ -313,18 +325,21 @@ export const BONUS_MAX_POINTS = Object.values(BONUS_FIELD_POINTS).reduce(
 export const TOTAL_MAX_POINTS_PER_WINE = CORE_MAX_POINTS + BONUS_MAX_POINTS;
 
 /**
- * core_v3_appellation_conditional ONLY (see ScoringVersion): seven potential
- * 20-point core categories, no bonus category at all — Producer and
- * wine/cuvée are reinstated as genuine scored categories here (see README
- * "Scoring model"), always applicable (unlike conditional Appellation)
- * since both are required answer-key fields at bottle registration.
- * Appellation is excluded entirely — from both the guess's fieldScores and
- * the possible-points denominator — whenever the actual wine has no
- * recorded Appellation; see calculateBlindScoreV3 in lib/scoring.ts.
- * Producer/wine-cuvée use their own narrower matching rules
- * (normalizeProducerForBlindMatch/normalizeCuveeForBlindMatch in
- * lib/normalize.ts) — deliberately not the same lenient
- * accent/punctuation-tolerant normalizeText every other field here uses.
+ * Shared by core_v3_appellation_conditional and core_v4_partial_credit (see
+ * ScoringVersion): seven potential 20-point core categories, no bonus
+ * category at all — Producer and wine/cuvée are reinstated as genuine scored
+ * categories here (see README "Scoring model"), always applicable (unlike
+ * conditional Appellation) since both are required answer-key fields at
+ * bottle registration. Appellation is excluded entirely — from both the
+ * guess's fieldScores and the possible-points denominator — whenever the
+ * actual wine has no recorded Appellation; see calculateBlindScoreV3/
+ * calculateBlindScoreV4 in lib/scoring.ts. Producer/wine-cuvée use their own
+ * narrower matching rules (normalizeProducerForBlindMatch/
+ * normalizeCuveeForBlindMatch in lib/normalize.ts) — deliberately not the
+ * same lenient accent/punctuation-tolerant normalizeText every other field
+ * here uses. Only the *leniency* of a near-miss differs between v3 (none)
+ * and v4 (partial credit for Vintage/Grape-blend/Producer/Wine-cuvée) — the
+ * point weights themselves are identical, hence one shared constant.
  */
 export const CORE_V3_FIELD_POINTS = {
   country: 20,
@@ -348,23 +363,28 @@ export interface FieldScore {
   points: number;
   pointsAvailable: number;
   /**
-   * core_v3_appellation_conditional only, and only ever on the "appellation"
-   * field: false means this category does not apply to this wine at all —
-   * the actual wine has no recorded Appellation, so there is nothing to
-   * score. Render as "Not applicable", never "0/20" or a correct/incorrect
-   * badge. Absent or true for every other field/version.
+   * core_v3_appellation_conditional and core_v4_partial_credit only, and
+   * only ever on the "appellation" field: false means this category does
+   * not apply to this wine at all — the actual wine has no recorded
+   * Appellation, so there is nothing to score. Render as "Not applicable",
+   * never "0/20" or a correct/incorrect badge. Absent or true for every
+   * other field/version.
    */
   applicable?: boolean;
 }
 
 /**
- * The full core_v3_appellation_conditional per-bottle score breakdown for
- * one guess — see lib/scoring.ts's calculateBlindScoreV3, the pure function
- * that produces this shape, and README "Scoring model". Appellation is
- * conditionally excluded (both from scoring and from the denominator)
+ * The full per-bottle score breakdown for one guess, shared by both
+ * core_v3_appellation_conditional and core_v4_partial_credit — see
+ * lib/scoring.ts's calculateBlindScoreV3/calculateBlindScoreV4, the pure
+ * functions that produce this shape, and README "Scoring model". Appellation
+ * is conditionally excluded (both from scoring and from the denominator)
  * whenever the actual wine has no recorded Appellation; Producer and
  * wine/cuvée are always applicable (never conditionally excluded), scored
- * with their own narrower matchers — see CORE_V3_FIELD_POINTS.
+ * with their own narrower matchers — see CORE_V3_FIELD_POINTS. Only v4
+ * changes *how* a near-miss on Vintage/Grape-blend/Producer/Wine-cuvée is
+ * scored (partial credit instead of zero) — this shape needs no changes for
+ * that, since `points`/`correct` were always independent fields.
  */
 export interface BlindScoreResult {
   countryCorrect: boolean;

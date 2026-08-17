@@ -8,7 +8,7 @@ interface TasterLeaderboardProps {
 }
 
 export function TasterLeaderboard({ results, scoringVersion }: TasterLeaderboardProps) {
-  const isCoreV3 = scoringVersion === "core_v3_appellation_conditional";
+  const isPercentageBased = scoringVersion !== "legacy_v1";
 
   if (results.length === 0) {
     return (
@@ -21,7 +21,7 @@ export function TasterLeaderboard({ results, scoringVersion }: TasterLeaderboard
   return (
     <div className="flex flex-col gap-2">
       <p className="text-xs text-cellar-muted">
-        {isCoreV3
+        {isPercentageBased
           ? "Country, region, grape/blend, vintage, producer, and wine/cuvée are each worth 20 points; Appellation adds 20 more when the wine has one recorded. There is no bonus category — ranking is by percentage accuracy so tasters aren't penalised for bottles with no Appellation to guess."
           : "Country, region, grape/blend, and vintage make up the 100-point core score. Producer and wine/cuvée are bonus categories worth up to 20 additional points."}
       </p>
@@ -35,7 +35,7 @@ export function TasterLeaderboard({ results, scoringVersion }: TasterLeaderboard
               <p className="font-medium text-cellar-text">{taster.guestName}</p>
             </div>
             <div className="text-right">
-              {isCoreV3 ? (
+              {isPercentageBased ? (
                 <>
                   <p className="font-display text-lg font-semibold text-cellar-maroon-dark">
                     {taster.overallAccuracyPercent.toFixed(1)}%
@@ -54,7 +54,7 @@ export function TasterLeaderboard({ results, scoringVersion }: TasterLeaderboard
               )}
             </div>
           </div>
-          {isCoreV3 ? (
+          {isPercentageBased ? (
             <div className="grid grid-cols-2 gap-3 rounded-sm bg-cellar-bg-deep p-3 text-center">
               <Stat label="Accuracy" value={`${taster.overallAccuracyPercent.toFixed(1)}%`} />
               <Stat label="Points" value={`${taster.totalPoints} / ${taster.totalPossible}`} />

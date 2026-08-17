@@ -24,7 +24,7 @@ export function ParticipantScoreBreakdown({ wine, score }: ParticipantScoreBreak
     );
   }
 
-  const isCoreV3 = score.scoringVersion === "core_v3_appellation_conditional";
+  const isPercentageBased = score.scoringVersion !== "legacy_v1";
   const coreFields = score.fieldScores.filter((f) => f.category === "core");
   const bonusFields = score.fieldScores.filter((f) => f.category === "bonus");
 
@@ -37,13 +37,13 @@ export function ParticipantScoreBreakdown({ wine, score }: ParticipantScoreBreak
         </p>
       </div>
       <FieldScoreTable heading="Score breakdown" fields={coreFields} />
-      {!isCoreV3 && (
+      {!isPercentageBased && (
         <AppellationComparison
           guessedAppellation={score.appellationGuess}
           actualAppellation={wine.appellation}
         />
       )}
-      {!isCoreV3 && <FieldScoreTable heading="Bonus categories" fields={bonusFields} />}
+      {!isPercentageBased && <FieldScoreTable heading="Bonus categories" fields={bonusFields} />}
     </Card>
   );
 }

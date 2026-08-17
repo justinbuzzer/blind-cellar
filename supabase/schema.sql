@@ -52,10 +52,11 @@ create table if not exists tasting_sessions (
   -- editable afterwards (see README "Scoring model"). Nullable here only so
   -- a fresh CREATE TABLE and the migration backfill below share one code
   -- path — existing sessions are backfilled to 'legacy_v1' (the only
-  -- scoring model ever actually shipped before this feature; the
-  -- previously-planned 140-point Appellation-bonus model was never
-  -- deployed), while brand-new sessions always get
-  -- 'core_v3_appellation_conditional'.
+  -- scoring model ever actually shipped before the scoring-model
+  -- replacement; the previously-planned 140-point Appellation-bonus model
+  -- was never deployed), while brand-new sessions always get whatever the
+  -- current model is — 'core_v4_partial_credit' as of the partial-credit
+  -- scoring feature (see migration step 15 below).
   scoring_version text,
   host_token_hash text not null,
   -- MIGRATION-SENSITIVE: the guests row representing the host (see below).
@@ -525,6 +526,25 @@ begin
   end if;
 end $$;
 
+-- 15. Partial-credit scoring model (see README "Scoring model"): adds
+-- core_v4_partial_credit — the same seven-category shape as
+-- core_v3_appellation_conditional (country(20)/region(20)/appellation(20,
+-- conditional)/grape-blend(20)/vintage(20)/producer(20)/wine-cuvée(20), no
+-- bonus category, 120-or-140-point denominator) but awards half credit on a
+-- one-year-off Vintage guess, proportional (Jaccard-overlap) credit on a
+-- partially-overlapping blend-mode Grape/blend guess, and half credit on a
+-- close-spelling Producer/Wine-cuvée guess — see lib/scoring.ts. Existing
+-- sessions keep their original scoring model forever, exactly as every prior
+-- scoring-model change in this file has. This becomes the version every new
+-- session gets — see create_tasting_session below. Widening an
+-- already-existing check constraint always uses drop-then-recreate in this
+-- file (never the if-not-exists-guarded create form, which only applies the
+-- first time a constraint is added) — see the tasting_mode_check widening
+-- above for the same pattern.
+alter table tasting_sessions drop constraint if exists tasting_sessions_scoring_version_check;
+alter table tasting_sessions add constraint tasting_sessions_scoring_version_check
+  check (scoring_version in ('legacy_v1', 'core_v3_appellation_conditional', 'core_v4_partial_credit'));
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security (enabled everywhere; anon gets no default table grants,
 -- see the GRANT section below — RLS is defense-in-depth on top of that).
@@ -842,7 +862,7 @@ begin
   -- see README "Scoring model": the client can never choose or influence
   -- which scoring model a session gets.
   insert into tasting_sessions (title, tasting_date, join_code, host_token_hash, status, tasting_mode, scoring_version)
-  values (btrim(p_title), p_tasting_date, p_join_code, p_host_token_hash, 'registration', p_tasting_mode, 'core_v3_appellation_conditional')
+  values (btrim(p_title), p_tasting_date, p_join_code, p_host_token_hash, 'registration', p_tasting_mode, 'core_v4_partial_credit')
   returning tasting_sessions.id, tasting_sessions.public_id into v_session_id, v_public_id;
 
   v_host_token := encode(gen_random_bytes(32), 'base64');

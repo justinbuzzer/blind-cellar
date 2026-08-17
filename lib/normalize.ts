@@ -28,6 +28,35 @@ export function isNormalizedMatch(a: string, b: string): boolean {
   return normA.length > 0 && normA === normB;
 }
 
+/**
+ * Edit distance (single-character insert/delete/substitute, each cost 1)
+ * between two strings — a general string-comparison primitive with no
+ * normalisation of its own; callers pass already-normalised text. Used by
+ * core_v4_partial_credit's close-spelling Producer/Wine-cuvée partial credit
+ * (see lib/scoring.ts) to measure how close a near-miss guess is.
+ */
+export function levenshteinDistance(a: string, b: string): number {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const distances: number[][] = Array.from({ length: rows }, () => new Array(cols).fill(0));
+
+  for (let i = 0; i < rows; i += 1) distances[i][0] = i;
+  for (let j = 0; j < cols; j += 1) distances[0][j] = j;
+
+  for (let i = 1; i < rows; i += 1) {
+    for (let j = 1; j < cols; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      distances[i][j] = Math.min(
+        distances[i - 1][j] + 1, // deletion
+        distances[i][j - 1] + 1, // insertion
+        distances[i - 1][j - 1] + cost // substitution
+      );
+    }
+  }
+
+  return distances[rows - 1][cols - 1];
+}
+
 // ---------------------------------------------------------------------------
 // Producer / Cuvée blind-match normalisation (core_v3_appellation_conditional
 // only — see README "Scoring model"). Deliberately narrower and separate from

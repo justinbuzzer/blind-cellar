@@ -130,7 +130,7 @@ export function TastingReportPdfDocument({
       label: "Best Taster",
       title: joinNames(bestTaster.map((t) => t.guestName)),
       detail:
-        scoringVersion === "core_v3_appellation_conditional"
+        scoringVersion !== "legacy_v1"
           ? `${bestTaster[0].overallAccuracyPercent.toFixed(1)}% accuracy · ${bestTaster[0].totalPoints} / ${bestTaster[0].totalPossible} points`
           : `${bestTaster[0].totalPoints} / ${bestTaster[0].totalPossible} total points, including ${bestTaster[0].bonusPoints} bonus points`,
       tie: bestTaster.length > 1,
@@ -187,7 +187,7 @@ function WineResultBlock({
   showNotes: boolean;
 }) {
   const { wine } = result;
-  const isCoreV3 = result.scoringVersion === "core_v3_appellation_conditional";
+  const isPercentageBased = result.scoringVersion !== "legacy_v1";
   const bottlePossiblePoints = result.guesses[0]?.totalPossiblePoints;
   const contributorLabel = formatContributorBottleLabel({
     contributorDisplayName: wine.contributorName,
@@ -251,7 +251,7 @@ function WineResultBlock({
             key={guess.guestId}
             guess={guess}
             wine={wine}
-            isCoreV3={isCoreV3}
+            isPercentageBased={isPercentageBased}
             isTopTaster={result.topTasters.some((t) => t.guestId === guess.guestId)}
             showNotes={showNotes}
           />
@@ -264,13 +264,13 @@ function WineResultBlock({
 function GuessDetail({
   guess,
   wine,
-  isCoreV3,
+  isPercentageBased,
   isTopTaster,
   showNotes,
 }: {
   guess: ScoredGuess;
   wine: WineAnswerKey;
-  isCoreV3: boolean;
+  isPercentageBased: boolean;
   isTopTaster: boolean;
   showNotes: boolean;
 }) {
@@ -291,13 +291,13 @@ function GuessDetail({
       </View>
 
       <FieldScoreTable heading="Core categories" fields={coreFields} />
-      {!isCoreV3 && (
+      {!isPercentageBased && (
         <AppellationComparisonPdf guessedAppellation={guess.appellationGuess} actualAppellation={wine.appellation} />
       )}
-      {!isCoreV3 && <FieldScoreTable heading="Bonus categories" fields={bonusFields} />}
+      {!isPercentageBased && <FieldScoreTable heading="Bonus categories" fields={bonusFields} />}
 
       <View style={localStyles.totalsRow}>
-        {isCoreV3 ? (
+        {isPercentageBased ? (
           <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: pdfColors.maroon }}>
             Total: {guess.totalPoints}/{guess.totalPossiblePoints}
           </Text>
@@ -345,7 +345,11 @@ function FieldScoreTable({ heading, fields }: { heading: string; fields: FieldSc
               <Text style={localStyles.colGuess}>{fieldScore.guessedValue || "—"}</Text>
               <Text style={localStyles.colActual}>{fieldScore.answerValue || "—"}</Text>
               <View style={localStyles.colResult}>
-                <PdfMatchIndicator correct={fieldScore.correct} />
+                <PdfMatchIndicator
+                  correct={fieldScore.correct}
+                  points={fieldScore.points}
+                  pointsAvailable={fieldScore.pointsAvailable}
+                />
               </View>
             </>
           )}
@@ -374,7 +378,7 @@ function AppellationComparisonPdf({
 }
 
 function LeaderboardTable({ results, scoringVersion }: { results: TasterResult[]; scoringVersion: ScoringVersion }) {
-  const isCoreV3 = scoringVersion === "core_v3_appellation_conditional";
+  const isPercentageBased = scoringVersion !== "legacy_v1";
   if (results.length === 0) {
     return <Text style={{ fontSize: 9, color: pdfColors.muted }}>No guests submitted entries for this tasting.</Text>;
   }
@@ -383,7 +387,7 @@ function LeaderboardTable({ results, scoringVersion }: { results: TasterResult[]
       <View style={localStyles.lbHeaderRow}>
         <Text style={[localStyles.fieldHeaderCell, { flexBasis: "6%" }]}>#</Text>
         <Text style={[localStyles.fieldHeaderCell, { flexBasis: "28%" }]}>Taster</Text>
-        {isCoreV3 ? (
+        {isPercentageBased ? (
           <>
             <Text style={[localStyles.fieldHeaderCell, { flexBasis: "16%" }]}>Accuracy</Text>
             <Text style={[localStyles.fieldHeaderCell, { flexBasis: "16%" }]}>Points</Text>
@@ -402,7 +406,7 @@ function LeaderboardTable({ results, scoringVersion }: { results: TasterResult[]
         <View key={taster.guestId} style={localStyles.lbRow}>
           <Text style={{ flexBasis: "6%", fontSize: 8.5 }}>{taster.rank}</Text>
           <Text style={{ flexBasis: "28%", fontSize: 8.5, fontFamily: "Helvetica-Bold" }}>{taster.guestName}</Text>
-          {isCoreV3 ? (
+          {isPercentageBased ? (
             <>
               <Text style={{ flexBasis: "16%", fontSize: 8.5 }}>{taster.overallAccuracyPercent.toFixed(1)}%</Text>
               <Text style={{ flexBasis: "16%", fontSize: 8.5 }}>

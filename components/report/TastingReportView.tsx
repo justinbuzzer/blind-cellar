@@ -38,7 +38,7 @@ export function TastingReportView({ report, showNotes = false }: TastingReportVi
             label="Best Taster"
             title={joinNames(bestTaster.map((t) => t.guestName))}
             detail={
-              report.scoringVersion === "core_v3_appellation_conditional"
+              report.scoringVersion !== "legacy_v1"
                 ? `${bestTaster[0].overallAccuracyPercent.toFixed(1)}% accuracy · ${bestTaster[0].totalPoints} / ${bestTaster[0].totalPossible} points`
                 : `${bestTaster[0].totalPoints} / ${bestTaster[0].totalPossible} total points, including ${bestTaster[0].bonusPoints} bonus points`
             }

@@ -15,5 +15,6 @@ export const pdfColors = {
   muted: "#746B63",
   border: "#D9CDBD",
   success: "#3F6652",
+  warning: "#936C2F",
   danger: "#8D3440",
 } as const;
