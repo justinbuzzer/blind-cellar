@@ -2358,6 +2358,32 @@ select scoring_version from tasting_sessions order by created_at desc limit 1;
 
 No RLS policy, grant, or access path changed. `scoring_version` is still written exactly once, at creation, inside `create_tasting_session` (a `SECURITY DEFINER` function that already fully owns session creation) as a hardcoded literal — there is still no RPC parameter, no update path, and no other function that ever writes this column. This migration only widens the set of values the column's check constraint accepts and changes which literal `create_tasting_session` inserts; it does not change who can read or write it, or how.
 
+## Migrating for the participant-visible course-reveal guess breakdown
+
+Adds one new RPC, `get_bottle_result_for_guest` — no new table, column, or constraint. Course-by-course participants now see the exact same per-bottle guess breakdown the host already saw (see README "Results reveal"); full_blind's separate per-bottle result page is unchanged. Re-running the full `supabase/schema.sql` brings an existing project up to date; every statement here is additive and safe to re-run.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+1. **`get_bottle_result_for_guest(p_guest_token text, p_wine_id uuid)` is added** — a byte-for-byte copy of the existing `get_bottle_result_for_host`'s query logic (same `revealed_at` gate, same per-mode "submitted" predicate, same `participants` shape covering every eligible guest, submitted or not), with the host-token check swapped for the same guest-token lookup `get_revealed_bottle` already uses. Any valid participant of the session — not just the host — can call it once a bottle is revealed.
+2. **`grant execute on function get_bottle_result_for_guest(text, uuid) to anon, authenticated;`** — the same grant pattern every other guest-token RPC already has.
+3. **No other RPC, view, table, or grant changed.** `get_bottle_result_for_host` (host-only) and `get_revealed_bottle` (own-guess-only, still used by full_blind's per-bottle result page) are both completely untouched.
+
+### 2. Verification queries
+
+```sql
+-- confirm the new function and its grant exist
+select proname from pg_proc where proname = 'get_bottle_result_for_guest';
+select grantee, privilege_type from information_schema.routine_privileges
+  where routine_name = 'get_bottle_result_for_guest';
+-- expect: anon and authenticated, EXECUTE
+```
+
+Functional check: with a course_reveal session's bottle already revealed, call the RPC with any participant's own `guest_token` (not just the host's) and confirm `participants` lists every eligible guest's guess — reveal it via the app UI's new "Everyone's guesses" section on `/session/[publicId]/bottle/[wineId]/reveal` rather than by hand-crafting a call, since that's the only place this RPC is actually used.
+
+### RLS summary
+
+No RLS policy or table grant changed. Like every other tasting RPC, `get_bottle_result_for_guest` is `SECURITY DEFINER` and does its own authorization inside the function body (a `guest_token` lookup identical to `get_revealed_bottle`'s) rather than relying on RLS or a table grant — so this migration widens *what one already-authorized guest-token call can see* (every participant's guess for a revealed bottle, not just the caller's own), never *who* can call it. No token, email, or other participant field beyond display name and guess content is ever returned — the same promise `get_bottle_result_for_host` already made.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

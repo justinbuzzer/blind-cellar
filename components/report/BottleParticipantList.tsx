@@ -1,20 +1,22 @@
 import { Card } from "@/components/Card";
 import { FieldScoreTable } from "@/components/report/WineResultCard";
-import { HostBottleParticipantScore } from "@/lib/resultsReveal";
+import { BottleParticipantScore } from "@/lib/resultsReveal";
 
 /**
- * Host-only per-participant score breakdown for one revealed bottle — see
- * README "Results reveal". Uses native `<details>`/`<summary>` disclosure
- * rows (same convention as WineResultCard's per-guest breakdown) rather than
- * a separate desktop-table/mobile-card implementation: the total is always
- * visible in the summary line, the browser handles aria-expanded and
- * keyboard interaction natively, and it reads cleanly at any width without
- * horizontal scrolling. Never rendered for participants.
+ * Per-participant score breakdown for one revealed bottle — see README
+ * "Results reveal". Shared by the host per-bottle result page and
+ * (course_reveal only) the participant reveal screen. Uses native
+ * `<details>`/`<summary>` disclosure rows (same convention as
+ * WineResultCard's per-guest breakdown) rather than a separate
+ * desktop-table/mobile-card implementation: the total is always visible in
+ * the summary line, the browser handles aria-expanded and keyboard
+ * interaction natively, and it reads cleanly at any width without
+ * horizontal scrolling.
  */
-export function HostBottleParticipantList({
+export function BottleParticipantList({
   participants,
 }: {
-  participants: HostBottleParticipantScore[];
+  participants: BottleParticipantScore[];
 }) {
   if (participants.length === 0) {
     return <Card className="text-sm text-cellar-muted">No eligible participants for this bottle.</Card>;

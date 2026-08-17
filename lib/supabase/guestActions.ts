@@ -3,6 +3,7 @@ import { Confidence, WineGuess, WineIdentityInput } from "@/types/tasting";
 import { isCustomSingleGrape, reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
 import {
   ActiveBottleStateResponse,
+  BottleResultForGuestResponse,
   FinalLeaderboardResponse,
   GuestSessionStateResponse,
   HostGuessProgressDTO,
@@ -138,6 +139,24 @@ export async function getRevealedBottle(
     p_wine_id: wineId,
   });
   return { data: data as RevealedBottleResponse | null, error };
+}
+
+/**
+ * Every eligible participant's guess for one revealed bottle — the
+ * participant-facing counterpart to the host's `get_bottle_result_for_host`
+ * (same shape, guest-token authenticated). Currently only called from the
+ * course_reveal per-bottle reveal screen — see README "Results reveal".
+ */
+export async function getBottleResultForGuest(
+  supabase: SupabaseClient,
+  guestToken: string,
+  wineId: string
+) {
+  const { data, error } = await supabase.rpc("get_bottle_result_for_guest", {
+    p_guest_token: guestToken,
+    p_wine_id: wineId,
+  });
+  return { data: data as BottleResultForGuestResponse | null, error };
 }
 
 /** Participant-facing results hub list — see README "Results reveal". */

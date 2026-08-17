@@ -19,8 +19,8 @@ import {
 } from "./supabase/mappers";
 import {
   BottleResultForHostResponse,
+  BottleResultGuessDTO,
   FinalLeaderboardResponse,
-  HostBottleGuessDTO,
   LeaderboardGuessDTO,
   LeaderboardWineDTO,
   ProvisionalLeaderboardResponse,
@@ -28,20 +28,22 @@ import {
 } from "./supabase/types";
 
 /**
- * Host-only per-bottle results view — see get_bottle_result_for_host in
- * supabase/schema.sql and README "Results reveal". Scores every eligible
- * participant's guess with the exact same `scoreWineGuess` the final report
- * and the participant's own reveal page use, so no scoring rule is ever
- * duplicated for the host view.
+ * Per-bottle results view — see get_bottle_result_for_host/
+ * get_bottle_result_for_guest in supabase/schema.sql and README "Results
+ * reveal". Shared by the host per-bottle result page and (course_reveal
+ * only) the participant reveal screen, since both RPCs return the identical
+ * `participants` shape. Scores every eligible participant's guess with the
+ * exact same `scoreWineGuess` the final report and the participant's own
+ * "Your score" section use, so no scoring rule is ever duplicated here.
  */
-export interface HostBottleParticipantScore {
+export interface BottleParticipantScore {
   guestName: string;
   submitted: boolean;
   /** Null exactly when submitted is false — never a fabricated zero score. */
   score: ScoredGuess | null;
 }
 
-export interface HostBottleAggregate {
+export interface BottleResultAggregate {
   eligibleCount: number;
   submittedCount: number;
   /** Null when submittedCount is 0 — there is nothing to average. */
@@ -58,14 +60,14 @@ export interface HostBottleAggregate {
   perfectScoreCount: number;
 }
 
-export interface HostBottleResultView {
+export interface BottleResultView {
   wine: WineAnswerKey;
   scoringVersion: ScoringVersion;
-  participants: HostBottleParticipantScore[];
-  aggregate: HostBottleAggregate;
+  participants: BottleParticipantScore[];
+  aggregate: BottleResultAggregate;
 }
 
-function mapHostGuessDtoToWineGuess(wineId: string, dto: HostBottleGuessDTO): WineGuess {
+function mapBottleGuessDtoToWineGuess(wineId: string, dto: BottleResultGuessDTO): WineGuess {
   return {
     wineId,
     country: dto.countryGuess,
@@ -83,7 +85,7 @@ function mapHostGuessDtoToWineGuess(wineId: string, dto: HostBottleGuessDTO): Wi
   };
 }
 
-export function buildHostBottleResult(response: BottleResultForHostResponse): HostBottleResultView {
+export function buildBottleResultView(response: BottleResultForHostResponse): BottleResultView {
   const wine: WineAnswerKey = {
     id: response.wine.id,
     code: response.wine.anonymousCode,
@@ -101,7 +103,7 @@ export function buildHostBottleResult(response: BottleResultForHostResponse): Ho
     photoPath: response.wine.photoPath ?? undefined,
   };
 
-  const participants: HostBottleParticipantScore[] = response.participants.map((p) => ({
+  const participants: BottleParticipantScore[] = response.participants.map((p) => ({
     guestName: p.guestName,
     submitted: p.submitted,
     score:
@@ -109,7 +111,7 @@ export function buildHostBottleResult(response: BottleResultForHostResponse): Ho
         ? scoreWineGuess(
             p.guestName,
             p.guestName,
-            mapHostGuessDtoToWineGuess(response.wine.id, p.guess),
+            mapBottleGuessDtoToWineGuess(response.wine.id, p.guess),
             wine,
             response.session.scoringVersion
           )
@@ -142,7 +144,7 @@ export function buildHostBottleResult(response: BottleResultForHostResponse): Ho
 }
 
 /** "No submitted guesses to score yet." per README "Results reveal" — the exact required empty-state copy. */
-export function formatBottleAggregateSummary(aggregate: HostBottleAggregate): string {
+export function formatBottleAggregateSummary(aggregate: BottleResultAggregate): string {
   if (aggregate.submittedCount === 0 || aggregate.averageScore === null || aggregate.totalPossiblePoints === null) {
     return "No submitted guesses to score yet.";
   }

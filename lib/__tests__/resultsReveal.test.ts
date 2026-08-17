@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildFinalLeaderboardView,
-  buildHostBottleResult,
+  buildBottleResultView,
   buildHostRecapBottleSummaries,
   buildParticipantBottleTotals,
   buildProvisionalLeaderboard,
@@ -15,7 +15,7 @@ import {
 import {
   BottleResultForHostResponse,
   FinalLeaderboardResponse,
-  HostBottleGuessDTO,
+  BottleResultGuessDTO,
   LeaderboardGuessDTO,
   LeaderboardWineDTO,
   ProvisionalLeaderboardResponse,
@@ -45,7 +45,7 @@ function makeWine(overrides: Partial<RevealedBottleWineDTO> = {}): RevealedBottl
   };
 }
 
-function makeGuess(overrides: Partial<HostBottleGuessDTO> = {}): HostBottleGuessDTO {
+function makeGuess(overrides: Partial<BottleResultGuessDTO> = {}): BottleResultGuessDTO {
   return {
     countryGuess: "France",
     regionGuess: "Burgundy",
@@ -72,7 +72,7 @@ function makeHostResponse(
   };
 }
 
-describe("buildHostBottleResult", () => {
+describe("buildBottleResultView", () => {
   it("scores every submitted participant with the exact same field-by-field breakdown scoreWineGuess produces", () => {
     const response = makeHostResponse({
       participants: [
@@ -80,7 +80,7 @@ describe("buildHostBottleResult", () => {
         { guestName: "Bob", submitted: true, guess: makeGuess({ countryGuess: "Italy" }) },
       ],
     });
-    const view = buildHostBottleResult(response);
+    const view = buildBottleResultView(response);
     expect(view.participants).toHaveLength(2);
     const alice = view.participants.find((p) => p.guestName === "Alice")!;
     expect(alice.score?.totalPoints).toBe(140); // 120 core + 20 appellation, all correct
@@ -94,7 +94,7 @@ describe("buildHostBottleResult", () => {
     const response = makeHostResponse({
       participants: [{ guestName: "Carol", submitted: false, guess: null }],
     });
-    const view = buildHostBottleResult(response);
+    const view = buildBottleResultView(response);
     expect(view.participants[0].score).toBeNull();
     expect(view.aggregate.submittedCount).toBe(0);
     expect(view.aggregate.averageScore).toBeNull();
@@ -107,7 +107,7 @@ describe("buildHostBottleResult", () => {
         { guestName: "Bob", submitted: true, guess: makeGuess({ appellationGuess: "Pommard" }) },
       ],
     });
-    const view = buildHostBottleResult(response);
+    const view = buildBottleResultView(response);
     expect(view.aggregate.totalPossiblePoints).toBe(140);
     expect(view.aggregate.highestScore).toBe(140);
   });
@@ -117,7 +117,7 @@ describe("buildHostBottleResult", () => {
       wine: makeWine({ appellation: null }),
       participants: [{ guestName: "Alice", submitted: true, guess: makeGuess({ appellationGuess: null }) }],
     });
-    const view = buildHostBottleResult(response);
+    const view = buildBottleResultView(response);
     const alice = view.participants[0];
     expect(alice.score?.totalPossiblePoints).toBe(120);
     expect(alice.score?.fieldScores.find((f) => f.field === "appellation")?.applicable).toBe(false);
@@ -132,7 +132,7 @@ describe("buildHostBottleResult", () => {
         { guestName: "Carol", submitted: false, guess: null },
       ],
     });
-    const view = buildHostBottleResult(response);
+    const view = buildBottleResultView(response);
     expect(view.aggregate.eligibleCount).toBe(3);
     expect(view.aggregate.submittedCount).toBe(2);
     expect(view.aggregate.perfectScoreCount).toBe(1);

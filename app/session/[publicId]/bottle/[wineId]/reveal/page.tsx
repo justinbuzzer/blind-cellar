@@ -14,11 +14,13 @@ import { bottleRevealImage } from "@/lib/appImages";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { getRevealedBottle } from "@/lib/supabase/guestActions";
+import { getBottleResultForGuest, getRevealedBottle } from "@/lib/supabase/guestActions";
 import { buildRevealedBottleResult } from "@/lib/supabase/mappers";
 import { ParticipantScoreBreakdown } from "@/components/report/ParticipantScoreBreakdown";
+import { BottleParticipantList } from "@/components/report/BottleParticipantList";
 import { RevealedBottleWineDTO } from "@/lib/supabase/types";
 import { formatContributorBottleLabel, wineStyleToContributorBucket } from "@/lib/contributorLabel";
+import { buildBottleResultView, BottleResultView, formatBottleAggregateSummary } from "@/lib/resultsReveal";
 import { WINE_STYLE_LABELS, WineResult } from "@/types/tasting";
 import { getGuestToken } from "@/lib/deviceStorage";
 
@@ -28,12 +30,18 @@ type LoadState = "loading" | "no-config" | "invalid-token" | "not-revealed-yet" 
  * Per-bottle reveal screen for a course_reveal session — see README "Tasting
  * modes" and "Results reveal". Reuses `calculateWineResults`/`scoreWineGuess`
  * exactly as the final full-session report does (via
- * `buildRevealedBottleResult`), just scoped to this one bottle. Shows only
- * the caller's own score breakdown — `get_revealed_bottle` now returns only
- * the caller's own guess (see supabase/schema.sql and README "Results
- * reveal"); every other participant's guess is host-only. Deliberately does
- * not show a running leaderboard/ranking — the spec calls a full one
- * unnecessary complexity for a mid-tasting screen.
+ * `buildRevealedBottleResult`), just scoped to this one bottle. Shows the
+ * caller's own score breakdown first ("Your score", via `get_revealed_bottle`
+ * — unchanged), then everyone's guesses ("Everyone's guesses", via the new
+ * guest-token-authenticated `get_bottle_result_for_guest`), the exact same
+ * per-participant breakdown Host Controls' per-bottle result page shows (see
+ * `buildBottleResultView`/`BottleParticipantList`, shared with
+ * `HostBottleResultClient`). This is deliberately course_reveal-only —
+ * full_blind's separate per-bottle result page
+ * (`app/tasting/[publicId]/bottle/[wineId]/result`) is unchanged and still
+ * shows only the caller's own guess. Deliberately does not show a running
+ * leaderboard/ranking — the spec calls a full one unnecessary complexity for
+ * a mid-tasting screen.
  */
 export default function BottleRevealPage() {
   const params = useParams<{ publicId: string; wineId: string }>();
@@ -44,6 +52,7 @@ export default function BottleRevealPage() {
   const [wineInfo, setWineInfo] = useState<RevealedBottleWineDTO | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [sessionRevealed, setSessionRevealed] = useState(false);
+  const [everyoneView, setEveryoneView] = useState<BottleResultView | null>(null);
 
   useEffect(() => {
     const token = getGuestToken(params.publicId);
@@ -72,6 +81,11 @@ export default function BottleRevealPage() {
       setSubmitted(data.submitted);
       setSessionRevealed(data.session.status === "revealed");
       setLoadState("ready");
+
+      const { data: everyoneData } = await getBottleResultForGuest(supabase, token, params.wineId);
+      if (everyoneData) {
+        setEveryoneView(buildBottleResultView(everyoneData));
+      }
     })();
   }, [params.publicId, params.wineId, router]);
 
@@ -171,6 +185,37 @@ export default function BottleRevealPage() {
         <SectionEyebrow>Your score</SectionEyebrow>
         <ParticipantScoreBreakdown wine={result.wine} score={submitted ? result.guesses[0] ?? null : null} />
       </section>
+
+      {everyoneView && (
+        <>
+          <Card className="flex flex-col gap-3">
+            <SectionEyebrow>Score summary</SectionEyebrow>
+            {everyoneView.aggregate.submittedCount === 0 ? (
+              <p className="text-sm text-cellar-muted">{formatBottleAggregateSummary(everyoneView.aggregate)}</p>
+            ) : (
+              <div className="grid grid-cols-3 gap-3 rounded-sm bg-cellar-bg-deep p-3 text-center">
+                <Stat
+                  label="Submitted"
+                  value={`${everyoneView.aggregate.submittedCount} / ${everyoneView.aggregate.eligibleCount}`}
+                />
+                <Stat
+                  label="Average score"
+                  value={`${everyoneView.aggregate.averageScore} / ${everyoneView.aggregate.totalPossiblePoints}`}
+                />
+                <Stat
+                  label="Highest score"
+                  value={`${everyoneView.aggregate.highestScore} / ${everyoneView.aggregate.totalPossiblePoints}`}
+                />
+              </div>
+            )}
+          </Card>
+
+          <section className="flex flex-col gap-2">
+            <SectionEyebrow>Everyone&rsquo;s guesses</SectionEyebrow>
+            <BottleParticipantList participants={everyoneView.participants} />
+          </section>
+        </>
+      )}
 
       {sessionRevealed ? (
         <Link href={`/session/${params.publicId}/recap`}>

@@ -5,9 +5,9 @@ import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { Stat } from "@/components/Stat";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { RevealedWineIdentity } from "@/components/report/RevealedWineIdentity";
-import { HostBottleParticipantList } from "@/components/host/HostBottleParticipantList";
+import { BottleParticipantList } from "@/components/report/BottleParticipantList";
 import { bottleLabel } from "@/lib/codes";
-import { buildHostBottleResult, formatBottleAggregateSummary } from "@/lib/resultsReveal";
+import { buildBottleResultView, formatBottleAggregateSummary } from "@/lib/resultsReveal";
 import { BottleResultForHostResponse } from "@/lib/supabase/types";
 
 interface HostBottleResultClientProps {
@@ -18,7 +18,7 @@ interface HostBottleResultClientProps {
 
 /** Host-only per-bottle results view — see README "Results reveal". */
 export function HostBottleResultClient({ publicId, hostToken, response }: HostBottleResultClientProps) {
-  const view = buildHostBottleResult(response);
+  const view = buildBottleResultView(response);
   const hostControlsHref = `/host/${publicId}?token=${encodeURIComponent(hostToken)}`;
 
   return (
@@ -66,7 +66,7 @@ export function HostBottleResultClient({ publicId, hostToken, response }: HostBo
 
       <section className="flex flex-col gap-2">
         <SectionEyebrow>Participant breakdown</SectionEyebrow>
-        <HostBottleParticipantList participants={view.participants} />
+        <BottleParticipantList participants={view.participants} />
       </section>
 
       <Link href={hostControlsHref}>

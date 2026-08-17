@@ -487,8 +487,8 @@ export interface ReleaseCourseBottleResponse {
   wineId: string;
 }
 
-/** A participant's guess content only — no guestId/guestName (those live one level up on BottleResultParticipantDTO), matching get_bottle_result_for_host's per-participant jsonb shape exactly. */
-export interface HostBottleGuessDTO {
+/** A participant's guess content only — no guestId/guestName (those live one level up on BottleResultParticipantDTO), matching get_bottle_result_for_host's/get_bottle_result_for_guest's shared per-participant jsonb shape exactly. */
+export interface BottleResultGuessDTO {
   countryGuess: string;
   regionGuess: string;
   appellationGuess: string | null;
@@ -501,20 +501,32 @@ export interface HostBottleGuessDTO {
   confidence: Confidence;
 }
 
-/** One participant's submission status + guess (full_blind/course_reveal only) for the host per-bottle result view. Never includes a token, email, or any field beyond display name + guess content. */
+/** One participant's submission status + guess (full_blind/course_reveal only) for a per-bottle result view — shared shape returned by both get_bottle_result_for_host and get_bottle_result_for_guest. Never includes a token, email, or any field beyond display name + guess content. */
 export interface BottleResultParticipantDTO {
   guestName: string;
   submitted: boolean;
   /** Null exactly when submitted is false. */
-  guess: HostBottleGuessDTO | null;
+  guess: BottleResultGuessDTO | null;
 }
 
-/** Response from get_bottle_result_for_host — every eligible participant's guess for one revealed bottle. Host-only; see README "Results reveal". */
+/** Response from get_bottle_result_for_host — every eligible participant's guess for one revealed bottle. Host-token authenticated; see BottleResultForGuestResponse below for the identically-shaped participant-facing endpoint. See README "Results reveal". */
 export interface BottleResultForHostResponse {
   session: { publicId: string; status: SessionStatus; scoringVersion: ScoringVersion };
   wine: RevealedBottleWineDTO;
   participants: BottleResultParticipantDTO[];
 }
+
+/**
+ * Response from get_bottle_result_for_guest — every eligible participant's
+ * guess for one revealed bottle, visible to any participant of the session
+ * (not just the host) once it's revealed. Byte-identical shape to
+ * BottleResultForHostResponse (kept as a distinct type only so each RPC
+ * wrapper's return type documents which endpoint produced it) — see README
+ * "Results reveal". Currently only wired into the course_reveal per-bottle
+ * reveal screen; full_blind's separate per-bottle result page still calls
+ * get_revealed_bottle (own guess only).
+ */
+export type BottleResultForGuestResponse = BottleResultForHostResponse;
 
 /** One bottle's safe label + reveal state for the participant results hub — never an answer-key field. */
 export interface RevealedBottleSummaryDTO {
