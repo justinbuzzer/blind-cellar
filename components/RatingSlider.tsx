@@ -1,4 +1,5 @@
-import { useId } from "react";
+import { useId, useState } from "react";
+import { Modal } from "./Modal";
 
 interface RatingSliderProps {
   value: number | null;
@@ -7,20 +8,46 @@ interface RatingSliderProps {
   disabled?: boolean;
 }
 
-const MIN = 50;
+const MIN = 70;
 const MAX = 100;
+
+/**
+ * Reference bands for the "What do scores mean?" popover — a condensed,
+ * own-words paraphrase of the classic Robert Parker / Wine Advocate
+ * 100-point scale. Bands below 70 (50-69, "unacceptable"/"below average")
+ * are intentionally omitted: those wines are considered flawed and this app
+ * never expects one to actually be tasted, so MIN is set to 70 rather than
+ * merely hiding the low end of a wider scale.
+ */
+const SCORE_BANDS: { range: string; label: string }[] = [
+  { range: "96–100", label: "Extraordinary" },
+  { range: "90–95", label: "Outstanding" },
+  { range: "85–89", label: "Very good to excellent" },
+  { range: "80–84", label: "Good to very good" },
+  { range: "70–79", label: "Average — sound and drinkable" },
+];
 
 export function RatingSlider({ value, onChange, error, disabled }: RatingSliderProps) {
   const fieldId = useId();
   const errorId = `${fieldId}-error`;
   const current = value ?? MIN;
+  const [showScale, setShowScale] = useState(false);
 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between">
-        <label htmlFor={fieldId} className="text-sm font-medium text-cellar-text">
-          Rating
-        </label>
+        <div className="flex items-baseline gap-2">
+          <label htmlFor={fieldId} className="text-sm font-medium text-cellar-text">
+            Rating
+          </label>
+          <button
+            type="button"
+            onClick={() => setShowScale(true)}
+            className="text-xs text-cellar-muted underline decoration-cellar-border underline-offset-2 transition-colors duration-150 hover:text-cellar-maroon focus:outline-none focus-visible:ring-2 focus-visible:ring-cellar-gold"
+          >
+            What do scores mean?
+          </button>
+        </div>
         <span
           className="text-2xl font-semibold text-cellar-maroon"
           aria-hidden="true"
@@ -50,6 +77,23 @@ export function RatingSlider({ value, onChange, error, disabled }: RatingSliderP
         <p id={errorId} className="text-xs font-medium text-cellar-danger">
           {error}
         </p>
+      )}
+      {showScale && (
+        <Modal title="What do scores mean?" onClose={() => setShowScale(false)}>
+          <p className="text-cellar-muted">
+            Based on the classic 100-point wine scale (Robert Parker / Wine
+            Advocate). Scores below 70 are reserved for flawed or
+            undrinkable wines, so this scale starts at 70.
+          </p>
+          <ul className="mt-3 flex flex-col gap-1.5 text-sm">
+            {SCORE_BANDS.map((band) => (
+              <li key={band.range} className="flex items-baseline justify-between gap-3">
+                <span className="font-medium text-cellar-text">{band.range}</span>
+                <span className="text-right text-cellar-muted">{band.label}</span>
+              </li>
+            ))}
+          </ul>
+        </Modal>
       )}
     </div>
   );

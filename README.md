@@ -1223,6 +1223,12 @@ Run this against a real Supabase project (see `SUPABASE_SETUP.md`) using multipl
 415. **The Partial badge is legible and not colour-only** — at 375px and via a screen reader, confirm the amber badge has its own glyph and text label ("Partial (X/Y)"), not just a colour change from the green/red states.
 416. **No regression for historic sessions** — open a `legacy_v1` or `core_v3_appellation_conditional` session's report (e.g. an existing completed tasting, or the demo report); confirm the Partial badge never appears anywhere, and every score matches what it showed before this feature shipped.
 
+### Rating scale (70–100)
+
+417. **The rating slider only offers 70–100** — on any guess-entry or Seen rating screen, confirm the slider's minimum is 70 (not 50) and the low-end label reads "70"; it should be impossible to drag below 70.
+418. **"What do scores mean?" opens a reference popover** — click the link next to the Rating label; confirm a popup opens listing 70–79 through 96–100 band descriptions (paraphrased Robert Parker / Wine Advocate scale), explicitly excluding 50–69, and that it closes via the × / Escape / backdrop click like every other modal in the app.
+419. **Existing ratings below 70 still display correctly** — a historic session with a rating in the 50–69 range (e.g. via the demo report, if one exists, or a pre-existing test session) should still render that number normally everywhere it's shown (report, PDF, profile ledger) — this change only narrows what a *new* rating can be, it never rewrites or hides old data.
+
 ## Automated tests
 
 `npm run test` runs Vitest unit tests covering:
