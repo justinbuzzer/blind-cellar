@@ -19,6 +19,7 @@ import { friendlyRpcError } from "@/lib/supabase/types";
 import { hasBottleFormErrors, validateBottleForm } from "@/lib/validation";
 import { bottleLabel } from "@/lib/codes";
 import { getGuestToken } from "@/lib/deviceStorage";
+import { scrollToFirstInvalidField } from "@/lib/formFocus";
 
 type LoadState = "loading" | "no-config" | "invalid-token" | "not-yours" | "ready";
 
@@ -68,6 +69,10 @@ export default function EditBottlePage() {
       setLoadState("ready");
     })();
   }, [params.publicId, params.wineId, router]);
+
+  useEffect(() => {
+    if (hasBottleFormErrors(errors)) scrollToFirstInvalidField();
+  }, [errors]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

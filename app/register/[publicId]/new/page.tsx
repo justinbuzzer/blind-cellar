@@ -27,6 +27,7 @@ import { CellarBottleRow, friendlyRpcError } from "@/lib/supabase/types";
 import { hasBottleFormErrors, validateBottleForm } from "@/lib/validation";
 import { bottleLabel } from "@/lib/codes";
 import { getGuestToken } from "@/lib/deviceStorage";
+import { scrollToFirstInvalidField } from "@/lib/formFocus";
 import { useAuthUser } from "@/lib/supabase/useAuthUser";
 import { WINE_STYLE_LABELS } from "@/types/tasting";
 
@@ -107,6 +108,10 @@ export default function AddBottlePage() {
   useEffect(() => {
     if (!authLoading && user) loadCellarBottles();
   }, [authLoading, user, loadCellarBottles]);
+
+  useEffect(() => {
+    if (hasBottleFormErrors(errors)) scrollToFirstInvalidField();
+  }, [errors]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

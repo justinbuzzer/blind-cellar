@@ -36,8 +36,8 @@ export const COUNTRIES: string[] = [
   "Portugal",
   "South Africa",
   "Spain",
-  "United States",
   "United Kingdom",
+  "United States",
   "Other / Unknown",
 ];
 

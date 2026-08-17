@@ -166,6 +166,7 @@ export function WineIdentityFields({ value, errors, onChange }: WineIdentityFiel
             value={value.producer}
             error={errors.producer}
             maxLength={100}
+            spellCheck={false}
             onChange={(e) => set("producer", e.target.value)}
           />
           <TextField
@@ -174,6 +175,7 @@ export function WineIdentityFields({ value, errors, onChange }: WineIdentityFiel
             error={errors.wineName}
             hint={WINE_CUVEE_HINT}
             maxLength={100}
+            spellCheck={false}
             onChange={(e) => set("wineName", e.target.value)}
           />
         </div>

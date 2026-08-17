@@ -20,6 +20,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useAuthUser } from "@/lib/supabase/useAuthUser";
 import { friendlyRpcError } from "@/lib/supabase/types";
 import { hasBottleFormErrors } from "@/lib/validation";
+import { scrollToFirstInvalidField } from "@/lib/formFocus";
 
 type LoadState = "checking" | "no-config" | "ready";
 
@@ -46,6 +47,10 @@ export default function AddCellarBottlePage() {
     if (authLoading || loadState !== "ready" || user) return;
     router.replace("/account/sign-in?redirect=/cellar/new");
   }, [authLoading, loadState, user, router]);
+
+  useEffect(() => {
+    if (hasBottleFormErrors(errors)) scrollToFirstInvalidField();
+  }, [errors]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

@@ -33,6 +33,7 @@ import { mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
 import { emptyWineGuess, winesRequiringGuess } from "@/lib/guess";
 import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend, invalidOtherGrapeGuessMessage } from "@/lib/validation";
 import { getGuestToken, getHostToken } from "@/lib/deviceStorage";
+import { scrollToFirstInvalidField } from "@/lib/formFocus";
 import { buildBottleDisplayLabels, formatBottleAccessibleLabel } from "@/lib/contributorLabel";
 import { WineGuess } from "@/types/tasting";
 
@@ -310,6 +311,12 @@ export default function GuestTastingPage() {
       clearInterval(pollId);
     };
   }, [loadState, params.publicId, refreshRevealProgress]);
+
+  useEffect(() => {
+    if (ratingErrorWineId || blendErrorWineId || otherGrapeErrorWineId) {
+      scrollToFirstInvalidField();
+    }
+  }, [currentIndex, ratingErrorWineId, blendErrorWineId, otherGrapeErrorWineId]);
 
   function updateGuess(wineId: string, next: WineGuess) {
     setGuesses((prev) => prev.map((g) => (g.wineId === wineId ? next : g)));

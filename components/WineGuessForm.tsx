@@ -188,12 +188,14 @@ export function WineGuessForm({
           <TextField
             label="Producer"
             value={value.producer}
+            spellCheck={false}
             onChange={(e) => set("producer", e.target.value)}
           />
           <TextField
             label="Wine / cuvée"
             value={value.wineName}
             hint={WINE_CUVEE_HINT}
+            spellCheck={false}
             onChange={(e) => set("wineName", e.target.value)}
           />
         </div>

@@ -1229,6 +1229,13 @@ Run this against a real Supabase project (see `SUPABASE_SETUP.md`) using multipl
 418. **"What do scores mean?" opens a reference popover** — click the link next to the Rating label; confirm a popup opens listing 70–79 through 96–100 band descriptions (paraphrased Robert Parker / Wine Advocate scale), explicitly excluding 50–69, and that it closes via the × / Escape / backdrop click like every other modal in the app.
 419. **Existing ratings below 70 still display correctly** — a historic session with a rating in the 50–69 range (e.g. via the demo report, if one exists, or a pre-existing test session) should still render that number normally everywhere it's shown (report, PDF, profile ledger) — this change only narrows what a *new* rating can be, it never rewrites or hides old data.
 
+### Small UX tweaks (scroll-to-error, country order, spellcheck)
+
+420. **A failed bottle registration or cellar-bottle submit scrolls to the first invalid field** — on Register a bottle, Edit bottle, Add to cellar, and Edit cellar bottle, leave several required fields blank and submit; confirm the page scrolls the first invalid field into view and, where that field is a real control (not a compound field like Wine style or a blend multi-select), moves keyboard focus to it.
+421. **A failed guess submission scrolls to the first invalid field** — on the final "Submit all guesses" step, leave a rating unset (or leave an incomplete blend / invalid Other-grape entry) on an earlier bottle, then submit from a later bottle; confirm the page navigates to the errored bottle and scrolls/focuses the invalid field, not just silently jumping there.
+422. **"United Kingdom" now sorts before "United States"** — open the Country dropdown on any registration or blind-guess form; confirm the two appear in correct alphabetical order (previously reversed).
+423. **Producer and Wine/cuvée fields don't red-underline correctly spelled wine names** — on any registration or guess-entry form, type a producer or cuvée name your browser's spellchecker wouldn't recognise (e.g. a French or Italian name); confirm no red squiggly underline appears, since these fields now opt out of browser spellcheck.
+
 ## Automated tests
 
 `npm run test` runs Vitest unit tests covering:

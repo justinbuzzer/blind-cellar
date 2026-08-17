@@ -20,6 +20,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useAuthUser } from "@/lib/supabase/useAuthUser";
 import { CellarBottleRow, friendlyRpcError } from "@/lib/supabase/types";
 import { hasBottleFormErrors } from "@/lib/validation";
+import { scrollToFirstInvalidField } from "@/lib/formFocus";
 
 type LoadState = "loading" | "no-config" | "not-found" | "not-editable" | "ready";
 
@@ -70,6 +71,10 @@ export default function EditCellarBottlePage() {
       setLoadState("ready");
     })();
   }, [authLoading, user, params.bottleId, router]);
+
+  useEffect(() => {
+    if (hasBottleFormErrors(errors)) scrollToFirstInvalidField();
+  }, [errors]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
