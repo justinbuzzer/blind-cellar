@@ -28,6 +28,7 @@ import {
   ArchiveTabId,
   buildArchiveSummary,
   defaultArchiveTab,
+  MAX_ARCHIVE_LOOKUP_ITEMS,
   resolveAccountEntries,
   selectDisplayEntries,
   splitByRole,
@@ -74,7 +75,12 @@ export default function ArchivePage() {
 
   useEffect(() => {
     (async () => {
-      const references = listArchiveReferences();
+      // listArchiveReferences() returns oldest-first (see
+      // addArchiveReference); take the most-recently-touched
+      // MAX_ARCHIVE_LOOKUP_ITEMS so a browser with a long history never
+      // exceeds the lookup route's hard per-request cap — sending more than
+      // that gets the whole request rejected, not gracefully truncated.
+      const references = listArchiveReferences().slice(-MAX_ARCHIVE_LOOKUP_ITEMS);
       const items: ArchiveLookupRequestItem[] = [];
       for (const ref of references) {
         const token = ref.role === "host" ? getHostToken(ref.publicId) : getGuestToken(ref.publicId);
