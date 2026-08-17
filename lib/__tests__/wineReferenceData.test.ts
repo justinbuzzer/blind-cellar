@@ -6,6 +6,7 @@ import {
   COUNTRIES,
   GRAPE_VARIETIES,
   grapeSkin,
+  grapeVarietiesPopularFirst,
   hasMultiVarietyDelimiter,
   isCustomSingleGrape,
   isGrapeColorCompatibleWithStyle,
@@ -409,6 +410,46 @@ describe("singleGrapeVarietyOptionsPreservingCurrent — blind-guess draft safet
     expect(singleGrapeVarietyOptionsPreservingCurrent("", "Pinot Noir")).toEqual(
       singleGrapeVarietyOptionsForStyle("")
     );
+  });
+});
+
+describe("grapeVarietiesPopularFirst — registration dropdown ordering", () => {
+  it("leads with the popular grapes, in their curated popularity order, over the full curated list", () => {
+    const ordered = grapeVarietiesPopularFirst(GRAPE_VARIETIES);
+    expect(ordered.slice(0, 4).map((g) => g.value)).toEqual([
+      "Cabernet Sauvignon",
+      "Merlot",
+      "Chardonnay",
+      "Pinot Noir",
+    ]);
+  });
+
+  it("keeps every remaining grape in its original (alphabetical) relative order after the popular ones", () => {
+    const ordered = grapeVarietiesPopularFirst(GRAPE_VARIETIES);
+    const popularValues = new Set(ordered.slice(0, 15).map((g) => g.value));
+    const rest = ordered.slice(15).map((g) => g.value);
+    const expectedRest = GRAPE_VARIETIES.map((g) => g.value).filter((v) => !popularValues.has(v));
+    expect(rest).toEqual(expectedRest);
+  });
+
+  it("neither drops nor duplicates any entry", () => {
+    const ordered = grapeVarietiesPopularFirst(GRAPE_VARIETIES);
+    expect(ordered).toHaveLength(GRAPE_VARIETIES.length);
+    expect(new Set(ordered.map((g) => g.value)).size).toBe(GRAPE_VARIETIES.length);
+  });
+
+  it("silently skips a popular grape absent from a filtered input, rather than inventing an entry for it", () => {
+    // The White-style-filtered list has no Cabernet Sauvignon/Merlot/Pinot Noir (all red) —
+    // popular whites (Chardonnay, Sauvignon Blanc, ...) should still lead.
+    const whiteOptions = singleGrapeVarietyOptionsForStyle("white");
+    const ordered = grapeVarietiesPopularFirst(whiteOptions);
+    expect(ordered).toHaveLength(whiteOptions.length);
+    expect(ordered.some((g) => g.value === "Cabernet Sauvignon")).toBe(false);
+    expect(ordered[0].value).toBe("Chardonnay");
+  });
+
+  it("is a no-op on an empty list", () => {
+    expect(grapeVarietiesPopularFirst([])).toEqual([]);
   });
 });
 

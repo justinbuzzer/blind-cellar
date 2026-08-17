@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
-import { GRAPE_VARIETIES } from "@/lib/wineReferenceData";
+import { GRAPE_VARIETIES, grapeVarietiesPopularFirst } from "@/lib/wineReferenceData";
 
 interface GrapeMultiSelectProps {
   label: string;
@@ -9,6 +9,8 @@ interface GrapeMultiSelectProps {
   selected: string[];
   onChange: (next: string[]) => void;
   error?: string;
+  /** See GrapeBlendFieldProps — sorts the most commonly encountered grapes to the top of the list. */
+  popularFirst?: boolean;
 }
 
 /**
@@ -26,6 +28,7 @@ export function GrapeMultiSelect({
   selected,
   onChange,
   error,
+  popularFirst,
 }: GrapeMultiSelectProps) {
   const [filter, setFilter] = useState("");
   const groupId = useId();
@@ -35,7 +38,8 @@ export function GrapeMultiSelect({
     .filter(Boolean)
     .join(" ");
 
-  const filtered = GRAPE_VARIETIES.filter((grape) =>
+  const orderedGrapes = popularFirst ? grapeVarietiesPopularFirst(GRAPE_VARIETIES) : GRAPE_VARIETIES;
+  const filtered = orderedGrapes.filter((grape) =>
     grape.label.toLowerCase().includes(filter.trim().toLowerCase())
   );
   const sortedSelected = [...selected].sort((a, b) => a.localeCompare(b));

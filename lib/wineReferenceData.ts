@@ -340,6 +340,59 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 /**
+ * The GRAPE_VARIETIES values most likely to come up at a casual tasting,
+ * most-to-least common — used only to sort them to the top of a
+ * *registration* grape dropdown/multi-select (see grapeVarietiesPopularFirst
+ * below). Purely a display-ordering aid: it never affects validation,
+ * scoring, storage, or which grapes exist.
+ */
+const POPULAR_GRAPE_VALUES: string[] = [
+  "Cabernet Sauvignon",
+  "Merlot",
+  "Chardonnay",
+  "Pinot Noir",
+  "Sauvignon Blanc",
+  "Syrah",
+  "Riesling",
+  "Grenache",
+  "Malbec",
+  "Tempranillo",
+  "Sangiovese",
+  "Pinot Gris",
+  "Zinfandel",
+  "Nebbiolo",
+  "Chenin Blanc",
+];
+
+if (process.env.NODE_ENV !== "production") {
+  const knownGrapeValues = new Set(GRAPE_VARIETIES.map((g) => g.value));
+  for (const value of POPULAR_GRAPE_VALUES) {
+    if (!knownGrapeValues.has(value)) {
+      throw new Error(`wineReferenceData: POPULAR_GRAPE_VALUES references unknown grape "${value}"`);
+    }
+  }
+}
+
+/**
+ * Reorders a (possibly already style-filtered) grape list so the curated
+ * POPULAR_GRAPE_VALUES lead, in that popularity order, followed by every
+ * remaining grape in its existing (alphabetical) order. Used only by
+ * *registration* dropdowns (tasting bottle + cellar bottle forms, via
+ * WineIdentityFields) — never blind-guess entry, where an unbiased
+ * alphabetical list matters more than convenience. A popular value absent
+ * from `list` (e.g. filtered out by wine style) is simply skipped.
+ */
+export function grapeVarietiesPopularFirst<T extends { value: string }>(list: T[]): T[] {
+  const byValue = new Map(list.map((g) => [g.value, g]));
+  const popular = POPULAR_GRAPE_VALUES.map((v) => byValue.get(v)).filter(
+    (g): g is T => g !== undefined
+  );
+  const popularValues = new Set(popular.map((g) => g.value));
+  const rest = list.filter((g) => !popularValues.has(g.value));
+  return [...popular, ...rest];
+}
+
+/**
  * Alternate spellings that must canonicalise to the same grape for scoring,
  * without implying any relationship between unrelated grapes. Keys are raw
  * (pre-normalisation) aliases; values are the canonical `GRAPE_VARIETIES`

@@ -1,6 +1,7 @@
 import { GrapeBlendMode } from "@/types/tasting";
 import {
   combineBlendComponents,
+  grapeVarietiesPopularFirst,
   MAX_OTHER_GRAPE_LENGTH,
   singleGrapeVarietyOptionsPreservingCurrent,
 } from "@/lib/wineReferenceData";
@@ -31,18 +32,32 @@ interface GrapeBlendFieldProps {
    * with no wine-style concept (see WineGuessForm) — same as passing "".
    */
   wineStyle?: string;
+  /**
+   * Sorts the curated grape list so the app's most commonly encountered
+   * varieties (see lib/wineReferenceData's POPULAR_GRAPE_VALUES) lead the
+   * single-variety dropdown and blend multi-select, with everything else
+   * alphabetical after them. Used only by bottle registration (tasting +
+   * cellar, via WineIdentityFields) — omitted (alphabetical throughout) for
+   * blind-guess entry, where an unbiased list matters more than convenience.
+   */
+  popularFirst?: boolean;
 }
 
 /** Dropdown sentinel for "Other grape" — never persisted; see setSingleGrapeSelection. */
 const OTHER_GRAPE_VALUE = "__other_grape__";
 const OTHER_GRAPE_HINT = "Enter the grape variety.";
 
-function singleGrapeDropdownOptions(wineStyle: string | undefined, currentValue: string) {
+function singleGrapeDropdownOptions(
+  wineStyle: string | undefined,
+  currentValue: string,
+  popularFirst: boolean | undefined
+) {
+  const options = singleGrapeVarietyOptionsPreservingCurrent(wineStyle, currentValue).map((g) => ({
+    value: g.value,
+    label: g.label,
+  }));
   return [
-    ...singleGrapeVarietyOptionsPreservingCurrent(wineStyle, currentValue).map((g) => ({
-      value: g.value,
-      label: g.label,
-    })),
+    ...(popularFirst ? grapeVarietiesPopularFirst(options) : options),
     { value: OTHER_GRAPE_VALUE, label: "Other grape" },
   ];
 }
@@ -61,9 +76,13 @@ function singleGrapeDropdownOptions(wineStyle: string | undefined, currentValue:
  * so the existing blend scoring (which re-tokenises that same string) needs
  * no changes to understand blends built with this picker.
  */
-export function GrapeBlendField({ value, onChange, error, wineStyle }: GrapeBlendFieldProps) {
+export function GrapeBlendField({ value, onChange, error, wineStyle, popularFirst }: GrapeBlendFieldProps) {
   const mode = value.grapeBlendMode || "single";
-  const singleGrapeOptions = singleGrapeDropdownOptions(wineStyle, value.otherGrapeSelected ? "" : value.grapeBlend);
+  const singleGrapeOptions = singleGrapeDropdownOptions(
+    wineStyle,
+    value.otherGrapeSelected ? "" : value.grapeBlend,
+    popularFirst
+  );
 
   function selectMode(next: GrapeBlendMode) {
     onChange({
@@ -144,6 +163,7 @@ export function GrapeBlendField({ value, onChange, error, wineStyle }: GrapeBlen
             selected={value.selectedGrapes}
             onChange={setSelectedGrapes}
             error={error}
+            popularFirst={popularFirst}
           />
           <TextField
             label="Other grape(s), if not listed"

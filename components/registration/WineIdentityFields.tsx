@@ -144,6 +144,7 @@ export function WineIdentityFields({ value, errors, onChange }: WineIdentityFiel
           onChange={handleGrapeBlendChange}
           error={errors.grapeBlendMode ?? errors.grapeBlend}
           wineStyle={value.wineStyle}
+          popularFirst
         />
         {grapeAssistanceMessage && (
           <p role="status" aria-live="polite" className="text-xs text-cellar-text/60">
