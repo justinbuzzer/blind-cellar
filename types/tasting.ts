@@ -152,6 +152,8 @@ export interface WineAnswerKey {
   contributorStyleBucket?: ContributorStyleBucket;
   /** This contributor's stable 1-based ordinal within contributorStyleBucket for this session — see lib/contributorLabel.ts formatContributorBottleLabel. Only ever populated after reveal. */
   contributorStyleSequence?: number;
+  /** Object path into the public `bottle-photos` Storage bucket (see README "Bottle photos") — not a URL; pass through lib/photoUrl.ts's tastingBottlePhotoUrl to render it. Undefined when the contributor never uploaded one, or, pre-reveal, always undefined regardless of whether a photo exists (masked the same way as every other identity field). */
+  photoPath?: string;
 }
 
 /**

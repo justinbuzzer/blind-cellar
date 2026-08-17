@@ -10,3 +10,14 @@ export function getSupabaseEnv(): SupabaseEnv | null {
   if (!url || !anonKey) return null;
   return { url, anonKey };
 }
+
+/**
+ * Reads the service-role key (see README "Bottle photos") — deliberately
+ * NOT prefixed `NEXT_PUBLIC_`, since it must never reach the browser bundle.
+ * Only ever read from `lib/supabase/serviceClient.ts`, which only ever gets
+ * imported from a Route Handler. Returns null if unset, same convention as
+ * getSupabaseEnv() above.
+ */
+export function getSupabaseServiceRoleKey(): string | null {
+  return process.env.SUPABASE_SERVICE_ROLE_KEY ?? null;
+}

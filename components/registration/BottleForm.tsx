@@ -2,11 +2,14 @@ import { BottleFormInput } from "@/lib/supabase/guestActions";
 import { Card } from "@/components/Card";
 import { TextAreaField } from "@/components/TextAreaField";
 import { Button } from "@/components/Button";
+import { PhotoUploadField } from "@/components/PhotoUploadField";
 import { WineIdentityFields } from "./WineIdentityFields";
 
 export type BottleFormErrors = Partial<Record<keyof BottleFormInput, string>>;
 
 interface BottleFormProps {
+  publicId: string;
+  guestToken: string;
   value: BottleFormInput;
   errors: BottleFormErrors;
   onChange: (value: BottleFormInput) => void;
@@ -17,6 +20,8 @@ interface BottleFormProps {
 }
 
 export function BottleForm({
+  publicId,
+  guestToken,
   value,
   errors,
   onChange,
@@ -30,7 +35,13 @@ export function BottleForm({
       <Card className="p-0">
         <WineIdentityFields value={value} errors={errors} onChange={(next) => onChange({ ...value, ...next })} />
 
-        <div className="p-5">
+        <div className="flex flex-col gap-5 p-5">
+          <PhotoUploadField
+            publicId={publicId}
+            guestToken={guestToken}
+            value={value.photoPath}
+            onChange={(photoPath) => onChange({ ...value, photoPath })}
+          />
           <TextAreaField
             label="Private note (optional)"
             value={value.notes}

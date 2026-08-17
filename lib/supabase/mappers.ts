@@ -36,6 +36,7 @@ export function mapRevealedWineRowToAnswerKey(row: GuestVisibleWineRow): WineAns
     contributorGuestId: row.contributor_guest_id ?? undefined,
     contributorStyleBucket: row.wine_style ? wineStyleToContributorBucket(row.wine_style) : undefined,
     contributorStyleSequence: row.contributor_style_sequence ?? undefined,
+    photoPath: row.photo_path ?? undefined,
   };
 }
 
@@ -216,6 +217,7 @@ export function buildRevealedBottleResult(response: RevealedBottleResponse): Win
     wineStyle: response.wine.wineStyle,
     tastingOrder: response.wine.position,
     contributorName: response.wine.contributorName ?? undefined,
+    photoPath: response.wine.photoPath ?? undefined,
   };
 
   const session: TastingSession = {

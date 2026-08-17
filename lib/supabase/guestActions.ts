@@ -194,6 +194,8 @@ export async function upsertSeenRating(
 export interface BottleFormInput extends WineIdentityInput {
   /** Private, per-tasting-only note — never part of the shared wine-identity shape (see WineIdentityInput). */
   notes: string;
+  /** Object path into the public `bottle-photos` Storage bucket (see README "Bottle photos"), or null for no photo. Photo upload happens independently of form submission (see components/PhotoUploadField.tsx); this just carries the already-uploaded path through to register_bottle/update_bottle. Not part of WineIdentityInput since photo handling is tasting-bottle-specific. */
+  photoPath: string | null;
 }
 
 function grapeBlendComponentsPayload(bottle: BottleFormInput) {
@@ -220,6 +222,7 @@ export async function registerBottle(
     p_notes: bottle.notes,
     p_wine_style: bottle.wineStyle || null,
     p_grape_blend_components: grapeBlendComponentsPayload(bottle),
+    p_photo_path: bottle.photoPath,
   });
   return { data: data as RegisterBottleResponse | null, error };
 }
@@ -244,6 +247,7 @@ export async function updateBottle(
     p_notes: bottle.notes,
     p_wine_style: bottle.wineStyle || null,
     p_grape_blend_components: grapeBlendComponentsPayload(bottle),
+    p_photo_path: bottle.photoPath,
   });
 }
 
@@ -299,5 +303,6 @@ export function bottleFormInputFromDto(bottle: MyBottleDTO): BottleFormInput {
     vintage: bottle.vintage,
     wineStyle: bottle.wineStyle,
     notes: bottle.notes ?? "",
+    photoPath: bottle.photoPath,
   };
 }

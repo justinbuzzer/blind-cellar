@@ -74,6 +74,8 @@ export interface GuestVisibleWineRow {
   appellation: string | null;
   /** Masked the same way as wine_style — null until the session is revealed. See README "Bottle labels". */
   contributor_style_sequence: number | null;
+  /** Masked the same way as producer/etc — null until the session is revealed. See README "Bottle photos". */
+  photo_path: string | null;
 }
 
 export interface RevealedWineGuessRow {
@@ -115,6 +117,8 @@ export interface HostSeenBottleInfo {
   country: string;
   region: string;
   appellation: string | null;
+  /** See README "Bottle photos" — Seen shows this unmasked from the start, same as every other field here. */
+  photoPath: string | null;
   /** Null until the host reveals this specific bottle's group rating. */
   ratingsRevealedAt: string | null;
   /** Eligible participants with a valid submitted rating for this bottle. */
@@ -363,6 +367,8 @@ export interface MyBottleDTO {
   vintage: string;
   wineStyle: WineStyle;
   notes: string | null;
+  /** See README "Bottle photos". Own bottle, so unmasked regardless of reveal state. */
+  photoPath: string | null;
 }
 
 export interface RegistrationStateResponse {
@@ -453,6 +459,8 @@ export interface RevealedBottleWineDTO {
   contributorName: string | null;
   /** This contributor's stable 1-based ordinal within their same-style bottles for this session (see README "Bottle labels") — bucket is derived client-side from wineStyle above via wineStyleToContributorBucket, since wineStyle is already present on this post-reveal DTO. Null under the same condition as contributorName. */
   contributorStyleSequence: number | null;
+  /** See README "Bottle photos". Only ever populated here since this DTO is only ever returned once the bottle is revealed. */
+  photoPath: string | null;
 }
 
 export interface RevealedBottleResponse {
@@ -544,6 +552,8 @@ export interface LeaderboardWineDTO {
   vintage: string;
   wineStyle: WineStyle;
   tastingOrder: number;
+  /** See README "Bottle photos". Only ever populated here since this DTO is only ever returned for already-revealed bottles. */
+  photoPath: string | null;
 }
 
 /** One guess against a revealed bottle, for the host provisional leaderboard. */
@@ -625,6 +635,8 @@ export interface SeenBottleDTO {
   contributorName: string | null;
   /** This contributor's stable 1-based ordinal within their same-style bottles for this session (see README "Bottle labels") — bucket is derived client-side from wineStyle above via wineStyleToContributorBucket, since Seen mode always shows wineStyle unmasked. Null under the same condition as contributorName. */
   contributorStyleSequence: number | null;
+  /** See README "Bottle photos" — Seen shows this unmasked from the start, same as every other field here. */
+  photoPath: string | null;
   myRating: number | null;
   myConfidence: Confidence | null;
   myNote: string | null;
@@ -729,6 +741,7 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   missing_ratings: "Please rate every wine before submitting.",
   wine_not_in_session: "That wine doesn't belong to this tasting.",
   registration_closed: "Bottle registration is closed for this tasting.",
+  invalid_photo_mime_type: "That photo type isn't supported — use a JPEG, PNG, or WebP image.",
   bottle_fields_required:
     "Country, region, grape/blend, producer, wine/cuvée, and vintage are all required.",
   invalid_grape_blend_mode: "Choose single variety or blend for the grape/blend.",

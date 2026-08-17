@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
+import { BottlePhoto } from "@/components/BottlePhoto";
 import { Modal } from "@/components/Modal";
 import { PageHeader } from "@/components/PageHeader";
 import { SectionEyebrow } from "@/components/SectionEyebrow";
@@ -255,19 +256,22 @@ export default function RegistrationHomePage() {
                     key={bottle.id}
                     className="flex items-center justify-between gap-3 px-5 py-4"
                   >
-                    <div className="min-w-0">
-                      <p className="break-words font-display text-lg font-semibold text-cellar-maroon-dark">
-                        {display.primaryLabel}
-                      </p>
-                      {display.originLine && (
-                        <p className="mt-0.5 text-sm text-cellar-muted">{display.originLine}</p>
-                      )}
-                      {display.grapeLine && (
-                        <p className="mt-0.5 text-sm text-cellar-muted">{display.grapeLine}</p>
-                      )}
-                      <p className="mt-1 text-xs text-cellar-muted">
-                        {display.bottleNumberLabel} · {display.statusLabel}
-                      </p>
+                    <div className="flex min-w-0 items-start gap-3">
+                      <BottlePhoto photoPath={bottle.photoPath} alt={display.primaryLabel} size={56} />
+                      <div className="min-w-0">
+                        <p className="break-words font-display text-lg font-semibold text-cellar-maroon-dark">
+                          {display.primaryLabel}
+                        </p>
+                        {display.originLine && (
+                          <p className="mt-0.5 text-sm text-cellar-muted">{display.originLine}</p>
+                        )}
+                        {display.grapeLine && (
+                          <p className="mt-0.5 text-sm text-cellar-muted">{display.grapeLine}</p>
+                        )}
+                        <p className="mt-1 text-xs text-cellar-muted">
+                          {display.bottleNumberLabel} · {display.statusLabel}
+                        </p>
+                      </div>
                     </div>
                     <div className="flex shrink-0 gap-2">
                       <Link href={`/register/${params.publicId}/${bottle.id}`}>

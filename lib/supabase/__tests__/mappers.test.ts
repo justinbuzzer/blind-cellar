@@ -72,6 +72,7 @@ function makeResponse(
       wineStyle: "red",
       contributorName: "Alice",
       contributorStyleSequence: 1,
+      photoPath: null,
       ...overrides,
     },
     submitted: guesses.length > 0,

@@ -1,5 +1,6 @@
 import { WineAnswerKey } from "@/types/tasting";
 import { compactWineLocationLabel } from "@/lib/appellations";
+import { BottlePhoto } from "@/components/BottlePhoto";
 import { ContributorLine } from "./ContributorLine";
 
 /**
@@ -12,19 +13,22 @@ import { ContributorLine } from "./ContributorLine";
  */
 export function RevealedWineIdentity({ wine }: { wine: WineAnswerKey }) {
   return (
-    <div>
-      <h1 className="font-display text-3xl font-semibold text-cellar-maroon-dark sm:text-4xl">
-        {wine.producer} — {wine.wineName}
-      </h1>
-      <p className="mt-1 text-lg text-cellar-muted">{wine.vintage || "NV"}</p>
-      <p className="mt-1 text-sm text-cellar-muted">
-        {[compactWineLocationLabel(wine), wine.grapeBlend].filter(Boolean).join(" · ")}
-      </p>
-      <ContributorLine
-        contributorName={wine.contributorName}
-        wineStyle={wine.wineStyle}
-        contributorStyleSequence={wine.contributorStyleSequence}
-      />
+    <div className="flex items-start gap-4">
+      <BottlePhoto photoPath={wine.photoPath} alt={`${wine.producer} — ${wine.wineName}`} size={96} />
+      <div>
+        <h1 className="font-display text-3xl font-semibold text-cellar-maroon-dark sm:text-4xl">
+          {wine.producer} — {wine.wineName}
+        </h1>
+        <p className="mt-1 text-lg text-cellar-muted">{wine.vintage || "NV"}</p>
+        <p className="mt-1 text-sm text-cellar-muted">
+          {[compactWineLocationLabel(wine), wine.grapeBlend].filter(Boolean).join(" · ")}
+        </p>
+        <ContributorLine
+          contributorName={wine.contributorName}
+          wineStyle={wine.wineStyle}
+          contributorStyleSequence={wine.contributorStyleSequence}
+        />
+      </div>
     </div>
   );
 }

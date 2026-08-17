@@ -44,6 +44,7 @@ const EMPTY_BOTTLE: BottleFormInput = {
   vintage: "",
   wineStyle: "",
   notes: "",
+  photoPath: null,
 };
 
 type Source = "manual" | "cellar";
@@ -330,6 +331,8 @@ export default function AddBottlePage() {
 
       {source === "manual" || !showSourceChoice ? (
         <BottleForm
+          publicId={params.publicId}
+          guestToken={getGuestToken(params.publicId) ?? ""}
           value={value}
           errors={errors}
           onChange={setValue}

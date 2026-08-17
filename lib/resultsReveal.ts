@@ -98,6 +98,7 @@ export function buildHostBottleResult(response: BottleResultForHostResponse): Ho
     wineStyle: response.wine.wineStyle,
     tastingOrder: response.wine.position,
     contributorName: response.wine.contributorName ?? undefined,
+    photoPath: response.wine.photoPath ?? undefined,
   };
 
   const participants: HostBottleParticipantScore[] = response.participants.map((p) => ({
@@ -209,6 +210,7 @@ function buildRankedResults(source: RankedResultsSource): RankedResults {
     vintage: w.vintage,
     wineStyle: w.wineStyle,
     tastingOrder: w.tastingOrder,
+    photoPath: w.photoPath ?? undefined,
   }));
 
   const guessRows: RevealedWineGuessRow[] = source.guesses.map((g) => ({

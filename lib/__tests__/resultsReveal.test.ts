@@ -40,6 +40,7 @@ function makeWine(overrides: Partial<RevealedBottleWineDTO> = {}): RevealedBottl
     wineStyle: "red",
     contributorName: "Alice",
     contributorStyleSequence: 1,
+    photoPath: null,
     ...overrides,
   };
 }
@@ -180,6 +181,7 @@ function makeLeaderboardWine(overrides: Partial<LeaderboardWineDTO> = {}): Leade
     vintage: "2019",
     wineStyle: "red",
     tastingOrder: 1,
+    photoPath: null,
     ...overrides,
   };
 }

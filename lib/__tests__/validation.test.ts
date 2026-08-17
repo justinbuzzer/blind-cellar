@@ -68,6 +68,7 @@ function makeBottle(overrides: Partial<BottleFormInput> = {}): BottleFormInput {
     vintage: "NV",
     wineStyle: "bubbles",
     notes: "",
+    photoPath: null,
     ...overrides,
   };
 }

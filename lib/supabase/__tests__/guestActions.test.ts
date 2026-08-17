@@ -18,6 +18,7 @@ function makeBottleDto(overrides: Partial<MyBottleDTO> = {}): MyBottleDTO {
     vintage: "2019",
     wineStyle: "red",
     notes: null,
+    photoPath: null,
     ...overrides,
   };
 }

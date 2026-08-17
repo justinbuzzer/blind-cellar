@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Button } from "@/components/Button";
+import { BottlePhoto } from "@/components/BottlePhoto";
 import { SeenBottleDTO } from "@/lib/supabase/types";
 import { compactWineLocationLabel } from "@/lib/appellations";
 import { formatSeenGroupRating } from "@/lib/seenHostControls";
@@ -28,20 +29,23 @@ export function SeenBottleCard({ publicId, bottle }: SeenBottleCardProps) {
 
   return (
     <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        <p className="text-xs font-medium uppercase tracking-[0.15em] text-cellar-gold">
-          {bottle.anonymousCode} · {bottle.position} of {bottle.totalBottles}
-        </p>
-        <h3 className="mt-1 font-display text-lg font-semibold text-cellar-maroon-dark">
-          {bottle.producer} — {bottle.wineCuvee} {bottle.vintage}
-        </h3>
-        <p className="mt-1 text-sm text-cellar-muted">
-          {[compactWineLocationLabel(bottle), bottle.grapeBlend].filter(Boolean).join(" · ")}
-        </p>
-        <p className="mt-1 text-sm text-cellar-muted">
-          Style: {WINE_STYLE_LABELS[bottle.wineStyle]}
-          {contributorLabel && <> · {contributorLabel}</>}
-        </p>
+      <div className="flex items-start gap-4">
+        <BottlePhoto photoPath={bottle.photoPath} alt={`${bottle.producer} — ${bottle.wineCuvee}`} size={64} />
+        <div>
+          <p className="text-xs font-medium uppercase tracking-[0.15em] text-cellar-gold">
+            {bottle.anonymousCode} · {bottle.position} of {bottle.totalBottles}
+          </p>
+          <h3 className="mt-1 font-display text-lg font-semibold text-cellar-maroon-dark">
+            {bottle.producer} — {bottle.wineCuvee} {bottle.vintage}
+          </h3>
+          <p className="mt-1 text-sm text-cellar-muted">
+            {[compactWineLocationLabel(bottle), bottle.grapeBlend].filter(Boolean).join(" · ")}
+          </p>
+          <p className="mt-1 text-sm text-cellar-muted">
+            Style: {WINE_STYLE_LABELS[bottle.wineStyle]}
+            {contributorLabel && <> · {contributorLabel}</>}
+          </p>
+        </div>
       </div>
 
       <div className="flex items-center justify-between gap-3 sm:flex-col sm:items-end sm:justify-start sm:gap-2">

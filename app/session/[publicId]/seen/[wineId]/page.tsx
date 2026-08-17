@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
+import { BottlePhoto } from "@/components/BottlePhoto";
 import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { RatingSlider } from "@/components/RatingSlider";
 import { ConfidencePicker } from "@/components/ConfidencePicker";
@@ -175,20 +176,23 @@ export default function SeenBottleRatingPage() {
       </div>
 
       <Card className="flex flex-col gap-5">
-        <div className="border-b border-cellar-border pb-4">
-          <SectionEyebrow>
-            {bottle.anonymousCode} · {bottle.position} of {bottle.totalBottles}
-          </SectionEyebrow>
-          <h1 className="mt-1.5 font-display text-xl font-semibold text-cellar-maroon-dark">
-            {bottle.producer} — {bottle.wineCuvee} {bottle.vintage}
-          </h1>
-          <p className="mt-1 text-sm text-cellar-muted">
-            {[bottle.country, bottle.region, bottle.grapeBlend].filter(Boolean).join(" · ")}
-          </p>
-          <p className="mt-1 text-sm text-cellar-muted">
-            Style: {WINE_STYLE_LABELS[bottle.wineStyle]}
-            {contributorLabel && <> · {contributorLabel}</>}
-          </p>
+        <div className="flex items-start gap-4 border-b border-cellar-border pb-4">
+          <BottlePhoto photoPath={bottle.photoPath} alt={`${bottle.producer} — ${bottle.wineCuvee}`} size={80} />
+          <div>
+            <SectionEyebrow>
+              {bottle.anonymousCode} · {bottle.position} of {bottle.totalBottles}
+            </SectionEyebrow>
+            <h1 className="mt-1.5 font-display text-xl font-semibold text-cellar-maroon-dark">
+              {bottle.producer} — {bottle.wineCuvee} {bottle.vintage}
+            </h1>
+            <p className="mt-1 text-sm text-cellar-muted">
+              {[bottle.country, bottle.region, bottle.grapeBlend].filter(Boolean).join(" · ")}
+            </p>
+            <p className="mt-1 text-sm text-cellar-muted">
+              Style: {WINE_STYLE_LABELS[bottle.wineStyle]}
+              {contributorLabel && <> · {contributorLabel}</>}
+            </p>
+          </div>
         </div>
 
         {ratingsRevealed && (

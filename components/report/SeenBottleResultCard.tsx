@@ -2,6 +2,7 @@ import { SeenBottleResult, WINE_STYLE_LABELS } from "@/types/tasting";
 import { compactWineLocationLabel } from "@/lib/appellations";
 import { Card } from "@/components/Card";
 import { Stat } from "@/components/Stat";
+import { BottlePhoto } from "@/components/BottlePhoto";
 import { ContributorLine } from "./ContributorLine";
 
 interface SeenBottleResultCardProps {
@@ -34,25 +35,28 @@ export function SeenBottleResultCard({ result, totalWines }: SeenBottleResultCar
 
   return (
     <Card className="flex flex-col gap-4">
-      <div>
-        <p className="text-xs font-medium uppercase tracking-[0.15em] text-cellar-gold">
-          #{result.rank} · {wine.code}
-        </p>
-        <h3 className="mt-1 font-display text-lg font-semibold text-cellar-maroon-dark">
-          {wine.producer} — {wine.wineName} {wine.vintage}
-        </h3>
-        <p className="mt-1 text-sm text-cellar-muted">
-          {[compactWineLocationLabel(wine), wine.grapeBlend].filter(Boolean).join(" · ")}
-        </p>
-        <p className="mt-1 text-sm text-cellar-muted">
-          Style: {WINE_STYLE_LABELS[wine.wineStyle]} · Served {ordinal(wine.tastingOrder)}{" "}
-          (tasting order {wine.tastingOrder} of {totalWines})
-        </p>
-        <ContributorLine
-          contributorName={wine.contributorName}
-          wineStyle={wine.wineStyle}
-          contributorStyleSequence={wine.contributorStyleSequence}
-        />
+      <div className="flex items-start gap-4">
+        <BottlePhoto photoPath={wine.photoPath} alt={`${wine.producer} — ${wine.wineName}`} size={72} />
+        <div>
+          <p className="text-xs font-medium uppercase tracking-[0.15em] text-cellar-gold">
+            #{result.rank} · {wine.code}
+          </p>
+          <h3 className="mt-1 font-display text-lg font-semibold text-cellar-maroon-dark">
+            {wine.producer} — {wine.wineName} {wine.vintage}
+          </h3>
+          <p className="mt-1 text-sm text-cellar-muted">
+            {[compactWineLocationLabel(wine), wine.grapeBlend].filter(Boolean).join(" · ")}
+          </p>
+          <p className="mt-1 text-sm text-cellar-muted">
+            Style: {WINE_STYLE_LABELS[wine.wineStyle]} · Served {ordinal(wine.tastingOrder)}{" "}
+            (tasting order {wine.tastingOrder} of {totalWines})
+          </p>
+          <ContributorLine
+            contributorName={wine.contributorName}
+            wineStyle={wine.wineStyle}
+            contributorStyleSequence={wine.contributorStyleSequence}
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-3 rounded-sm bg-cellar-bg-deep p-3 text-center sm:grid-cols-5">

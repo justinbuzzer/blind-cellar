@@ -1,4 +1,4 @@
-import { Document, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
+import { Document, Image, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 import {
   FieldScore,
   ScoredGuess,
@@ -11,6 +11,8 @@ import {
 } from "@/types/tasting";
 import { compactWineLocationLabel } from "@/lib/appellations";
 import { formatContributorBottleLabel, wineStyleToContributorBucket } from "@/lib/contributorLabel";
+import { getSupabaseEnv } from "@/lib/supabase/env";
+import { tastingBottlePhotoUrl } from "@/lib/photoUrl";
 import {
   joinNames,
   ordinal,
@@ -86,6 +88,8 @@ const localStyles = StyleSheet.create({
     borderTopWidth: 0.5,
     borderTopColor: pdfColors.border,
   },
+  cardHeaderRow: { flexDirection: "row", gap: 8 },
+  cardPhoto: { width: 48, height: 48, borderRadius: 2, objectFit: "cover" },
 });
 
 interface TastingReportPdfDocumentProps {
@@ -190,26 +194,33 @@ function WineResultBlock({
     styleBucket: wineStyleToContributorBucket(wine.wineStyle),
     contributorStyleSequence: wine.contributorStyleSequence,
   });
+  const photoUrl = tastingBottlePhotoUrl(wine.photoPath, getSupabaseEnv()?.url);
 
   return (
     <View style={pdfStyles.card}>
-      <Text style={pdfStyles.cardEyebrow}>
-        #{rank} · {wine.code}
-      </Text>
-      <Text style={pdfStyles.cardTitle}>
-        {wine.producer} — {wine.wineName} {wine.vintage}
-      </Text>
-      <Text style={pdfStyles.cardSubtext}>
-        {[compactWineLocationLabel(wine), wine.grapeBlend].filter(Boolean).join(" · ")}
-      </Text>
-      <Text style={pdfStyles.cardSubtext}>
-        Style: {WINE_STYLE_LABELS[wine.wineStyle]} · Served {ordinal(wine.tastingOrder)} (tasting order{" "}
-        {wine.tastingOrder} of {totalWines})
-      </Text>
-      {contributorLabel ? <Text style={pdfStyles.cardSubtext}>{contributorLabel}</Text> : null}
-      {wine.hostNotes ? (
-        <Text style={[pdfStyles.cardSubtext, { fontFamily: "Helvetica-Oblique" }]}>&ldquo;{wine.hostNotes}&rdquo;</Text>
-      ) : null}
+      <View style={localStyles.cardHeaderRow}>
+        {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf/renderer's Image has no alt concept; this isn't a DOM img */}
+        {photoUrl ? <Image src={photoUrl} style={localStyles.cardPhoto} /> : null}
+        <View style={{ flex: 1 }}>
+          <Text style={pdfStyles.cardEyebrow}>
+            #{rank} · {wine.code}
+          </Text>
+          <Text style={pdfStyles.cardTitle}>
+            {wine.producer} — {wine.wineName} {wine.vintage}
+          </Text>
+          <Text style={pdfStyles.cardSubtext}>
+            {[compactWineLocationLabel(wine), wine.grapeBlend].filter(Boolean).join(" · ")}
+          </Text>
+          <Text style={pdfStyles.cardSubtext}>
+            Style: {WINE_STYLE_LABELS[wine.wineStyle]} · Served {ordinal(wine.tastingOrder)} (tasting order{" "}
+            {wine.tastingOrder} of {totalWines})
+          </Text>
+          {contributorLabel ? <Text style={pdfStyles.cardSubtext}>{contributorLabel}</Text> : null}
+          {wine.hostNotes ? (
+            <Text style={[pdfStyles.cardSubtext, { fontFamily: "Helvetica-Oblique" }]}>&ldquo;{wine.hostNotes}&rdquo;</Text>
+          ) : null}
+        </View>
+      </View>
 
       <PdfStatGrid
         stats={[

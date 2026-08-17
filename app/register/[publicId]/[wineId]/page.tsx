@@ -156,6 +156,8 @@ export default function EditBottlePage() {
       />
 
       <BottleForm
+        publicId={params.publicId}
+        guestToken={getGuestToken(params.publicId) ?? ""}
         value={value}
         errors={errors}
         onChange={setValue}

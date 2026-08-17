@@ -504,6 +504,27 @@ from (
 ) ranked
 where w.id = ranked.id and w.contributor_style_sequence is null;
 
+-- 14. Bottle photos (see README "Bottle photos"): one optional photo per
+-- tasting bottle, stored as an object path into the public `bottle-photos`
+-- Storage bucket (created further below, near the RPCs that use it) rather
+-- than the bytes themselves. Masked the same way as every other answer-key
+-- field in guest_visible_wines below — the photo is only ever actually
+-- hidden pre-reveal because the *path* is never handed to an unauthorized
+-- client, not because of anything in the bucket's own ACL (the bucket is
+-- public-read, matching how anonymous_code is already a safe-to-expose
+-- value while raw ids aren't). MUST run before the guest_visible_wines view
+-- below, which reads this column.
+alter table wines add column if not exists photo_path text;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'wines_photo_path_length'
+  ) then
+    alter table wines add constraint wines_photo_path_length
+      check (photo_path is null or length(photo_path) <= 300);
+  end if;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security (enabled everywhere; anon gets no default table grants,
 -- see the GRANT section below — RLS is defense-in-depth on top of that).
@@ -587,7 +608,12 @@ select
   -- way as wine_style above, though in practice this view is only ever
   -- queried once a session has already reached 'revealed' (see
   -- lib/supabase/reportData.ts) — masked anyway for defense-in-depth.
-  case when s.status = 'revealed' then w.contributor_style_sequence else null end as contributor_style_sequence
+  case when s.status = 'revealed' then w.contributor_style_sequence else null end as contributor_style_sequence,
+  -- Bottle photo (see README "Bottle photos"): masked the same way as every
+  -- other identity field above. The photo lives in the public `bottle-photos`
+  -- Storage bucket — masking the *path* here is what actually hides it, since
+  -- an unguessable path is never handed to an unauthorized client pre-reveal.
+  case when s.status = 'revealed' then w.photo_path else null end as photo_path
 from wines w
 join tasting_sessions s on s.id = w.session_id;
 
@@ -596,6 +622,27 @@ select g.*
 from wine_guesses g
 join tasting_sessions s on s.id = g.session_id
 where s.status = 'revealed';
+
+-- ---------------------------------------------------------------------------
+-- Storage: bottle-photos bucket (see README "Bottle photos"). Public-read —
+-- safe because an object's path is an unguessable server-generated UUID
+-- (see authorize_bottle_photo_upload below) that is only ever handed to a
+-- client through the reveal-gated RPCs/view above, exactly mirroring how
+-- anonymous_code (safe to expose) differs from a raw row id elsewhere in
+-- this file. No insert/update/delete policy for anon/authenticated at all —
+-- every write goes through the service-role-backed signed-upload-URL flow
+-- (app/api/register/photo-upload-url), which bypasses RLS entirely, since a
+-- tasting contributor is an anonymous bearer-token caller with no auth.uid()
+-- for Storage RLS to ever check.
+-- ---------------------------------------------------------------------------
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('bottle-photos', 'bottle-photos', true, 8388608, array['image/jpeg', 'image/png', 'image/webp'])
+on conflict (id) do nothing;
+
+drop policy if exists bottle_photos_public_read on storage.objects;
+create policy bottle_photos_public_read on storage.objects
+  for select using (bucket_id = 'bottle-photos');
 
 -- ---------------------------------------------------------------------------
 -- RPC functions. All SECURITY DEFINER with a locked-down search_path, so
@@ -942,6 +989,7 @@ begin
         'country', w.country,
         'region', w.region,
         'appellation', w.appellation,
+        'photoPath', w.photo_path,
         'ratingsRevealedAt', w.ratings_revealed_at,
         'ratedCount', (
           select count(*) from wine_guesses where wine_id = w.id and rating is not null
@@ -1343,13 +1391,63 @@ begin
         'wineCuvee', w.wine_cuvee,
         'vintage', w.vintage,
         'wineStyle', w.wine_style,
-        'notes', w.host_notes
+        'notes', w.host_notes,
+        'photoPath', w.photo_path
       ) order by w.bottle_number)
       from wines w where w.session_id = v_session.id and w.contributor_guest_id = v_guest.id
     ), '[]'::jsonb)
   ) into v_result;
 
   return v_result;
+end;
+$$;
+
+-- Participant: mint a fresh, server-generated Storage object path for a
+-- bottle photo, scoped to this guest's own session — used before the bottle
+-- itself necessarily exists (a fresh registration form has no wine_id yet),
+-- so this is deliberately scoped to guest_token + session status only, not
+-- to a specific wine row. The caller (a new Route Handler, since a SQL
+-- function can mint permission to write but never receive the file bytes
+-- itself) turns the returned path into a short-lived signed upload URL via
+-- the service role — see README "Bottle photos". Never trusts a
+-- client-supplied path or extension: both are generated here.
+create or replace function authorize_bottle_photo_upload(
+  p_guest_token text,
+  p_mime_type text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_guest guests%rowtype;
+  v_session tasting_sessions%rowtype;
+  v_extension text;
+  v_path text;
+begin
+  select * into v_guest from guests where guest_token = p_guest_token;
+  if not found then
+    raise exception 'invalid_guest_token';
+  end if;
+
+  select * into v_session from tasting_sessions where id = v_guest.session_id;
+  if v_session.status <> 'registration' then
+    raise exception 'registration_closed';
+  end if;
+
+  v_extension := case p_mime_type
+    when 'image/jpeg' then 'jpg'
+    when 'image/png' then 'png'
+    when 'image/webp' then 'webp'
+    else null
+  end;
+  if v_extension is null then
+    raise exception 'invalid_photo_mime_type';
+  end if;
+
+  v_path := v_session.id || '/' || v_guest.id || '/' || gen_random_uuid() || '.' || v_extension;
+
+  return jsonb_build_object('path', v_path, 'contentType', p_mime_type);
 end;
 $$;
 
@@ -1367,12 +1465,13 @@ $$;
 -- number is never reused — max() would "forget" a deleted high-water-mark,
 -- a plain counter never decreases.
 -- Signature changed (price band removed, grape/blend mode added, wine style
--- added, structured grape/blend components added) — explicitly drop old
--- overloads so they can't be called with stale semantics; safe/no-op on a
--- fresh install.
+-- added, structured grape/blend components added, photo path added) —
+-- explicitly drop old overloads so they can't be called with stale
+-- semantics; safe/no-op on a fresh install.
 drop function if exists register_bottle(text, text, text, text, text, text, text, text, text);
 drop function if exists register_bottle(text, text, text, text, text, text, text, text, text, text);
 drop function if exists register_bottle(text, text, text, text, text, text, text, text, text, text, jsonb);
+drop function if exists register_bottle(text, text, text, text, text, text, text, text, text, text, jsonb, text);
 
 create or replace function register_bottle(
   p_guest_token text,
@@ -1386,7 +1485,8 @@ create or replace function register_bottle(
   p_notes text,
   p_wine_style text,
   p_grape_blend_components jsonb,
-  p_appellation text
+  p_appellation text,
+  p_photo_path text default null
 ) returns jsonb
 language plpgsql
 security definer
@@ -1430,6 +1530,13 @@ begin
   if not is_valid_appellation(btrim(p_country), btrim(p_region), p_appellation) then
     raise exception 'invalid_appellation';
   end if;
+  -- Defense-in-depth: a photo path (minted only by
+  -- authorize_bottle_photo_upload above) always starts with this exact
+  -- session/guest prefix — reject anything else rather than letting a
+  -- participant point their bottle at a path they didn't author.
+  if p_photo_path is not null and p_photo_path not like (v_session.id || '/' || v_guest.id || '/%') then
+    raise exception 'invalid_photo_path';
+  end if;
 
   v_next_number := v_session.next_bottle_number;
   -- New bottles always join at the end of the current tasting order — the
@@ -1451,11 +1558,11 @@ begin
   insert into wines (
     session_id, display_order, bottle_number, tasting_order, anonymous_code, contributor_guest_id,
     country, region, appellation, grape_style, grape_blend_mode, grape_blend_components, producer, wine_cuvee,
-    vintage, wine_style, host_notes, contributor_style_sequence
+    vintage, wine_style, host_notes, contributor_style_sequence, photo_path
   ) values (
     v_session.id, v_next_number - 1, v_next_number, v_next_order, 'Bottle ' || v_next_number, v_guest.id,
     btrim(p_country), btrim(p_region), nullif(btrim(coalesce(p_appellation, '')), ''), btrim(p_grape_blend), p_grape_blend_mode, p_grape_blend_components,
-    btrim(p_producer), btrim(p_wine_cuvee), btrim(p_vintage), p_wine_style, nullif(btrim(coalesce(p_notes, '')), ''), v_contributor_style_sequence
+    btrim(p_producer), btrim(p_wine_cuvee), btrim(p_vintage), p_wine_style, nullif(btrim(coalesce(p_notes, '')), ''), v_contributor_style_sequence, p_photo_path
   )
   returning wines.id into v_wine_id;
 
@@ -1468,11 +1575,12 @@ $$;
 -- Participant: edit their own bottle. Bottle number and anonymous_code are
 -- never touched (not in the SET list), so they're preserved exactly.
 -- Signature changed (price band removed, grape/blend mode added, wine style
--- added, structured grape/blend components added) — explicitly drop old
--- overloads; safe/no-op on a fresh install.
+-- added, structured grape/blend components added, photo path added) —
+-- explicitly drop old overloads; safe/no-op on a fresh install.
 drop function if exists update_bottle(text, uuid, text, text, text, text, text, text, text, text);
 drop function if exists update_bottle(text, uuid, text, text, text, text, text, text, text, text, text);
 drop function if exists update_bottle(text, uuid, text, text, text, text, text, text, text, text, text, jsonb);
+drop function if exists update_bottle(text, uuid, text, text, text, text, text, text, text, text, text, jsonb, text);
 
 create or replace function update_bottle(
   p_guest_token text,
@@ -1487,7 +1595,8 @@ create or replace function update_bottle(
   p_notes text,
   p_wine_style text,
   p_grape_blend_components jsonb,
-  p_appellation text
+  p_appellation text,
+  p_photo_path text default null
 ) returns void
 language plpgsql
 security definer
@@ -1531,6 +1640,10 @@ begin
   if not is_valid_appellation(btrim(p_country), btrim(p_region), p_appellation) then
     raise exception 'invalid_appellation';
   end if;
+  -- Same defense-in-depth as register_bottle above.
+  if p_photo_path is not null and p_photo_path not like (v_session.id || '/' || v_guest.id || '/%') then
+    raise exception 'invalid_photo_path';
+  end if;
 
   update wines set
     country = btrim(p_country),
@@ -1543,7 +1656,8 @@ begin
     wine_cuvee = btrim(p_wine_cuvee),
     vintage = btrim(p_vintage),
     wine_style = p_wine_style,
-    host_notes = nullif(btrim(coalesce(p_notes, '')), '')
+    host_notes = nullif(btrim(coalesce(p_notes, '')), ''),
+    photo_path = p_photo_path
   where id = p_wine_id;
 end;
 $$;
@@ -2186,7 +2300,8 @@ begin
       'vintage', v_wine.vintage,
       'wineStyle', v_wine.wine_style,
       'contributorName', (select display_name from guests where id = v_wine.contributor_guest_id),
-      'contributorStyleSequence', v_wine.contributor_style_sequence
+      'contributorStyleSequence', v_wine.contributor_style_sequence,
+      'photoPath', v_wine.photo_path
     ),
     'submitted', v_submitted,
     'guesses', case when v_submitted then coalesce((
@@ -2333,7 +2448,8 @@ begin
       'vintage', v_wine.vintage,
       'wineStyle', v_wine.wine_style,
       'contributorName', (select display_name from guests where id = v_wine.contributor_guest_id),
-      'contributorStyleSequence', v_wine.contributor_style_sequence
+      'contributorStyleSequence', v_wine.contributor_style_sequence,
+      'photoPath', v_wine.photo_path
     ),
     'participants', v_participants
   );
@@ -2458,7 +2574,8 @@ begin
     'wineCuvee', w.wine_cuvee,
     'vintage', w.vintage,
     'wineStyle', w.wine_style,
-    'tastingOrder', w.tasting_order
+    'tastingOrder', w.tasting_order,
+    'photoPath', w.photo_path
   ) order by w.tasting_order), '[]'::jsonb)
   into v_wines
   from wines w where w.session_id = v_session.id and w.revealed_at is not null;
@@ -2569,7 +2686,8 @@ begin
     'wineCuvee', w.wine_cuvee,
     'vintage', w.vintage,
     'wineStyle', w.wine_style,
-    'tastingOrder', w.tasting_order
+    'tastingOrder', w.tasting_order,
+    'photoPath', w.photo_path
   ) order by w.tasting_order), '[]'::jsonb)
   into v_wines
   from wines w where w.session_id = v_session.id and w.revealed_at is not null;
@@ -2698,6 +2816,7 @@ begin
         'vintage', w.vintage,
         'contributorName', (select display_name from guests where id = w.contributor_guest_id),
         'contributorStyleSequence', w.contributor_style_sequence,
+        'photoPath', w.photo_path,
         'myRating', (select rating from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
         'myConfidence', (select confidence from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
         'myNote', (select tasting_note from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
@@ -2918,8 +3037,9 @@ grant execute on function get_provisional_leaderboard_for_host(uuid, text) to an
 grant execute on function get_final_leaderboard_for_guest(text) to anon, authenticated;
 grant execute on function join_tasting_session(uuid, text, text, text, text) to anon, authenticated;
 grant execute on function get_registration_state(text) to anon, authenticated;
-grant execute on function register_bottle(text, text, text, text, text, text, text, text, text, text, jsonb, text) to anon, authenticated;
-grant execute on function update_bottle(text, uuid, text, text, text, text, text, text, text, text, text, jsonb, text) to anon, authenticated;
+grant execute on function register_bottle(text, text, text, text, text, text, text, text, text, text, jsonb, text, text) to anon, authenticated;
+grant execute on function update_bottle(text, uuid, text, text, text, text, text, text, text, text, text, jsonb, text, text) to anon, authenticated;
+grant execute on function authorize_bottle_photo_upload(text, text) to anon, authenticated;
 grant execute on function delete_bottle(text, uuid) to anon, authenticated;
 grant execute on function reorder_wines(uuid, text, uuid[]) to anon, authenticated;
 grant execute on function get_guest_session_state(text) to anon, authenticated;
