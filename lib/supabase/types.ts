@@ -339,6 +339,12 @@ export interface RecoveryRedeemResponse {
   display_name: string;
 }
 
+/** See README "Session rejoin" — redeem_recovery_code_global. Same shape as RecoveryRedeemResponse plus the resolved session, since the caller doesn't already know which tasting the code belongs to. */
+export interface RecoveryRedeemGlobalResponse extends RecoveryRedeemResponse {
+  public_id: string;
+  status: SessionStatus;
+}
+
 /** One row of get_my_tastings — see README "Session rejoin" — "Resume from account area". */
 export interface MyTastingEntry {
   publicId: string;

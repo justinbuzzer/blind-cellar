@@ -2384,6 +2384,37 @@ Functional check: with a course_reveal session's bottle already revealed, call t
 
 No RLS policy or table grant changed. Like every other tasting RPC, `get_bottle_result_for_guest` is `SECURITY DEFINER` and does its own authorization inside the function body (a `guest_token` lookup identical to `get_revealed_bottle`'s) rather than relying on RLS or a table grant — so this migration widens *what one already-authorized guest-token call can see* (every participant's guess for a revealed bottle, not just the caller's own), never *who* can call it. No token, email, or other participant field beyond display name and guess content is ever returned — the same promise `get_bottle_result_for_host` already made.
 
+## Migrating for the home-page "Rejoin a tasting" entry point
+
+Adds one new RPC, `redeem_recovery_code_global` — no new table, column, or constraint. Lets a guest recover their identity from a recovery code alone, with no session/`publicId` already in hand, for the new `/rejoin` page linked from the home page (see README "Session rejoin"). The existing session-scoped `redeem_recovery_code` (used inside `/join/[publicId]`) is completely unchanged. Re-running the full `supabase/schema.sql` brings an existing project up to date; every statement here is additive and safe to re-run.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+1. **`redeem_recovery_code_global(p_code_hash text, p_new_device_token_hash text, p_client_ip text default null)` is added** — resolves a recovery code's `guest_id`/session purely from `participant_access_credentials.token_hash`, with no session join in the lookup (unlike `redeem_recovery_code`, which scopes the lookup to a caller-supplied `p_public_id`). This is safe because `token_hash` carries a table-wide `unique` constraint already (see the table's own `create table` statement) — a code can never belong to more than one session, so there is no "right code, wrong session" case for a session-scoped lookup to be protecting against in the first place. Otherwise identical logic to `redeem_recovery_code`: one-time redemption (`for update` row lock, `revoked_at`/`revoked_reason = 'redeemed'`), the same 3-active-device cap (oldest `device_session` credential revoked first), and the same fresh device credential issued on success. Returns the resolved `public_id` and `status` in addition to the guest identity, since the caller needs both to know where to redirect.
+2. **`grant execute on function redeem_recovery_code_global(text, text, text) to anon, authenticated;`** — the same grant pattern every other guest-facing RPC already has.
+3. **No other RPC, view, table, or grant changed.** `redeem_recovery_code` (session-scoped, used by `/join/[publicId]`'s "Enter rejoin code" link) is byte-for-byte untouched.
+
+### 2. Verification queries
+
+```sql
+-- confirm the new function and its grant exist
+select proname from pg_proc where proname = 'redeem_recovery_code_global';
+select grantee, privilege_type from information_schema.routine_privileges
+  where routine_name = 'redeem_recovery_code_global';
+-- expect: anon and authenticated, EXECUTE
+
+-- confirm the safety assumption this function relies on: token_hash really is
+-- unique across the whole table, not just per session
+select conname from pg_constraint
+  where conrelid = 'participant_access_credentials'::regclass and contype = 'u';
+```
+
+Functional check: join a session as a guest via the app, note the shown rejoin code, clear this browser's storage for that session, then use the home page's "Rejoin a tasting" button (not the session-scoped one inside `/join/[publicId]`) and confirm the code redeems and redirects into the correct tasting with no publicId ever supplied by the caller.
+
+### RLS summary
+
+No RLS policy or table grant changed. `redeem_recovery_code_global` is `SECURITY DEFINER`, like every other tasting RPC, and does its own authorization inside the function body — the only thing this migration changes is *how* a valid code is looked up (by hash alone instead of hash-scoped-to-a-session), never *what* a valid code can do once redeemed (identical one-time redemption, identical device-credential issuance, identical rate limiting via `check_rejoin_rate_limit`, just under its own `recover_global_ip:` scope key so it can't exhaust or be exhausted by the session-scoped flow's own limit). `participant_access_credentials` still has no anon/authenticated table grant at all — every access to it goes through a `SECURITY DEFINER` function, exactly as before.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

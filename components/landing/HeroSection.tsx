@@ -55,6 +55,12 @@ export function HeroSection() {
             >
               Join a tasting
             </Link>
+            <Link
+              href="/rejoin"
+              className="inline-flex min-h-[48px] w-full items-center justify-center px-7 text-sm font-medium text-landing-parchment/80 underline-offset-4 transition-colors hover:text-landing-parchment hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-landing-gold sm:w-auto"
+            >
+              Rejoin a tasting
+            </Link>
           </div>
 
           <Link

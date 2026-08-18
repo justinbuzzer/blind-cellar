@@ -26,9 +26,10 @@ const RECOVERY_CODE_LENGTH = 8;
  * A human-enterable one-time recovery code, e.g. "7XQK-4M9P" — two groups of
  * four characters from a reduced, ambiguity-free alphabet (~39.6 bits of
  * entropy), generated with a cryptographically secure RNG
- * (`crypto.randomInt`, not `Math.random`). Single-use and session-scoped
- * enforcement happen server-side in Postgres (see redeem_recovery_code in
- * supabase/schema.sql); this function only ever produces the raw value.
+ * (`crypto.randomInt`, not `Math.random`). Single-use enforcement happens
+ * server-side in Postgres (see redeem_recovery_code / redeem_recovery_code_global
+ * in supabase/schema.sql — the latter deliberately resolves a code without
+ * knowing its session); this function only ever produces the raw value.
  */
 export function generateRecoveryCode(): string {
   let raw = "";

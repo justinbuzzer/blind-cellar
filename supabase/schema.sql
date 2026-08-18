@@ -5091,6 +5091,86 @@ $$;
 
 grant execute on function redeem_recovery_code(uuid, text, text, text) to anon, authenticated;
 
+-- Session-less counterpart to redeem_recovery_code above — for the home
+-- page's "Rejoin a tasting" entry point, where the caller has lost their
+-- guest token AND doesn't remember (or is on a device that never knew) the
+-- tasting's public id. Safe to resolve purely by code hash, with no session
+-- to scope the lookup against, because participant_access_credentials.
+-- token_hash carries a table-wide unique constraint (see its create table
+-- above) — a code can never collide across two different sessions, so
+-- there is no "right code, wrong session" case to guard against the way
+-- redeem_recovery_code's own comment describes; revealing which session a
+-- valid code belongs to is the entire point of this entry point, not a
+-- leak. Otherwise identical to redeem_recovery_code: same one-time
+-- redemption, same 3-device cap, same fresh device-credential issuance —
+-- deliberately duplicated rather than parameterized, since the two differ
+-- in exactly the dimension (session-scoped vs. not) that must never be
+-- accidentally merged by a future edit. See README "Session rejoin".
+create or replace function redeem_recovery_code_global(
+  p_code_hash text,
+  p_new_device_token_hash text,
+  p_client_ip text default null
+) returns table (guest_id uuid, guest_token text, display_name text, public_id uuid, status text)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_credential participant_access_credentials%rowtype;
+  v_guest guests%rowtype;
+  v_session tasting_sessions%rowtype;
+  v_device_count int;
+  v_oldest_device_id uuid;
+begin
+  if not check_rejoin_rate_limit('recover_global_ip:' || coalesce(p_client_ip, 'unknown'), 8, interval '15 minutes') then
+    raise exception 'rate_limited';
+  end if;
+
+  select pac.* into v_credential
+  from participant_access_credentials pac
+  where pac.credential_type = 'recovery_code'
+    and pac.token_hash = p_code_hash
+    and pac.revoked_at is null
+    and (pac.expires_at is null or pac.expires_at > now())
+  for update;
+
+  if not found then
+    raise exception 'recovery_failed';
+  end if;
+
+  select * into v_guest from guests where id = v_credential.guest_id;
+  select * into v_session from tasting_sessions where id = v_guest.session_id;
+
+  update participant_access_credentials
+    set revoked_at = now(), revoked_reason = 'redeemed'
+    where id = v_credential.id;
+
+  select count(*) into v_device_count
+  from participant_access_credentials
+  where participant_access_credentials.guest_id = v_guest.id
+    and credential_type = 'device_session' and revoked_at is null;
+
+  if v_device_count >= 3 then
+    select id into v_oldest_device_id
+    from participant_access_credentials
+    where participant_access_credentials.guest_id = v_guest.id
+      and credential_type = 'device_session' and revoked_at is null
+    order by created_at asc
+    limit 1;
+    update participant_access_credentials
+      set revoked_at = now(), revoked_reason = 'device_limit'
+      where id = v_oldest_device_id;
+  end if;
+
+  insert into participant_access_credentials (guest_id, token_hash, credential_type, expires_at, rotated_from_id)
+  values (v_guest.id, p_new_device_token_hash, 'device_session', now() + interval '180 days', v_credential.id);
+
+  return query select v_guest.id, v_guest.guest_token, v_guest.display_name, v_session.public_id, v_session.status;
+end;
+$$;
+
+grant execute on function redeem_recovery_code_global(text, text, text) to anon, authenticated;
+
 -- Best-effort, additive: links the HOST's own bootstrap guest row (see
 -- create_tasting_session) to their account, purely so their personal
 -- participant/guessing flow also benefits from account-based rejoin — never
