@@ -3,7 +3,7 @@ import {
   WINE_STYLE_LABELS,
   WineResult,
 } from "@/types/tasting";
-import { compactWineLocationLabel } from "@/lib/appellations";
+import { compactWineLocationLabel, wineDisplayName } from "@/lib/appellations";
 import { Card } from "@/components/Card";
 import { MatchBadge } from "@/components/MatchBadge";
 import { Stat } from "@/components/Stat";
@@ -64,11 +64,8 @@ export function WineResultCard({ result, rank, totalWines, showNotes = false }: 
       <div className="flex items-start gap-4">
         <BottlePhoto photoPath={wine.photoPath} alt={`${wine.producer} — ${wine.wineName}`} size={72} />
         <div>
-          <p className="text-xs font-medium uppercase tracking-[0.15em] text-cellar-gold">
-            #{rank} · {wine.code}
-          </p>
-          <h3 className="mt-1 font-display text-lg font-semibold text-cellar-maroon-dark">
-            {wine.producer} — {wine.wineName} {wine.vintage}
+          <h3 className="font-display text-lg font-semibold text-cellar-maroon-dark">
+            #{rank} · {wineDisplayName(wine)}
           </h3>
           <p className="mt-1 text-sm text-cellar-muted">
             {[compactWineLocationLabel(wine), wine.grapeBlend].filter(Boolean).join(" · ")}

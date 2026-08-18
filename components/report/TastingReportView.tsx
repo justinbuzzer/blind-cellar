@@ -2,6 +2,7 @@ import { TastingReport } from "@/types/tasting";
 import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { ImageBand } from "@/components/ImageBand";
 import { resultsImage } from "@/lib/appImages";
+import { wineDisplayName } from "@/lib/appellations";
 import { Highlight } from "./Highlight";
 import { WineResultCard } from "./WineResultCard";
 import { TasterLeaderboard } from "./TasterLeaderboard";
@@ -28,7 +29,7 @@ export function TastingReportView({ report, showNotes = false }: TastingReportVi
         {wineOfTheNight.length > 0 && (
           <Highlight
             label="Wine of the Night"
-            title={joinNames(wineOfTheNight.map((w) => w.wine.code))}
+            title={joinNames(wineOfTheNight.map((w) => wineDisplayName(w.wine)))}
             detail={`Avg rating ${wineOfTheNight[0].averageRating}`}
             tie={wineOfTheNight.length > 1}
           />
@@ -48,7 +49,7 @@ export function TastingReportView({ report, showNotes = false }: TastingReportVi
         {mostDivisiveWine.length > 0 && mostDivisiveWine[0].ratingSpread ? (
           <Highlight
             label="Most Divisive Wine"
-            title={joinNames(mostDivisiveWine.map((w) => w.wine.code))}
+            title={joinNames(mostDivisiveWine.map((w) => wineDisplayName(w.wine)))}
             detail={`Spread of ${mostDivisiveWine[0].ratingSpread} points`}
             tie={mostDivisiveWine.length > 1}
           />

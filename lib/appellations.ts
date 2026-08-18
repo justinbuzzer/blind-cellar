@@ -406,3 +406,19 @@ export function compactWineLocationLabel(wine: {
 
   return parts.join(", ");
 }
+
+/**
+ * "Producer — Wine / cuvée Vintage" display string for a revealed wine —
+ * used wherever a report identifies a wine by its real name rather than its
+ * anonymous bottle code (e.g. "Bottle 4"), matching RevealedWineIdentity's
+ * heading convention. Vintage is appended only when present, since an NV
+ * wine's `vintage` is the literal string "NV" and reads fine appended as-is.
+ */
+export function wineDisplayName(wine: {
+  producer: string;
+  wineName: string;
+  vintage?: string | null;
+}): string {
+  const base = `${wine.producer} — ${wine.wineName}`;
+  return wine.vintage ? `${base} ${wine.vintage}` : base;
+}

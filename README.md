@@ -1248,6 +1248,11 @@ Run this against a real Supabase project (see `SUPABASE_SETUP.md`) using multipl
 427. **A used, expired, or unknown code fails with the same generic message as the session-scoped flow** — attempt an already-redeemed code, and a made-up code, on `/rejoin`; confirm both show exactly "That code could not be used. Check it and try again." with no hint about which reason applies, matching item 288's session-scoped equivalent.
 428. **"Rejoin a tasting" is visible on the home page alongside "Host"/"Join" with no scrolling** — at 375px, confirm all three hero buttons (Host a tasting / Join a tasting / Rejoin a tasting) are reachable without scrolling past the fold, each has a full-height (44px+) touch target, and "Rejoin a tasting" reads as visually secondary to the two primary actions without being hard to find.
 
+### Report: real wine names instead of anonymous codes
+
+429. **Wine of the Night and Most Divisive Wine show the real wine name** — open a completed tasting's report (or `/demo`); confirm both highlight cards show "{Producer} — {Wine/cuvée} {Vintage}" (e.g. "Giacomo Conterno — Cascina Francia 2016"), never the anonymous "Bottle N" code. For a tie between two or more wines, confirm the names are joined with "&"/commas exactly as ties were joined before this change.
+430. **The tasting ledger shows one combined rank + name line per wine** — in the same report, confirm each wine card's heading reads "#{rank} · {Producer} — {Wine/cuvée} {Vintage}" on a single line (e.g. "#1 · Giacomo Conterno — Cascina Francia 2016"), with no separate "Bottle N" label line above it.
+
 ## Automated tests
 
 `npm run test` runs Vitest unit tests covering:
