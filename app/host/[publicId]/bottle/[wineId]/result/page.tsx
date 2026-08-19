@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-import { BottleResultForHostResponse } from "@/lib/supabase/types";
+import { BottleResultForHostResponse, ProvisionalLeaderboardResponse } from "@/lib/supabase/types";
 import { HostBottleResultClient } from "@/components/host/HostBottleResultClient";
 import { Button } from "@/components/Button";
+import { buildCreditLedger } from "@/lib/betting";
 
 export const dynamic = "force-dynamic";
 
@@ -85,11 +86,27 @@ export default async function HostBottleResultPage({ params, searchParams }: Pag
     );
   }
 
+  // Betting sub-mode only (see README "Tasting modes" — "Betting") — reuses
+  // the provisional leaderboard's raw revealed-only data (already widened
+  // with bet columns/contributorGuestId/startingCredits) rather than a
+  // second host RPC. Only built when the session actually has betting
+  // enabled — a non-betting session gets undefined, so
+  // HostBottleResultClient never renders the section at all.
+  const { data: leaderboardData } = await supabase.rpc("get_provisional_leaderboard_for_host", {
+    p_public_id: params.publicId,
+    p_host_token: token,
+  });
+  const leaderboardResponse = leaderboardData as ProvisionalLeaderboardResponse | null;
+  const creditEntries = leaderboardResponse?.bettingEnabled
+    ? buildCreditLedger(leaderboardResponse).entries
+    : undefined;
+
   return (
     <HostBottleResultClient
       publicId={params.publicId}
       hostToken={token}
       response={data as BottleResultForHostResponse}
+      creditEntries={creditEntries}
     />
   );
 }

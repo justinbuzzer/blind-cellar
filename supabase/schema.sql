@@ -545,6 +545,77 @@ alter table tasting_sessions drop constraint if exists tasting_sessions_scoring_
 alter table tasting_sessions add constraint tasting_sessions_scoring_version_check
   check (scoring_version in ('legacy_v1', 'core_v3_appellation_conditional', 'core_v4_partial_credit'));
 
+-- 16. Betting sub-mode for Course-by-course reveal (see README "Tasting
+-- modes" — "Betting"): an opt-in economic layer on top of course_reveal only.
+-- Each guest chooses a starting credit balance at join time; on each bottle's
+-- guess form they wager credits per scored field; when the bottle is
+-- revealed, credits are transferred between the guesser and that bottle's
+-- contributor based on how correct the guess was (see lib/betting.ts for the
+-- settlement math, which reuses lib/scoring.ts's existing partial-credit
+-- functions with the bet amount substituted as pointsAvailable). Exactly like
+-- wine_guesses already stores only raw guess text and never a score, this
+-- only ever stores the raw bet inputs — no settlement/balance is ever
+-- computed or persisted here; every balance is derived live client-side
+-- (see get_credit_ledger_for_guest / get_provisional_leaderboard_for_host /
+-- get_final_leaderboard_for_guest below), the same convention every other
+-- piece of scoring math in this app already follows.
+alter table tasting_sessions add column if not exists betting_enabled boolean not null default false;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'tasting_sessions_betting_enabled_mode_check'
+  ) then
+    alter table tasting_sessions add constraint tasting_sessions_betting_enabled_mode_check
+      check (betting_enabled = false or tasting_mode = 'course_reveal');
+  end if;
+end $$;
+
+-- Nullable: only ever set for a betting-enabled session's guests (see
+-- join_tasting_session below, which requires it exactly then and ignores it
+-- otherwise). Bounded generously (up to 100,000) purely as a sanity backstop
+-- against a typo/fat-fingered value, not a meaningful gameplay limit.
+alter table guests add column if not exists starting_credits int;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'guests_starting_credits_range'
+  ) then
+    alter table guests add constraint guests_starting_credits_range
+      check (starting_credits is null or (starting_credits > 0 and starting_credits <= 100000));
+  end if;
+end $$;
+
+-- One nullable bet column per bettable field, mirroring the existing
+-- *_guess columns 1:1 (country/region/appellation/grape-blend/vintage/
+-- producer/wine-cuvée — the same seven fields core_v4_partial_credit already
+-- scores). Null/0 means "no bet on this field" (never forced) — a guest may
+-- freely skip betting on any field of their choosing. Never validated here
+-- against a live running balance — see upsert_wine_guess below for the one
+-- cheap sanity bound this file's SQL layer enforces (total bets on a bottle
+-- can never exceed starting_credits); the true running-balance cap (which
+-- accounts for credits already won/lost on prior bottles) is computed and
+-- enforced client-side (lib/betting.ts), the same trust boundary every other
+-- piece of scoring math in this app already has.
+alter table wine_guesses add column if not exists country_bet int;
+alter table wine_guesses add column if not exists region_bet int;
+alter table wine_guesses add column if not exists appellation_bet int;
+alter table wine_guesses add column if not exists grape_blend_bet int;
+alter table wine_guesses add column if not exists vintage_bet int;
+alter table wine_guesses add column if not exists producer_bet int;
+alter table wine_guesses add column if not exists wine_cuvee_bet int;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'wine_guesses_bets_nonneg'
+  ) then
+    alter table wine_guesses add constraint wine_guesses_bets_nonneg check (
+      coalesce(country_bet, 0) >= 0 and coalesce(region_bet, 0) >= 0 and coalesce(appellation_bet, 0) >= 0 and
+      coalesce(grape_blend_bet, 0) >= 0 and coalesce(vintage_bet, 0) >= 0 and coalesce(producer_bet, 0) >= 0 and
+      coalesce(wine_cuvee_bet, 0) >= 0
+    );
+  end if;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security (enabled everywhere; anon gets no default table grants,
 -- see the GRANT section below — RLS is defense-in-depth on top of that).
@@ -814,6 +885,14 @@ $$;
 -- Explicitly drop the old overloads so they can't be called with stale semantics.
 drop function if exists create_tasting_session(text, date, text, text, jsonb);
 drop function if exists create_tasting_session(text, date, text, text, text);
+-- Signature changed again (betting_enabled added) — see README "Tasting
+-- modes" — "Betting"; explicitly drop the pre-betting overload.
+drop function if exists create_tasting_session(text, date, text, text, text, text);
+-- Signature changed a third time (starting_credits added — the host is also
+-- a guest/bettor via their own guests row created below, and needs a
+-- starting balance exactly like anyone who joins via join_tasting_session);
+-- explicitly drop the betting-enabled-but-no-credits overload.
+drop function if exists create_tasting_session(text, date, text, text, text, text, boolean);
 
 -- Host: create a session (status='registration') and the host's own
 -- participant (guests) row in one transaction. Called from a Route Handler,
@@ -826,7 +905,9 @@ create or replace function create_tasting_session(
   p_join_code text,
   p_host_token_hash text,
   p_host_display_name text,
-  p_tasting_mode text
+  p_tasting_mode text,
+  p_betting_enabled boolean default false,
+  p_starting_credits int default null
 ) returns table (
   id uuid,
   public_id uuid,
@@ -857,18 +938,33 @@ begin
   if p_tasting_mode not in ('full_blind', 'course_reveal', 'seen') then
     raise exception 'invalid_tasting_mode';
   end if;
+  -- Betting is a course_reveal-only sub-mode (see README "Tasting modes" —
+  -- "Betting") — mirrors the tasting_sessions_betting_enabled_mode_check
+  -- constraint so a bad request fails with a clear error instead of a raw
+  -- constraint-violation message.
+  if coalesce(p_betting_enabled, false) and p_tasting_mode <> 'course_reveal' then
+    raise exception 'invalid_betting_mode';
+  end if;
+  -- The host is also a guest/bettor (see their own guests row below) — same
+  -- starting-balance requirement join_tasting_session enforces for anyone
+  -- else joining a betting-enabled session.
+  if coalesce(p_betting_enabled, false) then
+    if p_starting_credits is null or p_starting_credits <= 0 or p_starting_credits > 100000 then
+      raise exception 'invalid_starting_credits';
+    end if;
+  end if;
 
   -- scoring_version is deliberately a hardcoded literal, never a parameter —
   -- see README "Scoring model": the client can never choose or influence
   -- which scoring model a session gets.
-  insert into tasting_sessions (title, tasting_date, join_code, host_token_hash, status, tasting_mode, scoring_version)
-  values (btrim(p_title), p_tasting_date, p_join_code, p_host_token_hash, 'registration', p_tasting_mode, 'core_v4_partial_credit')
+  insert into tasting_sessions (title, tasting_date, join_code, host_token_hash, status, tasting_mode, scoring_version, betting_enabled)
+  values (btrim(p_title), p_tasting_date, p_join_code, p_host_token_hash, 'registration', p_tasting_mode, 'core_v4_partial_credit', coalesce(p_betting_enabled, false))
   returning tasting_sessions.id, tasting_sessions.public_id into v_session_id, v_public_id;
 
   v_host_token := encode(gen_random_bytes(32), 'base64');
 
-  insert into guests (session_id, display_name, guest_token)
-  values (v_session_id, v_host_name, v_host_token)
+  insert into guests (session_id, display_name, guest_token, starting_credits)
+  values (v_session_id, v_host_name, v_host_token, case when p_betting_enabled then p_starting_credits else null end)
   returning guests.id into v_host_guest_id;
 
   update tasting_sessions set host_guest_id = v_host_guest_id where tasting_sessions.id = v_session_id;
@@ -1055,7 +1151,8 @@ begin
       'createdAt', v_session.created_at,
       'hostGuestId', v_session.host_guest_id,
       'tastingMode', v_session.tasting_mode,
-      'scoringVersion', v_session.scoring_version
+      'scoringVersion', v_session.scoring_version,
+      'bettingEnabled', v_session.betting_enabled
     ),
     'wines', v_wines,
     'guests', coalesce((
@@ -1292,13 +1389,18 @@ $$;
 -- called with stale semantics; safe/no-op on a fresh install. See README
 -- "Session rejoin".
 drop function if exists join_tasting_session(uuid, text);
+-- Signature changed again (starting_credits added for the betting sub-mode —
+-- see README "Tasting modes" — "Betting"); explicitly drop the pre-betting
+-- overload.
+drop function if exists join_tasting_session(uuid, text, text, text, text);
 
 create or replace function join_tasting_session(
   p_public_id uuid,
   p_display_name text,
   p_device_token_hash text,
   p_recovery_code_hash text,
-  p_client_ip text default null
+  p_client_ip text default null,
+  p_starting_credits int default null
 ) returns table (guest_id uuid, guest_token text, display_name text)
 language plpgsql
 security definer
@@ -1331,6 +1433,19 @@ begin
     raise exception 'session_already_revealed';
   end if;
 
+  -- Betting mode locks its roster at tasting start (see README "Tasting
+  -- modes" — "Betting"): every participant must join and choose a starting
+  -- balance while the session is still 'registration'. A non-betting session
+  -- is completely unaffected — this whole block is a no-op for it.
+  if v_session.betting_enabled then
+    if v_session.status <> 'registration' then
+      raise exception 'betting_roster_locked';
+    end if;
+    if p_starting_credits is null or p_starting_credits <= 0 or p_starting_credits > 100000 then
+      raise exception 'invalid_starting_credits';
+    end if;
+  end if;
+
   if exists (
     select 1 from guests
     where session_id = v_session.id and display_name_normalized = lower(v_name)
@@ -1340,8 +1455,8 @@ begin
 
   v_token := encode(gen_random_bytes(32), 'base64');
 
-  insert into guests (session_id, display_name, guest_token)
-  values (v_session.id, v_name, v_token)
+  insert into guests (session_id, display_name, guest_token, starting_credits)
+  values (v_session.id, v_name, v_token, case when v_session.betting_enabled then p_starting_credits else null end)
   returning guests.id into v_guest_id;
 
   -- Every new guest gets both a device credential (silent same-device
@@ -1932,6 +2047,10 @@ $$;
 -- old overloads; safe/no-op on a fresh install.
 drop function if exists upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text);
 drop function if exists upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text, jsonb);
+-- Signature changed again (7 per-field bet amounts added for the betting
+-- sub-mode — see README "Tasting modes" — "Betting"); explicitly drop the
+-- pre-betting overload.
+drop function if exists upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text, jsonb, text);
 
 create or replace function upsert_wine_guess(
   p_guest_token text,
@@ -1947,7 +2066,14 @@ create or replace function upsert_wine_guess(
   p_confidence text,
   p_tasting_note text,
   p_grape_blend_components jsonb,
-  p_appellation_guess text
+  p_appellation_guess text,
+  p_country_bet int default null,
+  p_region_bet int default null,
+  p_appellation_bet int default null,
+  p_grape_blend_bet int default null,
+  p_vintage_bet int default null,
+  p_producer_bet int default null,
+  p_wine_cuvee_bet int default null
 ) returns void
 language plpgsql
 security definer
@@ -2025,16 +2151,39 @@ begin
     raise exception 'invalid_appellation';
   end if;
 
+  -- Betting sub-mode only (see README "Tasting modes" — "Betting"): every
+  -- bet must be non-negative, and the total wagered on this one bottle can
+  -- never exceed the guest's starting balance — a cheap, cheap-to-check
+  -- sanity backstop, not the true running-balance cap (which depends on
+  -- credits already won/lost on prior bottles and is computed/enforced
+  -- client-side — see lib/betting.ts and the migration-step-16 comment
+  -- above for why that math is deliberately never duplicated here). No-op
+  -- entirely for a non-betting session.
+  if v_session.betting_enabled then
+    if coalesce(p_country_bet, 0) < 0 or coalesce(p_region_bet, 0) < 0 or coalesce(p_appellation_bet, 0) < 0
+       or coalesce(p_grape_blend_bet, 0) < 0 or coalesce(p_vintage_bet, 0) < 0 or coalesce(p_producer_bet, 0) < 0
+       or coalesce(p_wine_cuvee_bet, 0) < 0 then
+      raise exception 'invalid_bet_amount';
+    end if;
+    if (coalesce(p_country_bet, 0) + coalesce(p_region_bet, 0) + coalesce(p_appellation_bet, 0)
+        + coalesce(p_grape_blend_bet, 0) + coalesce(p_vintage_bet, 0) + coalesce(p_producer_bet, 0)
+        + coalesce(p_wine_cuvee_bet, 0)) > v_guest.starting_credits then
+      raise exception 'bet_exceeds_balance';
+    end if;
+  end if;
+
   insert into wine_guesses (
     session_id, wine_id, guest_id, country_guess, region_guess, appellation_guess, grape_style_guess,
     grape_blend_mode, grape_blend_components, producer_guess, wine_cuvee_guess, vintage_guess, rating,
-    confidence, tasting_note, submitted_at
+    confidence, tasting_note, submitted_at,
+    country_bet, region_bet, appellation_bet, grape_blend_bet, vintage_bet, producer_bet, wine_cuvee_bet
   ) values (
     v_session.id, p_wine_id, v_guest.id, coalesce(p_country_guess, ''), coalesce(p_region_guess, ''),
     nullif(btrim(coalesce(p_appellation_guess, '')), ''),
     coalesce(p_grape_blend_guess, ''), nullif(p_grape_blend_mode, ''), p_grape_blend_components,
     coalesce(p_producer_guess, ''), coalesce(p_wine_cuvee_guess, ''), coalesce(p_vintage_guess, ''), p_rating,
-    coalesce(nullif(p_confidence, ''), 'medium'), nullif(p_tasting_note, ''), now()
+    coalesce(nullif(p_confidence, ''), 'medium'), nullif(p_tasting_note, ''), now(),
+    p_country_bet, p_region_bet, p_appellation_bet, p_grape_blend_bet, p_vintage_bet, p_producer_bet, p_wine_cuvee_bet
   )
   on conflict (guest_id, wine_id) do update set
     country_guess = excluded.country_guess,
@@ -2049,7 +2198,14 @@ begin
     rating = excluded.rating,
     confidence = excluded.confidence,
     tasting_note = excluded.tasting_note,
-    submitted_at = now();
+    submitted_at = now(),
+    country_bet = excluded.country_bet,
+    region_bet = excluded.region_bet,
+    appellation_bet = excluded.appellation_bet,
+    grape_blend_bet = excluded.grape_blend_bet,
+    vintage_bet = excluded.vintage_bet,
+    producer_bet = excluded.producer_bet,
+    wine_cuvee_bet = excluded.wine_cuvee_bet;
 end;
 $$;
 
@@ -2098,9 +2254,11 @@ begin
         'title', v_session.title,
         'tastingDate', v_session.tasting_date,
         'status', v_session.status,
-        'tastingMode', v_session.tasting_mode
+        'tastingMode', v_session.tasting_mode,
+        'bettingEnabled', v_session.betting_enabled
       ),
       'guestName', v_guest.display_name,
+      'startingCredits', v_guest.starting_credits,
       'activeBottle', null,
       'myGuess', null,
       'locked', false
@@ -2121,9 +2279,11 @@ begin
       'title', v_session.title,
       'tastingDate', v_session.tasting_date,
       'status', v_session.status,
-      'tastingMode', v_session.tasting_mode
+      'tastingMode', v_session.tasting_mode,
+      'bettingEnabled', v_session.betting_enabled
     ),
     'guestName', v_guest.display_name,
+    'startingCredits', v_guest.starting_credits,
     'activeBottle', jsonb_build_object(
       'id', v_active.id,
       'bottleNumber', v_active.bottle_number,
@@ -2156,7 +2316,14 @@ begin
       'vintageGuess', v_my_guess.vintage_guess,
       'rating', v_my_guess.rating,
       'confidence', v_my_guess.confidence,
-      'tastingNote', v_my_guess.tasting_note
+      'tastingNote', v_my_guess.tasting_note,
+      'countryBet', v_my_guess.country_bet,
+      'regionBet', v_my_guess.region_bet,
+      'appellationBet', v_my_guess.appellation_bet,
+      'grapeBlendBet', v_my_guess.grape_blend_bet,
+      'vintageBet', v_my_guess.vintage_bet,
+      'producerBet', v_my_guess.producer_bet,
+      'wineCuveeBet', v_my_guess.wine_cuvee_bet
     ) end,
     'locked', coalesce(v_my_guess.locked_at is not null, false)
   );
@@ -2437,7 +2604,17 @@ begin
         'wineCuveeGuess', wg.wine_cuvee_guess,
         'vintageGuess', wg.vintage_guess,
         'rating', wg.rating,
-        'confidence', wg.confidence
+        'confidence', wg.confidence,
+        -- Betting sub-mode only (see README "Tasting modes" — "Betting") —
+        -- always null for a non-betting session, since these columns are
+        -- never written outside upsert_wine_guess's betting-enabled path.
+        'countryBet', wg.country_bet,
+        'regionBet', wg.region_bet,
+        'appellationBet', wg.appellation_bet,
+        'grapeBlendBet', wg.grape_blend_bet,
+        'vintageBet', wg.vintage_bet,
+        'producerBet', wg.producer_bet,
+        'wineCuveeBet', wg.wine_cuvee_bet
       ) else null end
     ) order by g.created_at), '[]'::jsonb)
     into v_participants
@@ -2561,7 +2738,17 @@ begin
         'wineCuveeGuess', wg.wine_cuvee_guess,
         'vintageGuess', wg.vintage_guess,
         'rating', wg.rating,
-        'confidence', wg.confidence
+        'confidence', wg.confidence,
+        -- Betting sub-mode only (see README "Tasting modes" — "Betting") —
+        -- always null for a non-betting session, since these columns are
+        -- never written outside upsert_wine_guess's betting-enabled path.
+        'countryBet', wg.country_bet,
+        'regionBet', wg.region_bet,
+        'appellationBet', wg.appellation_bet,
+        'grapeBlendBet', wg.grape_blend_bet,
+        'vintageBet', wg.vintage_bet,
+        'producerBet', wg.producer_bet,
+        'wineCuveeBet', wg.wine_cuvee_bet
       ) else null end
     ) order by g.created_at), '[]'::jsonb)
     into v_participants
@@ -2719,7 +2906,14 @@ begin
     'vintage', w.vintage,
     'wineStyle', w.wine_style,
     'tastingOrder', w.tasting_order,
-    'photoPath', w.photo_path
+    'photoPath', w.photo_path,
+    -- Betting sub-mode only (see README "Tasting modes" — "Betting") — the
+    -- settlement counterparty for every guesser's bet on this bottle. Safe
+    -- to expose unconditionally here: this array is already scoped to
+    -- revealed_at is not null wines only, and a revealed bottle's
+    -- contributor identity is already visible elsewhere (get_active_bottle_state's
+    -- contributorName, etc).
+    'contributorGuestId', w.contributor_guest_id
   ) order by w.tasting_order), '[]'::jsonb)
   into v_wines
   from wines w where w.session_id = v_session.id and w.revealed_at is not null;
@@ -2738,7 +2932,14 @@ begin
     'wineCuveeGuess', wg.wine_cuvee_guess,
     'vintageGuess', wg.vintage_guess,
     'rating', wg.rating,
-    'confidence', wg.confidence
+    'confidence', wg.confidence,
+    'countryBet', wg.country_bet,
+    'regionBet', wg.region_bet,
+    'appellationBet', wg.appellation_bet,
+    'grapeBlendBet', wg.grape_blend_bet,
+    'vintageBet', wg.vintage_bet,
+    'producerBet', wg.producer_bet,
+    'wineCuveeBet', wg.wine_cuvee_bet
   )), '[]'::jsonb)
   into v_guesses
   from wine_guesses wg
@@ -2749,7 +2950,8 @@ begin
   select coalesce(jsonb_agg(jsonb_build_object(
     'id', g.id,
     'displayName', g.display_name,
-    'completedAt', g.completed_at
+    'completedAt', g.completed_at,
+    'startingCredits', g.starting_credits
   ) order by g.created_at), '[]'::jsonb)
   into v_guests
   from guests g where g.session_id = v_session.id;
@@ -2761,6 +2963,7 @@ begin
     'scoringVersion', v_session.scoring_version,
     'sessionStatus', v_session.status,
     'tastingMode', v_session.tasting_mode,
+    'bettingEnabled', v_session.betting_enabled,
     'totalCount', v_total_count,
     'revealedCount', v_revealed_count
   );
@@ -2831,7 +3034,10 @@ begin
     'vintage', w.vintage,
     'wineStyle', w.wine_style,
     'tastingOrder', w.tasting_order,
-    'photoPath', w.photo_path
+    'photoPath', w.photo_path,
+    -- Betting sub-mode only — see the identical field/comment in
+    -- get_provisional_leaderboard_for_host above.
+    'contributorGuestId', w.contributor_guest_id
   ) order by w.tasting_order), '[]'::jsonb)
   into v_wines
   from wines w where w.session_id = v_session.id and w.revealed_at is not null;
@@ -2850,7 +3056,14 @@ begin
     'wineCuveeGuess', wg.wine_cuvee_guess,
     'vintageGuess', wg.vintage_guess,
     'rating', wg.rating,
-    'confidence', wg.confidence
+    'confidence', wg.confidence,
+    'countryBet', wg.country_bet,
+    'regionBet', wg.region_bet,
+    'appellationBet', wg.appellation_bet,
+    'grapeBlendBet', wg.grape_blend_bet,
+    'vintageBet', wg.vintage_bet,
+    'producerBet', wg.producer_bet,
+    'wineCuveeBet', wg.wine_cuvee_bet
   )), '[]'::jsonb)
   into v_guesses
   from wine_guesses wg
@@ -2861,7 +3074,8 @@ begin
   select coalesce(jsonb_agg(jsonb_build_object(
     'id', g.id,
     'displayName', g.display_name,
-    'completedAt', g.completed_at
+    'completedAt', g.completed_at,
+    'startingCredits', g.starting_credits
   ) order by g.created_at), '[]'::jsonb)
   into v_guests
   from guests g where g.session_id = v_session.id;
@@ -2873,10 +3087,111 @@ begin
     'scoringVersion', v_session.scoring_version,
     'sessionStatus', v_session.status,
     'tastingMode', v_session.tasting_mode,
+    'bettingEnabled', v_session.betting_enabled,
     'totalCount', v_total_count,
     'revealedCount', v_revealed_count,
     'title', v_session.title,
     'tastingDate', v_session.tasting_date,
+    'myGuestId', v_guest.id
+  );
+end;
+$$;
+
+-- Guest: the credits-leaderboard data source for a betting-enabled
+-- course_reveal session (see README "Tasting modes" — "Betting") — same
+-- wines/guesses/guests raw-row shape as get_provisional_leaderboard_for_host/
+-- get_final_leaderboard_for_guest above (so the client can fold it into a
+-- credit ledger via the same lib/betting.ts pipeline), but deliberately NOT
+-- gated on the whole session being 'revealed' the way
+-- get_final_leaderboard_for_guest is: a guest needs their live running
+-- balance while betting on the still-active (not yet revealed) bottle, not
+-- only once the tasting is completely over. Restricted to revealed_at is not
+-- null wines only, same as both leaderboard RPCs — nothing here ever exposes
+-- an unrevealed answer key. No settlement/balance is computed here; this
+-- only ever returns raw rows for lib/betting.ts to fold into a ledger
+-- client-side, exactly like every other scoring computation in this app.
+create or replace function get_credit_ledger_for_guest(
+  p_guest_token text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_guest guests%rowtype;
+  v_session tasting_sessions%rowtype;
+  v_wines jsonb;
+  v_guesses jsonb;
+  v_guests jsonb;
+begin
+  select * into v_guest from guests where guest_token = p_guest_token;
+  if not found then
+    raise exception 'invalid_guest_token';
+  end if;
+  select * into v_session from tasting_sessions where id = v_guest.session_id;
+
+  if not v_session.betting_enabled then
+    raise exception 'betting_not_enabled';
+  end if;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'id', w.id,
+    'anonymousCode', w.anonymous_code,
+    'bottleNumber', w.bottle_number,
+    'country', w.country,
+    'region', w.region,
+    'appellation', w.appellation,
+    'grapeBlendMode', w.grape_blend_mode,
+    'grapeBlend', w.grape_style,
+    'producer', w.producer,
+    'wineCuvee', w.wine_cuvee,
+    'vintage', w.vintage,
+    'tastingOrder', w.tasting_order,
+    'contributorGuestId', w.contributor_guest_id
+  ) order by w.tasting_order), '[]'::jsonb)
+  into v_wines
+  from wines w where w.session_id = v_session.id and w.revealed_at is not null;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'wineId', wg.wine_id,
+    'guestId', wg.guest_id,
+    'guestName', g.display_name,
+    'lockedAt', wg.locked_at,
+    'countryGuess', wg.country_guess,
+    'regionGuess', wg.region_guess,
+    'appellationGuess', wg.appellation_guess,
+    'grapeBlendMode', wg.grape_blend_mode,
+    'grapeBlendGuess', wg.grape_style_guess,
+    'producerGuess', wg.producer_guess,
+    'wineCuveeGuess', wg.wine_cuvee_guess,
+    'vintageGuess', wg.vintage_guess,
+    'countryBet', wg.country_bet,
+    'regionBet', wg.region_bet,
+    'appellationBet', wg.appellation_bet,
+    'grapeBlendBet', wg.grape_blend_bet,
+    'vintageBet', wg.vintage_bet,
+    'producerBet', wg.producer_bet,
+    'wineCuveeBet', wg.wine_cuvee_bet
+  )), '[]'::jsonb)
+  into v_guesses
+  from wine_guesses wg
+  join guests g on g.id = wg.guest_id
+  join wines w on w.id = wg.wine_id
+  where w.session_id = v_session.id and w.revealed_at is not null;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'id', g.id,
+    'displayName', g.display_name,
+    'startingCredits', g.starting_credits
+  ) order by g.created_at), '[]'::jsonb)
+  into v_guests
+  from guests g where g.session_id = v_session.id;
+
+  return jsonb_build_object(
+    'wines', v_wines,
+    'guesses', v_guesses,
+    'guests', v_guests,
+    'scoringVersion', v_session.scoring_version,
     'myGuestId', v_guest.id
   );
 end;
@@ -3154,10 +3469,14 @@ revoke all on wines from anon, authenticated;
 revoke all on guests from anon, authenticated;
 revoke all on wine_guesses from anon, authenticated;
 
-grant select (id, public_id, join_code, title, tasting_date, status, created_at, updated_at, tasting_mode, scoring_version)
+grant select (id, public_id, join_code, title, tasting_date, status, created_at, updated_at, tasting_mode, scoring_version, betting_enabled)
   on tasting_sessions to anon, authenticated;
 
-grant select (id, session_id, display_name, created_at, completed_at)
+-- starting_credits is included here (unlike every sensitive answer-key
+-- column) because betting mode's own leaderboard is deliberately fully
+-- transparent — see README "Tasting modes" — "Betting": every participant's
+-- starting balance is exactly as visible as their live credits total.
+grant select (id, session_id, display_name, created_at, completed_at, starting_credits)
   on guests to anon, authenticated;
 
 -- Deliberately excludes contributor_guest_id and every answer-key column —
@@ -3169,7 +3488,7 @@ grant select (id, session_id, bottle_number, anonymous_code, created_at)
 grant select on guest_visible_wines to anon, authenticated;
 grant select on revealed_wine_guesses to anon, authenticated;
 
-grant execute on function create_tasting_session(text, date, text, text, text, text) to anon, authenticated;
+grant execute on function create_tasting_session(text, date, text, text, text, text, boolean, int) to anon, authenticated;
 grant execute on function get_host_session(uuid, text) to anon, authenticated;
 grant execute on function start_tasting_session(uuid, text) to anon, authenticated;
 grant execute on function reveal_tasting_session(uuid, text) to anon, authenticated;
@@ -3180,7 +3499,8 @@ grant execute on function get_bottle_result_for_guest(text, uuid) to anon, authe
 grant execute on function get_revealed_bottles_summary(text) to anon, authenticated;
 grant execute on function get_provisional_leaderboard_for_host(uuid, text) to anon, authenticated;
 grant execute on function get_final_leaderboard_for_guest(text) to anon, authenticated;
-grant execute on function join_tasting_session(uuid, text, text, text, text) to anon, authenticated;
+grant execute on function get_credit_ledger_for_guest(text) to anon, authenticated;
+grant execute on function join_tasting_session(uuid, text, text, text, text, int) to anon, authenticated;
 grant execute on function get_registration_state(text) to anon, authenticated;
 grant execute on function register_bottle(text, text, text, text, text, text, text, text, text, text, jsonb, text, text) to anon, authenticated;
 grant execute on function update_bottle(text, uuid, text, text, text, text, text, text, text, text, text, jsonb, text, text) to anon, authenticated;
@@ -3188,7 +3508,7 @@ grant execute on function authorize_bottle_photo_upload(text, text) to anon, aut
 grant execute on function delete_bottle(text, uuid) to anon, authenticated;
 grant execute on function reorder_wines(uuid, text, uuid[]) to anon, authenticated;
 grant execute on function get_guest_session_state(text) to anon, authenticated;
-grant execute on function upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text, jsonb, text) to anon, authenticated;
+grant execute on function upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text, jsonb, text, int, int, int, int, int, int, int) to anon, authenticated;
 grant execute on function get_active_bottle_state(text) to anon, authenticated;
 grant execute on function lock_wine_guess(text, uuid) to anon, authenticated;
 grant execute on function get_revealed_bottle(text, uuid) to anon, authenticated;
@@ -4835,8 +5155,14 @@ $$;
 -- at sign-up — asking for it again here would just be friction. Never mints
 -- a device/recovery credential: the account's own auth session is already
 -- sufficient proof of identity going forward (see README "Session rejoin").
+-- Signature changed (starting_credits added for the betting sub-mode — see
+-- README "Tasting modes" — "Betting"); explicitly drop the pre-betting
+-- overload.
+drop function if exists join_tasting_session_as_account(uuid);
+
 create or replace function join_tasting_session_as_account(
-  p_public_id uuid
+  p_public_id uuid,
+  p_starting_credits int default null
 ) returns table (guest_id uuid, guest_token text, display_name text, already_member boolean)
 language plpgsql
 security definer
@@ -4875,6 +5201,17 @@ begin
     raise exception 'session_already_revealed';
   end if;
 
+  -- Betting mode locks its roster at tasting start — see the identical check
+  -- in join_tasting_session above.
+  if v_session.betting_enabled then
+    if v_session.status <> 'registration' then
+      raise exception 'betting_roster_locked';
+    end if;
+    if p_starting_credits is null or p_starting_credits <= 0 or p_starting_credits > 100000 then
+      raise exception 'invalid_starting_credits';
+    end if;
+  end if;
+
   select p.display_name, p.email into v_profile_name, v_profile_email
   from profiles p where p.id = v_uid;
 
@@ -4902,8 +5239,8 @@ begin
   v_token := encode(gen_random_bytes(32), 'base64');
 
   begin
-    insert into guests (session_id, display_name, guest_token, user_id)
-    values (v_session.id, v_name, v_token, v_uid)
+    insert into guests (session_id, display_name, guest_token, user_id, starting_credits)
+    values (v_session.id, v_name, v_token, v_uid, case when v_session.betting_enabled then p_starting_credits else null end)
     returning guests.id into v_guest_id;
   exception when unique_violation then
     -- Concurrent request already created this account's membership (the
@@ -4921,7 +5258,7 @@ begin
 end;
 $$;
 
-grant execute on function join_tasting_session_as_account(uuid) to authenticated;
+grant execute on function join_tasting_session_as_account(uuid, int) to authenticated;
 
 -- The single read-only entry point the public join route calls to decide
 -- which of the five rejoin-landing screens to show (see README "Session

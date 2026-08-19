@@ -19,18 +19,20 @@ import { ResultsLink } from "@/components/navigation/ResultsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   getActiveBottleState,
+  getCreditLedger,
   getHostGuessProgress,
   lockWineGuess,
   upsertGuess,
 } from "@/lib/supabase/guestActions";
 import { friendlyRpcError, ActiveBottleDTO, HostGuessProgressDTO } from "@/lib/supabase/types";
-import { mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
+import { mapGuestGuessDtoToBets, mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
 import { emptyWineGuess } from "@/lib/guess";
 import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend, invalidOtherGrapeGuessMessage } from "@/lib/validation";
 import { getGuestToken, getHostToken } from "@/lib/deviceStorage";
 import { waitingToRevealImage } from "@/lib/appImages";
 import { buildBottleDisplayLabels, formatBottleAccessibleLabel, formatContributorBottleLabel } from "@/lib/contributorLabel";
 import { WineGuess } from "@/types/tasting";
+import { BETTABLE_FIELDS, FieldBets, buildCreditLedger, findMyLedgerEntry } from "@/lib/betting";
 
 type LoadState =
   | "loading"
@@ -68,10 +70,17 @@ export default function ActiveBottlePage() {
     anonymousCode: string;
   } | null>(null);
   const [hostGuessProgress, setHostGuessProgress] = useState<HostGuessProgressDTO | null>(null);
+  // Betting sub-mode only (see README "Tasting modes" — "Betting") — all
+  // undefined/false for a non-betting session, so WineGuessForm never shows
+  // bet inputs and this page's extra fetch/validation never fires.
+  const [bettingEnabled, setBettingEnabled] = useState(false);
+  const [bets, setBets] = useState<FieldBets>({});
+  const [currentBalance, setCurrentBalance] = useState<number | null>(null);
+  const [betError, setBetError] = useState<string | null>(null);
 
   const guestTokenRef = useRef<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSaveRef = useRef<{ wineId: string; guess: WineGuess } | null>(null);
+  const pendingSaveRef = useRef<{ wineId: string; guess: WineGuess; bets: FieldBets } | null>(null);
   // The bottle we're currently locked on (or actively guessing), so that
   // when a refresh shows a *different* active bottle we know ours was just
   // revealed — the server no longer reports a revealed bottle as "active".
@@ -93,7 +102,7 @@ export default function ActiveBottlePage() {
     if (!supabase || !token || !pending) return;
     pendingSaveRef.current = null;
 
-    const { error } = await upsertGuess(supabase, token, pending.wineId, pending.guess);
+    const { error } = await upsertGuess(supabase, token, pending.wineId, pending.guess, pending.bets);
     setSaveState(error ? "error" : "saved");
   }, []);
 
@@ -106,8 +115,8 @@ export default function ActiveBottlePage() {
   }, [performSave]);
 
   const scheduleSave = useCallback(
-    (wineId: string, next: WineGuess) => {
-      pendingSaveRef.current = { wineId, guess: next };
+    (wineId: string, next: WineGuess, nextBets: FieldBets) => {
+      pendingSaveRef.current = { wineId, guess: next, bets: nextBets };
       setSaveState("saving");
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
@@ -167,6 +176,24 @@ export default function ActiveBottlePage() {
       data.myGuess ? mapGuestGuessDtoToWineGuess(data.myGuess) : emptyWineGuess(data.activeBottle.id)
     );
     setLoadState(data.locked ? "locked" : "ready");
+
+    // Betting sub-mode only (see README "Tasting modes" — "Betting"): the
+    // draft bets already saved for this bottle, plus this guest's live
+    // running balance (starting balance + every already-revealed bottle's
+    // settlement) — the same client-computed cap handleLockGuess enforces
+    // before allowing a lock.
+    setBettingEnabled(data.session.bettingEnabled);
+    setBets(data.myGuess ? mapGuestGuessDtoToBets(data.myGuess) : {});
+    if (data.session.bettingEnabled) {
+      getCreditLedger(supabase, token).then(({ data: ledgerData }) => {
+        if (!ledgerData) return;
+        const { entries } = buildCreditLedger(ledgerData);
+        const mine = findMyLedgerEntry(entries, ledgerData.myGuestId);
+        setCurrentBalance(mine?.currentBalance ?? data.startingCredits ?? 0);
+      });
+    } else {
+      setCurrentBalance(null);
+    }
 
     if (isHostRef.current) {
       const wineId = data.activeBottle.id;
@@ -241,10 +268,16 @@ export default function ActiveBottlePage() {
 
   function updateGuess(next: WineGuess) {
     setGuess(next);
-    scheduleSave(next.wineId, next);
+    scheduleSave(next.wineId, next, bets);
     setRatingError(null);
     setBlendError(null);
     setOtherGrapeError(null);
+  }
+
+  function updateBets(next: FieldBets) {
+    setBets(next);
+    setBetError(null);
+    if (guess) scheduleSave(guess.wineId, guess, next);
   }
 
   async function handleLockGuess() {
@@ -261,6 +294,18 @@ export default function ActiveBottlePage() {
     if (otherGrapeMessage) {
       setOtherGrapeError(otherGrapeMessage);
       return;
+    }
+    // Betting sub-mode only (see README "Tasting modes" — "Betting") — the
+    // client-computed running-balance cap: the database only enforces a
+    // cheap sanity bound against the guest's *starting* balance (see
+    // upsert_wine_guess), so this is the one place that actually accounts
+    // for credits already won/lost on prior bottles.
+    if (bettingEnabled && currentBalance !== null) {
+      const totalBet = BETTABLE_FIELDS.reduce((sum, field) => sum + (bets[field] ?? 0), 0);
+      if (totalBet > currentBalance) {
+        setBetError(`Your bets on this bottle (${totalBet}) can't exceed your current balance (${currentBalance}).`);
+        return;
+      }
     }
 
     setLockError(null);
@@ -437,6 +482,12 @@ export default function ActiveBottlePage() {
         <>
           <GuessGroupProgress progress={hostGuessProgress} />
 
+          {bettingEnabled && currentBalance !== null && (
+            <p className="rounded-sm border border-cellar-gold/40 bg-cellar-gold/10 px-3 py-2 text-sm font-medium text-cellar-maroon-dark">
+              You have {currentBalance} credit{currentBalance === 1 ? "" : "s"} to bet with.
+            </p>
+          )}
+
           <WineGuessForm
             key={activeBottle.id}
             bottleLabels={activeBottleLabels}
@@ -446,9 +497,17 @@ export default function ActiveBottlePage() {
             styleHint={activeBottle.styleHint}
             ratingError={ratingError ?? undefined}
             blendError={blendError ?? otherGrapeError ?? undefined}
+            bets={bettingEnabled ? bets : undefined}
+            onBetsChange={bettingEnabled ? updateBets : undefined}
           />
 
           <SavingIndicator state={saveState} />
+
+          {betError && (
+            <p role="alert" className="rounded-sm border border-cellar-danger/30 bg-cellar-danger/5 px-3 py-2 text-sm text-cellar-danger">
+              {betError}
+            </p>
+          )}
 
           {lockError && (
             <p role="alert" className="rounded-sm border border-cellar-danger/30 bg-cellar-danger/5 px-3 py-2 text-sm text-cellar-danger">

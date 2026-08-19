@@ -10,6 +10,7 @@ import { LoadingState } from "@/components/LoadingState";
 import { UnavailableScreen } from "@/components/UnavailableScreen";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
+import { CreditsLeaderboard } from "@/components/report/CreditsLeaderboard";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { getFinalLeaderboard } from "@/lib/supabase/guestActions";
 import {
@@ -18,6 +19,7 @@ import {
   formatLeaderboardPercent,
   withYouSuffix,
 } from "@/lib/resultsReveal";
+import { buildCreditLedger, CreditLedgerEntry } from "@/lib/betting";
 import { getGuestToken } from "@/lib/deviceStorage";
 
 type LoadState = "loading" | "no-config" | "invalid-token" | "unavailable" | "waiting" | "ready";
@@ -43,6 +45,9 @@ export function FinalLeaderboardClient({ publicId, hubHref, recapHref }: FinalLe
   const router = useRouter();
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [view, setView] = useState<FinalLeaderboardView | null>(null);
+  // Betting sub-mode only (see README "Tasting modes" — "Betting") — null
+  // for a non-betting session.
+  const [creditEntries, setCreditEntries] = useState<CreditLedgerEntry[] | null>(null);
   const guestTokenRef = useRef<string | null>(null);
   const hasAnnouncedRef = useRef(false);
   const [announcement, setAnnouncement] = useState("");
@@ -66,6 +71,7 @@ export function FinalLeaderboardClient({ publicId, hubHref, recapHref }: FinalLe
       return;
     }
     setView(buildFinalLeaderboardView(data));
+    setCreditEntries(data.bettingEnabled ? buildCreditLedger(data).entries : null);
     if (!hasAnnouncedRef.current) {
       hasAnnouncedRef.current = true;
       setAnnouncement("Final leaderboard and tasting recap are now available.");
@@ -228,6 +234,13 @@ export function FinalLeaderboardClient({ publicId, hubHref, recapHref }: FinalLe
             );
           })}
         </ol>
+      )}
+
+      {creditEntries && (
+        <section className="flex flex-col gap-2">
+          <SectionEyebrow>Credits leaderboard</SectionEyebrow>
+          <CreditsLeaderboard entries={creditEntries} myGuestId={view.myGuestId} />
+        </section>
       )}
 
       <Link href={recapHref}>

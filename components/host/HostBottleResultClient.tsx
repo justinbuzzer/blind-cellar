@@ -6,18 +6,27 @@ import { Stat } from "@/components/Stat";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { RevealedWineIdentity } from "@/components/report/RevealedWineIdentity";
 import { BottleParticipantList } from "@/components/report/BottleParticipantList";
+import { CreditsLeaderboard } from "@/components/report/CreditsLeaderboard";
 import { bottleLabel } from "@/lib/codes";
 import { buildBottleResultView, formatBottleAggregateSummary } from "@/lib/resultsReveal";
+import { CreditLedgerEntry } from "@/lib/betting";
 import { BottleResultForHostResponse } from "@/lib/supabase/types";
 
 interface HostBottleResultClientProps {
   publicId: string;
   hostToken: string;
   response: BottleResultForHostResponse;
+  /** Betting sub-mode only (see README "Tasting modes" — "Betting") — undefined for a non-betting session, which never renders the credits section at all. */
+  creditEntries?: CreditLedgerEntry[];
 }
 
 /** Host-only per-bottle results view — see README "Results reveal". */
-export function HostBottleResultClient({ publicId, hostToken, response }: HostBottleResultClientProps) {
+export function HostBottleResultClient({
+  publicId,
+  hostToken,
+  response,
+  creditEntries,
+}: HostBottleResultClientProps) {
   const view = buildBottleResultView(response);
   const hostControlsHref = `/host/${publicId}?token=${encodeURIComponent(hostToken)}`;
 
@@ -68,6 +77,13 @@ export function HostBottleResultClient({ publicId, hostToken, response }: HostBo
         <SectionEyebrow>Participant breakdown</SectionEyebrow>
         <BottleParticipantList participants={view.participants} />
       </section>
+
+      {creditEntries && (
+        <section className="flex flex-col gap-2">
+          <SectionEyebrow>Credits leaderboard</SectionEyebrow>
+          <CreditsLeaderboard entries={creditEntries} />
+        </section>
+      )}
 
       <Link href={hostControlsHref}>
         <Button fullWidth>Reveal another bottle</Button>

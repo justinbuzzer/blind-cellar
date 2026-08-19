@@ -25,7 +25,16 @@ import {
 } from "@/lib/rejoin";
 
 type LoadState = "loading" | "no-config" | "not-found" | "ready";
-type EntryMode = "default" | "guest-form" | "recovery";
+type EntryMode = "default" | "guest-form" | "recovery" | "account-credits";
+
+/** Betting sub-mode only (see README "Tasting modes" — "Betting") — the same bounds join_tasting_session enforces server-side. */
+const DEFAULT_STARTING_CREDITS = "100";
+function parseStartingCredits(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const value = Number.parseInt(trimmed, 10);
+  return value > 0 && value <= 100000 ? value : null;
+}
 
 interface PendingGuestJoin {
   guestToken: string;
@@ -77,6 +86,7 @@ export default function JoinSessionPage() {
   const [resolution, setResolution] = useState<JoinResolution | null>(null);
   const [entryMode, setEntryMode] = useState<EntryMode>("default");
   const [name, setName] = useState("");
+  const [startingCredits, setStartingCredits] = useState(DEFAULT_STARTING_CREDITS);
   const [formError, setFormError] = useState<string | null>(null);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -105,7 +115,7 @@ export default function JoinSessionPage() {
       const { data: sessionRow } = await supabase
         .from("tasting_sessions")
         .select(
-          "id, public_id, join_code, title, tasting_date, status, created_at, updated_at, tasting_mode, scoring_version"
+          "id, public_id, join_code, title, tasting_date, status, created_at, updated_at, tasting_mode, scoring_version, betting_enabled"
         )
         .eq("public_id", params.publicId)
         .maybeSingle();
@@ -196,12 +206,18 @@ export default function JoinSessionPage() {
       setFormError("That name is too long — please shorten it.");
       return;
     }
+    const credits = session?.betting_enabled ? parseStartingCredits(startingCredits) : null;
+    if (session?.betting_enabled && credits === null) {
+      setFormError("Enter a starting credit balance between 1 and 100,000.");
+      return;
+    }
 
     setBusy(true);
     const { data, ok } = await fetchJson("/api/join/create", {
       publicId: params.publicId,
       displayName: trimmed,
       asGuest: true,
+      ...(credits !== null ? { startingCredits: credits } : {}),
     });
     setBusy(false);
 
@@ -219,15 +235,13 @@ export default function JoinSessionPage() {
     router.push(destinationForStatus(session.status, params.publicId));
   }
 
-  async function handleContinueWithAccount() {
-    if (auth.loading) return;
-    if (!auth.user) {
-      router.push(`/account/sign-in?redirect=${encodeURIComponent(`/join/${params.publicId}`)}`);
-      return;
-    }
+  async function performAccountJoin(credits: number | null) {
     setFormError(null);
     setBusy(true);
-    const { data, ok } = await fetchJson("/api/join/create", { publicId: params.publicId });
+    const { data, ok } = await fetchJson("/api/join/create", {
+      publicId: params.publicId,
+      ...(credits !== null ? { startingCredits: credits } : {}),
+    });
     setBusy(false);
 
     if (!ok || !session || !data.guestToken) {
@@ -236,6 +250,33 @@ export default function JoinSessionPage() {
     }
     setGuestToken(params.publicId, data.guestToken);
     router.push(destinationForStatus(session.status, params.publicId));
+  }
+
+  async function handleContinueWithAccount() {
+    if (auth.loading) return;
+    if (!auth.user) {
+      router.push(`/account/sign-in?redirect=${encodeURIComponent(`/join/${params.publicId}`)}`);
+      return;
+    }
+    // Betting sub-mode only (see README "Tasting modes" — "Betting"): an
+    // account-linked join still needs a starting balance, so it gets its own
+    // small confirmation step first instead of joining immediately.
+    if (session?.betting_enabled) {
+      setFormError(null);
+      setEntryMode("account-credits");
+      return;
+    }
+    await performAccountJoin(null);
+  }
+
+  async function handleAccountCreditsSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const credits = parseStartingCredits(startingCredits);
+    if (credits === null) {
+      setFormError("Enter a starting credit balance between 1 and 100,000.");
+      return;
+    }
+    await performAccountJoin(credits);
   }
 
   async function handleRecoverySubmit(code: string) {
@@ -436,14 +477,65 @@ export default function JoinSessionPage() {
             <TextField
               label="Display name"
               value={name}
-              error={formError ?? undefined}
+              error={!session.betting_enabled ? formError ?? undefined : undefined}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Alice"
               maxLength={60}
             />
+            {session.betting_enabled && (
+              <TextField
+                label="Starting credits"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={100000}
+                value={startingCredits}
+                error={formError ?? undefined}
+                onChange={(e) => setStartingCredits(e.target.value)}
+                hint="This tasting has betting enabled — you'll wager these credits on your guesses."
+              />
+            )}
             <div className="flex flex-col gap-2 sm:flex-row-reverse">
               <Button type="submit" fullWidth disabled={busy}>
                 {busy ? "Joining…" : "Join tasting"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                fullWidth
+                onClick={() => {
+                  setFormError(null);
+                  setEntryMode("default");
+                }}
+                disabled={busy}
+              >
+                Back
+              </Button>
+            </div>
+          </form>
+        </Card>
+      )}
+
+      {screenState.kind === "unrecognized" && entryMode === "account-credits" && (
+        <Card>
+          <form onSubmit={handleAccountCreditsSubmit} className="flex flex-col gap-4" noValidate>
+            <p className="text-sm text-cellar-muted">
+              This tasting has betting enabled. Choose how many credits to start with —
+              you&rsquo;ll wager these on your guesses.
+            </p>
+            <TextField
+              label="Starting credits"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={100000}
+              value={startingCredits}
+              error={formError ?? undefined}
+              onChange={(e) => setStartingCredits(e.target.value)}
+            />
+            <div className="flex flex-col gap-2 sm:flex-row-reverse">
+              <Button type="submit" fullWidth disabled={busy}>
+                {busy ? "Joining…" : "Continue"}
               </Button>
               <Button
                 type="button"

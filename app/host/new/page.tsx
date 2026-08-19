@@ -16,10 +16,19 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+const DEFAULT_STARTING_CREDITS = "100";
+function parseStartingCredits(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const value = Number.parseInt(trimmed, 10);
+  return value > 0 && value <= 100000 ? value : null;
+}
+
 interface FormErrors {
   title?: string;
   hostDisplayName?: string;
   tastingMode?: string;
+  startingCredits?: string;
 }
 
 export default function HostSetupPage() {
@@ -28,6 +37,8 @@ export default function HostSetupPage() {
   const [date, setDate] = useState(today());
   const [hostDisplayName, setHostDisplayName] = useState("");
   const [tastingMode, setTastingMode] = useState<TastingMode | "">("full_blind");
+  const [bettingEnabled, setBettingEnabled] = useState(false);
+  const [startingCredits, setStartingCredits] = useState(DEFAULT_STARTING_CREDITS);
   const [errors, setErrors] = useState<FormErrors | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -36,16 +47,29 @@ export default function HostSetupPage() {
     e.preventDefault();
     if (submitting) return;
 
+    const bettingActive = tastingMode === "course_reveal" && bettingEnabled;
+    const credits = bettingActive ? parseStartingCredits(startingCredits) : null;
+
     const validation: FormErrors = {
       title: title.trim() ? undefined : "Tasting title is required.",
       hostDisplayName: hostDisplayName.trim()
         ? undefined
         : "Enter a display name to host with.",
       tastingMode: tastingMode ? undefined : "Choose a tasting format.",
+      startingCredits:
+        bettingActive && credits === null
+          ? "Enter a starting credit balance between 1 and 100,000."
+          : undefined,
     };
     setErrors(validation);
     setSubmitError(null);
-    if (validation.title || validation.hostDisplayName || validation.tastingMode) return;
+    if (
+      validation.title ||
+      validation.hostDisplayName ||
+      validation.tastingMode ||
+      validation.startingCredits
+    )
+      return;
 
     setSubmitting(true);
     try {
@@ -57,6 +81,8 @@ export default function HostSetupPage() {
           date,
           hostDisplayName: hostDisplayName.trim(),
           tastingMode,
+          bettingEnabled: bettingActive,
+          ...(credits !== null ? { startingCredits: credits } : {}),
         }),
       });
 
@@ -132,9 +158,44 @@ export default function HostSetupPage() {
             <SectionEyebrow>Format</SectionEyebrow>
             <TastingModeField
               value={tastingMode}
-              onChange={setTastingMode}
+              onChange={(mode) => {
+                setTastingMode(mode);
+                if (mode !== "course_reveal") setBettingEnabled(false);
+              }}
               error={errors?.tastingMode}
             />
+            {tastingMode === "course_reveal" && (
+              <label className="flex cursor-pointer items-start gap-3 rounded-sm border border-cellar-border bg-white px-4 py-3 transition-colors duration-150 hover:border-cellar-maroon/40">
+                <input
+                  type="checkbox"
+                  checked={bettingEnabled}
+                  onChange={(e) => setBettingEnabled(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-cellar-maroon"
+                />
+                <span className="flex flex-col gap-0.5">
+                  <span className="font-medium text-cellar-text">Enable betting</span>
+                  <span className="text-sm leading-relaxed text-cellar-muted">
+                    Each guest starts with a credit balance they choose at join time and
+                    wagers on their guesses. Correct (or close) guesses win credits from
+                    whoever brought the bottle; wrong guesses lose credits to them. A
+                    credits leaderboard is shown throughout and in the final report.
+                  </span>
+                </span>
+              </label>
+            )}
+            {tastingMode === "course_reveal" && bettingEnabled && (
+              <TextField
+                label="Your starting credits"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={100000}
+                value={startingCredits}
+                error={errors?.startingCredits}
+                onChange={(e) => setStartingCredits(e.target.value)}
+                hint="You're also a participant in your own tasting — choose how many credits you'll wager with."
+              />
+            )}
           </div>
 
           {submitError && (

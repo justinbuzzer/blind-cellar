@@ -2415,6 +2415,55 @@ Functional check: join a session as a guest via the app, note the shown rejoin c
 
 No RLS policy or table grant changed. `redeem_recovery_code_global` is `SECURITY DEFINER`, like every other tasting RPC, and does its own authorization inside the function body — the only thing this migration changes is *how* a valid code is looked up (by hash alone instead of hash-scoped-to-a-session), never *what* a valid code can do once redeemed (identical one-time redemption, identical device-credential issuance, identical rate limiting via `check_rejoin_rate_limit`, just under its own `recover_global_ip:` scope key so it can't exhaust or be exhausted by the session-scoped flow's own limit). `participant_access_credentials` still has no anon/authenticated table grant at all — every access to it goes through a `SECURITY DEFINER` function, exactly as before.
 
+## Migrating for the betting sub-mode
+
+Adds an opt-in economic layer on top of course_reveal only — a credit-betting game where guessers wager on their own guesses against the bottle's contributor (see README "Tasting modes" — "Betting"). New columns on `tasting_sessions`/`guests`/`wine_guesses`, a widened `create_tasting_session`/`join_tasting_session`/`join_tasting_session_as_account`/`upsert_wine_guess`, one new RPC, and widened `get_provisional_leaderboard_for_host`/`get_final_leaderboard_for_guest`. Re-running the full `supabase/schema.sql` brings an existing project up to date; every statement here is additive and safe to re-run. Full blind, Seen, and every non-betting course_reveal session are completely unaffected — every new column is simply always null for them.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+1. **`tasting_sessions.betting_enabled boolean not null default false`** is added, plus `tasting_sessions_betting_enabled_mode_check` (`betting_enabled = false or tasting_mode = 'course_reveal'`) — betting can never be enabled for full_blind or Seen, enforced at the database level as well as client-side.
+2. **`guests.starting_credits int`** is added (nullable — only ever set for a betting-enabled session's guests), plus `guests_starting_credits_range` (`starting_credits is null or (starting_credits > 0 and starting_credits <= 100000)`).
+3. **Seven new `wine_guesses` columns** — `country_bet`, `region_bet`, `appellation_bet`, `grape_blend_bet`, `vintage_bet`, `producer_bet`, `wine_cuvee_bet` (all `int`, nullable, mirroring the existing `*_guess` columns 1:1), plus one combined `wine_guesses_bets_nonneg` constraint requiring every populated bet to be `>= 0`.
+4. **`create_tasting_session` gains a trailing `p_betting_enabled boolean default false` parameter** — validates `p_betting_enabled = false or p_tasting_mode = 'course_reveal'` (raising `invalid_betting_mode` otherwise) and inserts it into the new column. The old 6-parameter signature is explicitly dropped (this file's established pattern for a changed RPC signature — see the `drop function if exists create_tasting_session(...)` lines immediately above it).
+5. **`join_tasting_session` and `join_tasting_session_as_account` both gain a trailing `p_starting_credits int default null` parameter.** For a betting-enabled session: the roster is locked at tasting start (`status <> 'registration'` raises `betting_roster_locked`), and a valid starting balance is required (`invalid_starting_credits` otherwise, same 1–100,000 range as the column constraint). A non-betting session ignores the parameter entirely and stores `null`. Both old signatures are explicitly dropped.
+6. **`upsert_wine_guess` gains seven trailing bet parameters** (mirroring the seven new columns) and, only when the session is betting-enabled: validates every bet is non-negative (`invalid_bet_amount`) and that their sum for this one bottle never exceeds the guest's *starting* balance (`bet_exceeds_balance`) — a cheap, stateless sanity backstop only; the true *running*-balance cap (accounting for credits already won/lost on prior bottles) is computed and enforced client-side (see README "Tasting modes" — "Betting" for why this SQL layer deliberately never duplicates the partial-credit settlement math). The old 14-parameter signature is explicitly dropped.
+7. **`get_active_bottle_state` is widened** — `session.bettingEnabled`, the caller's own `startingCredits`, and the seven bet amounts on `myGuess` (so a returning/refreshing guest sees their own already-entered bets).
+8. **`get_provisional_leaderboard_for_host` and `get_final_leaderboard_for_guest` are both widened** — `wines[].contributorGuestId`, `guesses[].*Bet` (all seven), `guests[].startingCredits`, and a top-level `bettingEnabled` flag. Both RPCs already return every other field the credits ledger needs (revealed-wines-only, one row per guess), so no separate host-side RPC was needed.
+9. **`get_host_session` is widened** — `session.bettingEnabled`, so the host UI can gate credits sections without a second round trip.
+10. **`get_credit_ledger_for_guest(p_guest_token text)` is added** — the one genuinely new RPC. Same raw-row shape as the two widened leaderboard RPCs above (revealed wines + their guesses/bets + every guest's `startingCredits`), but guest-token authenticated and, unlike `get_final_leaderboard_for_guest`, **not** gated on the whole session being revealed — a guest needs their live running balance while betting on the still-active (not yet revealed) bottle, not only once the tasting is over. Raises `betting_not_enabled` for a non-betting session.
+11. **Column grants widened**: `tasting_sessions`'s existing anon/authenticated `select` list gains `betting_enabled`; `guests`'s gains `starting_credits` (deliberately included, unlike every sensitive answer-key column — betting's own leaderboard is fully transparent by design, so a starting balance is exactly as visible as the live total it feeds).
+12. **`revealed_wine_guesses` and `guest_visible_wines` needed no changes at all** — the former is a plain `select g.* from wine_guesses g ...`, so the seven new bet columns flow through automatically; the latter already exposed `contributor_guest_id` (masked pre-reveal, visible once revealed) before this feature. This is what lets the final tasting report (`lib/supabase/reportData.ts`) build its own credits section from the exact same direct-table-read pattern it already used for scores, with no new RPC call.
+
+### 2. Verification queries
+
+```sql
+-- confirm the new columns and constraints exist
+select column_name from information_schema.columns
+  where table_name = 'tasting_sessions' and column_name = 'betting_enabled';
+select column_name from information_schema.columns
+  where table_name = 'guests' and column_name = 'starting_credits';
+select column_name from information_schema.columns
+  where table_name = 'wine_guesses' and column_name like '%_bet';
+-- expect: country_bet, region_bet, appellation_bet, grape_blend_bet, vintage_bet, producer_bet, wine_cuvee_bet
+
+-- confirm the new RPC and its grant exist
+select proname from pg_proc where proname = 'get_credit_ledger_for_guest';
+select grantee, privilege_type from information_schema.routine_privileges
+  where routine_name = 'get_credit_ledger_for_guest';
+-- expect: anon and authenticated, EXECUTE
+
+-- confirm a betting-enabled session actually gets the new default
+-- (create one via the app's "Enable betting" toggle, then:)
+select betting_enabled from tasting_sessions order by created_at desc limit 1;
+-- expect: true
+```
+
+Functional check: create a Course-by-course reveal session with "Enable betting" checked, join as 2+ guests with different starting balances, register a bottle, place a mix of exact/partial/losing bets across fields, reveal it, and confirm the credits leaderboard (visible after the reveal, on the stand-alone leaderboard pages, and in the final report/PDF) matches the settlement formula by hand — see README "Tasting modes" — "Betting" and its manual test checklist entries.
+
+### RLS summary
+
+No RLS policy changed. Every new/widened RPC is `SECURITY DEFINER`, like every other tasting RPC, and does its own token-based authorization inside the function body. The two column-grant widenings (`tasting_sessions.betting_enabled`, `guests.starting_credits`) are the only new direct-table exposure, and both are deliberately non-sensitive: `betting_enabled` is session metadata already as public as `tasting_mode`, and `starting_credits` is a number this feature's own credits leaderboard already shows to every participant by design — this migration doesn't create a new secrecy boundary, it just widens the pre-existing "safe to expose broadly" grant lists to match a genuinely non-sensitive new field. Every answer-key column, `host_token_hash`, and `guest_token` remain exactly as protected as before — this feature never touches them.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

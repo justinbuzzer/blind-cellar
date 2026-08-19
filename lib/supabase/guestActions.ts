@@ -1,9 +1,11 @@
 import { SupabaseClient } from "@supabase/supabase-js";
 import { Confidence, WineGuess, WineIdentityInput } from "@/types/tasting";
 import { isCustomSingleGrape, reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
+import { FieldBets } from "@/lib/betting";
 import {
   ActiveBottleStateResponse,
   BottleResultForGuestResponse,
+  CreditLedgerResponse,
   FinalLeaderboardResponse,
   GuestSessionStateResponse,
   HostGuessProgressDTO,
@@ -46,11 +48,17 @@ export async function getHostGuessProgress(
   return { data: data as HostGuessProgressDTO | null, error };
 }
 
+/**
+ * `bets` is betting-sub-mode-only (see README "Tasting modes" — "Betting") —
+ * omitted (or every field left undefined) for every non-betting session,
+ * which upsert_wine_guess simply ignores. See lib/betting.ts's FieldBets.
+ */
 export async function upsertGuess(
   supabase: SupabaseClient,
   guestToken: string,
   wineId: string,
-  guess: WineGuess
+  guess: WineGuess,
+  bets?: FieldBets
 ) {
   return supabase.rpc("upsert_wine_guess", {
     p_guest_token: guestToken,
@@ -70,6 +78,13 @@ export async function upsertGuess(
       guess.grapeBlendMode === "blend"
         ? { selectedGrapes: guess.selectedGrapes, otherGrapesText: guess.otherGrapesText }
         : null,
+    p_country_bet: bets?.country ?? null,
+    p_region_bet: bets?.region ?? null,
+    p_appellation_bet: bets?.appellation ?? null,
+    p_grape_blend_bet: bets?.grapeBlend ?? null,
+    p_vintage_bet: bets?.vintage ?? null,
+    p_producer_bet: bets?.producer ?? null,
+    p_wine_cuvee_bet: bets?.wineName ?? null,
   });
 }
 
@@ -179,6 +194,24 @@ export async function getFinalLeaderboard(
     p_guest_token: guestToken,
   });
   return { data: data as FinalLeaderboardResponse | null, error };
+}
+
+/**
+ * Betting sub-mode only (see README "Tasting modes" — "Betting") — the raw
+ * bets/answer-key data for the credits ledger, folded into a ranked balance
+ * list client-side via lib/betting.ts's buildCreditLedger. Unlike
+ * getFinalLeaderboard, works any time (not gated on the whole session being
+ * revealed) — a guest needs their live running balance while betting on the
+ * still-active bottle, not only once the tasting is over.
+ */
+export async function getCreditLedger(
+  supabase: SupabaseClient,
+  guestToken: string
+) {
+  const { data, error } = await supabase.rpc("get_credit_ledger_for_guest", {
+    p_guest_token: guestToken,
+  });
+  return { data: data as CreditLedgerResponse | null, error };
 }
 
 // --- seen only ---

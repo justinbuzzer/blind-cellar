@@ -19,7 +19,7 @@ import { loadTastingReportData } from "@/lib/supabase/reportData";
 import { buildReportPdfFilename } from "@/lib/pdfFilename";
 import { useAuthUser } from "@/lib/supabase/useAuthUser";
 import { getGuestToken, getHostToken } from "@/lib/deviceStorage";
-import { getGuestSessionState } from "@/lib/supabase/guestActions";
+import { getCreditLedger, getGuestSessionState } from "@/lib/supabase/guestActions";
 import {
   isReportAvailable,
   ReportAccessResult,
@@ -28,6 +28,7 @@ import {
 } from "@/lib/reportAccess";
 import { ArchiveRole } from "@/lib/archive";
 import { HostSessionResponse } from "@/lib/supabase/types";
+import { buildCreditLedger, CreditLedgerEntry } from "@/lib/betting";
 import { SeenTastingReport, TASTING_MODE_LABELS, TastingReport } from "@/types/tasting";
 
 type LoadState = "loading" | "no-config" | "not-authorized" | "locked" | "ready";
@@ -46,6 +47,12 @@ export default function ResultsPage() {
   const [access, setAccess] = useState<ReportAccessResult | null>(null);
   const [report, setReport] = useState<TastingReport | null>(null);
   const [seenReport, setSeenReport] = useState<SeenTastingReport | null>(null);
+  // Betting sub-mode only (see README "Tasting modes" — "Betting") — only
+  // ever populated for a participant viewer (the host has their own
+  // dedicated leaderboard/recap pages that already show credits); null for
+  // every non-betting session or host viewer.
+  const [creditEntries, setCreditEntries] = useState<CreditLedgerEntry[] | null>(null);
+  const [myGuestId, setMyGuestId] = useState<string | null>(null);
   // Read once on mount (not via next/navigation's useSearchParams, which
   // would force this already-fully-client page into a Suspense boundary for
   // no benefit here).
@@ -216,6 +223,7 @@ export default function ResultsPage() {
             dateLabel={dateLabelForPdf}
             modeLabel={modeLabelForPdf}
             showNotes={access.role === "participant"}
+            creditEntries={creditEntries ?? undefined}
           />
         ).toBlob();
       }
@@ -232,7 +240,7 @@ export default function ResultsPage() {
     } catch {
       setPdfState("error");
     }
-  }, [access, report, seenReport]);
+  }, [access, report, seenReport, creditEntries]);
 
   const refresh = useCallback(async () => {
     const resolved = await resolveAccess();
@@ -246,7 +254,22 @@ export default function ResultsPage() {
       return;
     }
     await loadReport(resolved.session);
-  }, [resolveAccess, loadReport]);
+
+    // Betting sub-mode only — see the creditEntries state comment above.
+    // Fails harmlessly (betting_not_enabled) for a non-betting session,
+    // which just leaves creditEntries null.
+    if (resolved.role === "participant") {
+      const guestToken = getGuestToken(params.publicId);
+      const supabase = getSupabaseBrowserClient();
+      if (guestToken && supabase) {
+        const { data: ledgerData } = await getCreditLedger(supabase, guestToken);
+        if (ledgerData) {
+          setCreditEntries(buildCreditLedger(ledgerData).entries);
+          setMyGuestId(ledgerData.myGuestId);
+        }
+      }
+    }
+  }, [resolveAccess, loadReport, params.publicId]);
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -393,7 +416,14 @@ export default function ResultsPage() {
       {seenReport ? (
         <SeenTastingReportView report={seenReport} />
       ) : (
-        report && <TastingReportView report={report} showNotes={access.role === "participant"} />
+        report && (
+          <TastingReportView
+            report={report}
+            showNotes={access.role === "participant"}
+            creditEntries={creditEntries ?? undefined}
+            myGuestId={myGuestId ?? undefined}
+          />
+        )
       )}
 
       {!authLoading && !user && (

@@ -4,6 +4,7 @@ import {
   WineResult,
 } from "@/types/tasting";
 import { compactWineLocationLabel, wineDisplayName } from "@/lib/appellations";
+import { FieldBets } from "@/lib/betting";
 import { Card } from "@/components/Card";
 import { MatchBadge } from "@/components/MatchBadge";
 import { Stat } from "@/components/Stat";
@@ -225,36 +226,49 @@ export function AppellationComparison({
 export function FieldScoreTable({
   heading,
   fields,
+  bets,
 }: {
   heading: string;
   fields: FieldScore[];
+  /**
+   * Betting sub-mode only (see README "Tasting modes" — "Betting") — when
+   * provided, adds a "Bet" column showing how many credits this participant
+   * wagered on each field. Omitted entirely by every non-betting call site,
+   * which renders exactly as it did before this prop existed.
+   */
+  bets?: FieldBets;
 }) {
   if (fields.length === 0) return null;
+  const gridColsClass = bets
+    ? "grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto]"
+    : "grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto]";
   return (
     <div className="flex flex-col gap-1.5">
       <p className="text-xs font-semibold uppercase tracking-wide text-cellar-muted">
         {heading}
       </p>
-      <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 text-xs font-semibold uppercase tracking-wide text-cellar-muted">
+      <div className={`grid ${gridColsClass} gap-2 text-xs font-semibold uppercase tracking-wide text-cellar-muted`}>
         <span>Field</span>
         <span>Guess</span>
         <span>Actual</span>
+        {bets && <span>Bet</span>}
         <span />
       </div>
       {fields.map((fieldScore) =>
         fieldScore.applicable === false ? (
           <div
             key={fieldScore.field}
-            className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 text-sm"
+            className={`grid ${gridColsClass} items-center gap-2 text-sm`}
           >
             <span className="text-cellar-muted">{FIELD_LABELS[fieldScore.field]}</span>
             <span className="col-span-2 italic text-cellar-muted">Not applicable</span>
+            {bets && <span />}
             <span />
           </div>
         ) : (
           <div
             key={fieldScore.field}
-            className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 text-sm"
+            className={`grid ${gridColsClass} items-center gap-2 text-sm`}
           >
             <span className="text-cellar-muted">
               {FIELD_LABELS[fieldScore.field]}
@@ -265,6 +279,11 @@ export function FieldScoreTable({
             <span className="truncate text-cellar-muted">
               {fieldScore.answerValue}
             </span>
+            {bets && (
+              <span className="text-cellar-muted">
+                {bets[fieldScore.field] ? `${bets[fieldScore.field]} cr` : "—"}
+              </span>
+            )}
             <MatchBadge correct={fieldScore.correct} points={fieldScore.points} pointsAvailable={fieldScore.pointsAvailable} />
           </div>
         )

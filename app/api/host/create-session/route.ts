@@ -59,6 +59,10 @@ interface CreateSessionBody {
   date: string;
   hostDisplayName: string;
   tastingMode: string;
+  /** Betting sub-mode only, course_reveal-only — see README "Tasting modes" — "Betting". */
+  bettingEnabled?: boolean;
+  /** Required when bettingEnabled — the host is also a guest/bettor via their own guests row. */
+  startingCredits?: number;
 }
 
 const MAX_JOIN_CODE_ATTEMPTS = 8;
@@ -108,6 +112,23 @@ export async function POST(request: NextRequest) {
   }
   const tastingMode = tastingModeRaw;
 
+  // Betting is a course_reveal-only sub-mode (see README "Tasting modes" —
+  // "Betting") — mirrors the RPC's own invalid_betting_mode check so a bad
+  // request from a tampered client fails with the same clear error.
+  const bettingEnabled = body.bettingEnabled === true;
+  if (bettingEnabled && tastingMode !== "course_reveal") {
+    return NextResponse.json(
+      { error: "Betting is only available for Course-by-course reveal tastings." },
+      { status: 400 }
+    );
+  }
+  // The host is also a guest/bettor via their own guests row — same
+  // starting-balance requirement as anyone who joins via /api/join/create.
+  const startingCredits =
+    bettingEnabled && typeof body.startingCredits === "number" && Number.isFinite(body.startingCredits)
+      ? Math.trunc(body.startingCredits)
+      : null;
+
   const hostToken = generateSecureToken();
   const hostTokenHash = hashToken(hostToken);
 
@@ -123,6 +144,8 @@ export async function POST(request: NextRequest) {
       p_host_token_hash: hostTokenHash,
       p_host_display_name: hostDisplayName,
       p_tasting_mode: tastingMode,
+      p_betting_enabled: bettingEnabled,
+      p_starting_credits: startingCredits,
     });
 
     if (!error && data) {

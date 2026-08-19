@@ -3,14 +3,19 @@ import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { ImageBand } from "@/components/ImageBand";
 import { resultsImage } from "@/lib/appImages";
 import { wineDisplayName } from "@/lib/appellations";
+import { CreditLedgerEntry } from "@/lib/betting";
 import { Highlight } from "./Highlight";
 import { WineResultCard } from "./WineResultCard";
 import { TasterLeaderboard } from "./TasterLeaderboard";
+import { CreditsLeaderboard } from "./CreditsLeaderboard";
 
 interface TastingReportViewProps {
   report: TastingReport;
   /** See WineResultCard's `showNotes` — false (host view, unchanged) unless the caller is an authorized participant viewing the completed shared report. */
   showNotes?: boolean;
+  /** Betting sub-mode only (see README "Tasting modes" — "Betting") — undefined for a non-betting session, which never renders the section at all. */
+  creditEntries?: CreditLedgerEntry[];
+  myGuestId?: string;
 }
 
 function joinNames(names: string[]): string {
@@ -19,7 +24,7 @@ function joinNames(names: string[]): string {
   return `${names.slice(0, -1).join(", ")} & ${names[names.length - 1]}`;
 }
 
-export function TastingReportView({ report, showNotes = false }: TastingReportViewProps) {
+export function TastingReportView({ report, showNotes = false, creditEntries, myGuestId }: TastingReportViewProps) {
   const { wineOfTheNight, bestTaster, mostDivisiveWine, wineResults, tasterResults } =
     report;
 
@@ -75,6 +80,13 @@ export function TastingReportView({ report, showNotes = false }: TastingReportVi
         <SectionEyebrow>Taster leaderboard</SectionEyebrow>
         <TasterLeaderboard results={tasterResults} scoringVersion={report.scoringVersion} />
       </section>
+
+      {creditEntries && (
+        <section className="flex flex-col gap-3">
+          <SectionEyebrow>Credits leaderboard</SectionEyebrow>
+          <CreditsLeaderboard entries={creditEntries} myGuestId={myGuestId} />
+        </section>
+      )}
 
       <ImageBand image={resultsImage} className="hidden h-48 rounded-sm sm:block" />
     </div>

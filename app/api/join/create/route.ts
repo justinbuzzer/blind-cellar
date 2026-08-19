@@ -45,6 +45,9 @@ function statusForJoinError(message: string | undefined): number {
   if (raw.includes("display_name_required") || raw.includes("display_name_too_long")) {
     return 400;
   }
+  if (raw.includes("invalid_starting_credits") || raw.includes("betting_roster_locked")) {
+    return 400;
+  }
   return 500;
 }
 
@@ -60,7 +63,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let body: { publicId?: string; displayName?: string; asGuest?: boolean };
+  let body: { publicId?: string; displayName?: string; asGuest?: boolean; startingCredits?: number };
   try {
     body = await request.json();
   } catch {
@@ -72,6 +75,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing tasting." }, { status: 400 });
   }
 
+  // Betting sub-mode only (see README "Tasting modes" — "Betting") — null
+  // for every non-betting session, which the RPCs below simply ignore.
+  const startingCredits =
+    typeof body.startingCredits === "number" && Number.isFinite(body.startingCredits)
+      ? Math.trunc(body.startingCredits)
+      : null;
+
   const { data: userData } = await supabase.auth.getUser();
 
   // `asGuest` lets a signed-in visitor deliberately choose "Join as a
@@ -81,6 +91,7 @@ export async function POST(request: NextRequest) {
   if (userData.user && !body.asGuest) {
     const { data, error } = await supabase.rpc("join_tasting_session_as_account", {
       p_public_id: publicId,
+      p_starting_credits: startingCredits,
     });
     if (error) {
       return NextResponse.json(
@@ -114,6 +125,7 @@ export async function POST(request: NextRequest) {
     p_device_token_hash: deviceTokenHash,
     p_recovery_code_hash: recoveryCodeHash,
     p_client_ip: clientIpFromRequest(request),
+    p_starting_credits: startingCredits,
   });
 
   if (error) {

@@ -9,6 +9,7 @@ import { getAppellations, hasAppellations } from "@/lib/appellations";
 import { useGrapeAssistance } from "@/lib/useGrapeAssistance";
 import { BlindGuessGrapeOptionsHint, styleFilterKeyForHint } from "@/lib/grapeAssistance";
 import { BottleDisplayLabels } from "@/lib/contributorLabel";
+import { BettableField, FieldBets } from "@/lib/betting";
 import { Card } from "./Card";
 import { TextField } from "./TextField";
 import { SelectField } from "./SelectField";
@@ -22,6 +23,44 @@ import { SectionEyebrow } from "./SectionEyebrow";
 const WINE_CUVEE_HINT = "Enter the wine name or cuvée.";
 const APPELLATION_HINT = "Optional. Select an appellation if you have a specific call.";
 const APPELLATION_CLEARED_MESSAGE = "Appellation cleared because the region changed.";
+
+/**
+ * Betting sub-mode only (see README "Tasting modes" — "Betting") — a small
+ * paired "Bet" number input shown beside a scored field when `bets`/
+ * `onBetsChange` are supplied. Deliberately not its own file: used only
+ * here, and it's a thin wrapper over a plain number input, not a general-
+ * purpose field component.
+ */
+function BetInput({
+  field,
+  bets,
+  onBetsChange,
+}: {
+  field: BettableField;
+  bets: FieldBets;
+  onBetsChange: (bets: FieldBets) => void;
+}) {
+  return (
+    <label className="flex shrink-0 flex-col gap-1">
+      <span className="text-xs font-medium uppercase tracking-wide text-cellar-gold">Bet</span>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={0}
+        step={1}
+        value={bets[field] ?? ""}
+        placeholder="0"
+        onChange={(e) => {
+          const raw = e.target.value;
+          const parsed = raw === "" ? 0 : Math.max(0, Math.trunc(Number(raw)));
+          onBetsChange({ ...bets, [field]: Number.isFinite(parsed) ? parsed : 0 });
+        }}
+        className="w-20 rounded-sm border border-cellar-border bg-white px-2 py-2 text-base text-cellar-text focus:outline-none focus:ring-2 focus:ring-cellar-gold"
+        aria-label={`Bet on ${field}`}
+      />
+    </label>
+  );
+}
 
 interface WineGuessFormProps {
   /** Primary "Bottle N" + secondary contributor label — see README "Bottle labels". */
@@ -40,6 +79,15 @@ interface WineGuessFormProps {
    * doesn't have it can omit it, degrading to unfiltered ("all_skins").
    */
   styleHint?: BlindGuessGrapeOptionsHint;
+  /**
+   * Betting sub-mode only (see README "Tasting modes" — "Betting") —
+   * course_reveal + bettingEnabled sessions only. Omitted entirely (the
+   * default) for every other caller, including full_blind, which shares
+   * this component but never bets. When present, a "Bet" input appears
+   * beside every scored field.
+   */
+  bets?: FieldBets;
+  onBetsChange?: (bets: FieldBets) => void;
 }
 
 export function WineGuessForm({
@@ -50,8 +98,11 @@ export function WineGuessForm({
   ratingError,
   blendError,
   styleHint,
+  bets,
+  onBetsChange,
 }: WineGuessFormProps) {
   const [clearedMessage, setClearedMessage] = useState("");
+  const bettingEnabled = bets !== undefined && onBetsChange !== undefined;
 
   function set<K extends keyof WineGuess>(key: K, fieldValue: WineGuess[K]) {
     onChange({ ...value, [key]: fieldValue });
@@ -126,31 +177,49 @@ export function WineGuessForm({
       <div className="flex flex-col gap-4 border-b border-cellar-border p-5">
         <SectionEyebrow>Origin</SectionEyebrow>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <SelectField
-            label="Country guess"
-            value={value.country}
-            placeholder="Select country"
-            options={COUNTRY_OPTIONS}
-            onChange={(e) => setCountry(e.target.value)}
-          />
-          <SelectField
-            label="Region guess"
-            value={value.region}
-            placeholder={value.country ? "Select region" : "Select country first"}
-            disabled={!value.country}
-            options={regionOptionsForCountry(value.country)}
-            onChange={(e) => setRegion(e.target.value)}
-          />
+          <div className="flex items-end gap-2">
+            <div className="min-w-0 flex-1">
+              <SelectField
+                label="Country guess"
+                value={value.country}
+                placeholder="Select country"
+                options={COUNTRY_OPTIONS}
+                onChange={(e) => setCountry(e.target.value)}
+                className="w-full"
+              />
+            </div>
+            {bettingEnabled && <BetInput field="country" bets={bets} onBetsChange={onBetsChange} />}
+          </div>
+          <div className="flex items-end gap-2">
+            <div className="min-w-0 flex-1">
+              <SelectField
+                label="Region guess"
+                value={value.region}
+                placeholder={value.country ? "Select region" : "Select country first"}
+                disabled={!value.country}
+                options={regionOptionsForCountry(value.country)}
+                onChange={(e) => setRegion(e.target.value)}
+                className="w-full"
+              />
+            </div>
+            {bettingEnabled && <BetInput field="region" bets={bets} onBetsChange={onBetsChange} />}
+          </div>
         </div>
         {showAppellation && (
-          <SelectField
-            label="Appellation"
-            value={value.appellation}
-            hint={APPELLATION_HINT}
-            placeholder="Select an appellation"
-            options={appellationOptions}
-            onChange={(e) => set("appellation", e.target.value)}
-          />
+          <div className="flex items-end gap-2">
+            <div className="min-w-0 flex-1">
+              <SelectField
+                label="Appellation"
+                value={value.appellation}
+                hint={APPELLATION_HINT}
+                placeholder="Select an appellation"
+                options={appellationOptions}
+                onChange={(e) => set("appellation", e.target.value)}
+                className="w-full"
+              />
+            </div>
+            {bettingEnabled && <BetInput field="appellation" bets={bets} onBetsChange={onBetsChange} />}
+          </div>
         )}
         <p role="status" aria-live="polite" className="sr-only">
           {clearedMessage}
@@ -159,45 +228,67 @@ export function WineGuessForm({
 
       <div className="flex flex-col gap-4 border-b border-cellar-border p-5">
         <SectionEyebrow>Identity</SectionEyebrow>
-        <GrapeBlendField
-          value={{
-            grapeBlendMode: value.grapeBlendMode,
-            grapeBlend: value.grapeBlend,
-            selectedGrapes: value.selectedGrapes,
-            otherGrapesText: value.otherGrapesText,
-            otherGrapeSelected: value.otherGrapeSelected,
-          }}
-          onChange={handleGrapeBlendChange}
-          error={blendError}
-          wineStyle={styleFilterKey}
-        />
+        <div className="flex items-start gap-2">
+          <div className="flex-1">
+            <GrapeBlendField
+              value={{
+                grapeBlendMode: value.grapeBlendMode,
+                grapeBlend: value.grapeBlend,
+                selectedGrapes: value.selectedGrapes,
+                otherGrapesText: value.otherGrapesText,
+                otherGrapeSelected: value.otherGrapeSelected,
+              }}
+              onChange={handleGrapeBlendChange}
+              error={blendError}
+              wineStyle={styleFilterKey}
+            />
+          </div>
+          {bettingEnabled && <BetInput field="grapeBlend" bets={bets} onBetsChange={onBetsChange} />}
+        </div>
         {grapeAssistanceMessage && (
           <p role="status" aria-live="polite" className="text-xs text-cellar-text/60">
             {grapeAssistanceMessage}
           </p>
         )}
-        <VintageField
-          value={value.vintage}
-          onChange={(next) => set("vintage", next)}
-        />
+        <div className="flex items-end gap-2">
+          <div className="flex-1">
+            <VintageField
+              value={value.vintage}
+              onChange={(next) => set("vintage", next)}
+            />
+          </div>
+          {bettingEnabled && <BetInput field="vintage" bets={bets} onBetsChange={onBetsChange} />}
+        </div>
       </div>
 
       <div className="flex flex-col gap-4 border-b border-cellar-border p-5">
         <SectionEyebrow>Precision calls</SectionEyebrow>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <TextField
-            label="Producer"
-            value={value.producer}
-            spellCheck={false}
-            onChange={(e) => set("producer", e.target.value)}
-          />
-          <TextField
-            label="Wine / cuvée"
-            value={value.wineName}
-            hint={WINE_CUVEE_HINT}
-            spellCheck={false}
-            onChange={(e) => set("wineName", e.target.value)}
-          />
+          <div className="flex items-end gap-2">
+            <div className="min-w-0 flex-1">
+              <TextField
+                label="Producer"
+                value={value.producer}
+                spellCheck={false}
+                onChange={(e) => set("producer", e.target.value)}
+                className="w-full"
+              />
+            </div>
+            {bettingEnabled && <BetInput field="producer" bets={bets} onBetsChange={onBetsChange} />}
+          </div>
+          <div className="flex items-end gap-2">
+            <div className="min-w-0 flex-1">
+              <TextField
+                label="Wine / cuvée"
+                value={value.wineName}
+                hint={WINE_CUVEE_HINT}
+                spellCheck={false}
+                onChange={(e) => set("wineName", e.target.value)}
+                className="w-full"
+              />
+            </div>
+            {bettingEnabled && <BetInput field="wineName" bets={bets} onBetsChange={onBetsChange} />}
+          </div>
         </div>
       </div>
 

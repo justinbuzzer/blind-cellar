@@ -13,6 +13,7 @@ import {
 import { scoreWineGuess } from "./scoring";
 import { calculateTasterResults, calculateWineResults } from "./results";
 import { round1 } from "./math";
+import { FieldBets } from "./betting";
 import {
   buildCourseRevealSubmissions,
   buildRevealedSubmissions,
@@ -41,6 +42,13 @@ export interface BottleParticipantScore {
   submitted: boolean;
   /** Null exactly when submitted is false — never a fabricated zero score. */
   score: ScoredGuess | null;
+  /**
+   * Betting sub-mode only (see README "Tasting modes" — "Betting") — the
+   * amount this participant wagered on each field, keyed the same way
+   * FieldScore.field is. Empty for a non-betting session, or when
+   * `submitted` is false — never a fabricated bet.
+   */
+  bets: FieldBets;
 }
 
 export interface BottleResultAggregate {
@@ -65,6 +73,19 @@ export interface BottleResultView {
   scoringVersion: ScoringVersion;
   participants: BottleParticipantScore[];
   aggregate: BottleResultAggregate;
+}
+
+/** Betting sub-mode only — see BottleParticipantScore.bets above. */
+function mapBottleGuessDtoToFieldBets(dto: BottleResultGuessDTO): FieldBets {
+  return {
+    country: dto.countryBet ?? undefined,
+    region: dto.regionBet ?? undefined,
+    appellation: dto.appellationBet ?? undefined,
+    grapeBlend: dto.grapeBlendBet ?? undefined,
+    vintage: dto.vintageBet ?? undefined,
+    producer: dto.producerBet ?? undefined,
+    wineName: dto.wineCuveeBet ?? undefined,
+  };
 }
 
 function mapBottleGuessDtoToWineGuess(wineId: string, dto: BottleResultGuessDTO): WineGuess {
@@ -116,6 +137,7 @@ export function buildBottleResultView(response: BottleResultForHostResponse): Bo
             response.session.scoringVersion
           )
         : null,
+    bets: p.submitted && p.guess ? mapBottleGuessDtoToFieldBets(p.guess) : {},
   }));
 
   const scores = participants.map((p) => p.score).filter((s): s is ScoredGuess => s !== null);

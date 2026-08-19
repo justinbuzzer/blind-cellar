@@ -25,6 +25,8 @@ export interface SessionRow {
   tasting_mode: TastingMode;
   /** Immutable, assigned at creation — see ScoringVersion. */
   scoring_version: ScoringVersion;
+  /** Chosen once at creation, course_reveal only — see README "Tasting modes" — "Betting". */
+  betting_enabled: boolean;
 }
 
 export interface GuestRow {
@@ -211,6 +213,8 @@ export interface HostSessionResponse {
     tastingMode: TastingMode;
     /** Immutable, assigned at creation — see ScoringVersion. */
     scoringVersion: ScoringVersion;
+    /** Chosen once at creation, course_reveal only — see README "Tasting modes" — "Betting". Optional for the same pre-betting-fixture reason as LeaderboardWineDTO.contributorGuestId — treat a missing value as false. */
+    bettingEnabled?: boolean;
   };
   wines: HostBottleDTO[];
   guests: HostGuestDTO[];
@@ -246,6 +250,19 @@ export interface GuestGuessDTO {
   rating: number | null;
   confidence: Confidence;
   tastingNote: string | null;
+  /**
+   * Betting sub-mode only (see README "Tasting modes" — "Betting") —
+   * course_reveal + bettingEnabled sessions only, via get_active_bottle_state.
+   * Always undefined for full_blind's get_guest_session_state, which shares
+   * this DTO shape but never populates these.
+   */
+  countryBet?: number | null;
+  regionBet?: number | null;
+  appellationBet?: number | null;
+  grapeBlendBet?: number | null;
+  vintageBet?: number | null;
+  producerBet?: number | null;
+  wineCuveeBet?: number | null;
 }
 
 export interface GuestSessionWineDTO {
@@ -422,8 +439,12 @@ export interface ActiveBottleStateResponse {
     tastingDate: string;
     status: SessionStatus;
     tastingMode: TastingMode;
+    /** See README "Tasting modes" — "Betting". Always false outside course_reveal. */
+    bettingEnabled: boolean;
   };
   guestName: string;
+  /** Betting sub-mode only — this guest's chosen balance at join time. Null for a non-betting session. */
+  startingCredits: number | null;
   /** Null once every bottle has been revealed (session will already be 'revealed'). */
   activeBottle: ActiveBottleDTO | null;
   myGuess: GuestGuessDTO | null;
@@ -505,6 +526,20 @@ export interface BottleResultGuessDTO {
   vintageGuess: string;
   rating: number | null;
   confidence: Confidence;
+  /**
+   * Betting sub-mode only (see README "Tasting modes" — "Betting") — always
+   * null for a non-betting session. Optional (rather than required) for the
+   * same pre-betting-fixture reason as LeaderboardWineDTO.contributorGuestId
+   * elsewhere in this file: existing tests construct this DTO without these
+   * fields.
+   */
+  countryBet?: number | null;
+  regionBet?: number | null;
+  appellationBet?: number | null;
+  grapeBlendBet?: number | null;
+  vintageBet?: number | null;
+  producerBet?: number | null;
+  wineCuveeBet?: number | null;
 }
 
 /** One participant's submission status + guess (full_blind/course_reveal only) for a per-bottle result view — shared shape returned by both get_bottle_result_for_host and get_bottle_result_for_guest. Never includes a token, email, or any field beyond display name + guess content. */
@@ -572,6 +607,15 @@ export interface LeaderboardWineDTO {
   tastingOrder: number;
   /** See README "Bottle photos". Only ever populated here since this DTO is only ever returned for already-revealed bottles. */
   photoPath: string | null;
+  /**
+   * Betting sub-mode only (see README "Tasting modes" — "Betting") — the
+   * settlement counterparty for every bet on this bottle. Null for a legacy
+   * bottle with no recorded contributor. Optional (rather than
+   * `string | null`) purely so pre-betting test fixtures that construct this
+   * DTO literally don't all need updating — the RPC itself always includes
+   * it now.
+   */
+  contributorGuestId?: string | null;
 }
 
 /** One guess against a revealed bottle, for the host provisional leaderboard. */
@@ -590,16 +634,26 @@ export interface LeaderboardGuessDTO {
   vintageGuess: string;
   rating: number | null;
   confidence: Confidence;
+  /** Betting sub-mode only — see README "Tasting modes" — "Betting". Null/0/undefined all mean no bet was placed on this field; optional for the same pre-betting-fixture reason as LeaderboardWineDTO.contributorGuestId above. */
+  countryBet?: number | null;
+  regionBet?: number | null;
+  appellationBet?: number | null;
+  grapeBlendBet?: number | null;
+  vintageBet?: number | null;
+  producerBet?: number | null;
+  wineCuveeBet?: number | null;
 }
 
 /** Response from get_provisional_leaderboard_for_host — raw revealed-only data; ranking is computed client-side by reusing the existing calculateTasterResults pipeline (see lib/resultsReveal.ts). */
 export interface ProvisionalLeaderboardResponse {
   wines: LeaderboardWineDTO[];
   guesses: LeaderboardGuessDTO[];
-  guests: { id: string; displayName: string; completedAt: string | null }[];
+  guests: { id: string; displayName: string; completedAt: string | null; startingCredits?: number | null }[];
   scoringVersion: ScoringVersion;
   sessionStatus: SessionStatus;
   tastingMode: TastingMode;
+  /** See README "Tasting modes" — "Betting". Optional for the same pre-betting-fixture reason as LeaderboardWineDTO.contributorGuestId above — treat a missing value as false. */
+  bettingEnabled?: boolean;
   totalCount: number;
   revealedCount: number;
 }
@@ -616,14 +670,76 @@ export interface ProvisionalLeaderboardResponse {
 export interface FinalLeaderboardResponse {
   wines: LeaderboardWineDTO[];
   guesses: LeaderboardGuessDTO[];
-  guests: { id: string; displayName: string; completedAt: string | null }[];
+  guests: { id: string; displayName: string; completedAt: string | null; startingCredits?: number | null }[];
   scoringVersion: ScoringVersion;
   sessionStatus: SessionStatus;
   tastingMode: TastingMode;
+  /** See README "Tasting modes" — "Betting". Optional — see ProvisionalLeaderboardResponse.bettingEnabled. */
+  bettingEnabled?: boolean;
   totalCount: number;
   revealedCount: number;
   title: string;
   tastingDate: string;
+  myGuestId: string;
+}
+
+// --- Betting sub-mode (see README "Tasting modes" — "Betting") ---
+
+/** One revealed bottle's identity + settlement counterparty, for the credits ledger — see get_credit_ledger_for_guest. Deliberately narrower than LeaderboardWineDTO (no wineStyle/photoPath — this ledger never renders a bottle card, only feeds lib/betting.ts's settlement math). */
+export interface CreditLedgerWineDTO {
+  id: string;
+  anonymousCode: string;
+  bottleNumber: number;
+  country: string;
+  region: string;
+  appellation: string | null;
+  grapeBlendMode: GrapeBlendMode | null;
+  grapeBlend: string;
+  producer: string;
+  wineCuvee: string;
+  vintage: string;
+  tastingOrder: number;
+  contributorGuestId: string | null;
+}
+
+/** One guess + its bets against a revealed bottle, for the credits ledger. */
+export interface CreditLedgerGuessDTO {
+  wineId: string;
+  guestId: string;
+  guestName: string;
+  /** Only a locked guess's bets are ever settled — see README "Tasting modes" — "Betting" and buildCourseRevealSubmissions's identical convention for accuracy scoring. */
+  lockedAt: string | null;
+  countryGuess: string;
+  regionGuess: string;
+  appellationGuess: string | null;
+  grapeBlendMode: GrapeBlendMode | null;
+  grapeBlendGuess: string;
+  producerGuess: string;
+  wineCuveeGuess: string;
+  vintageGuess: string;
+  countryBet: number | null;
+  regionBet: number | null;
+  appellationBet: number | null;
+  grapeBlendBet: number | null;
+  vintageBet: number | null;
+  producerBet: number | null;
+  wineCuveeBet: number | null;
+}
+
+/**
+ * Response from get_credit_ledger_for_guest — raw revealed-only bets/answer-
+ * keys, folded into a ranked credit ledger client-side by
+ * lib/betting.ts's buildCreditLedger, the same "server returns raw rows,
+ * client computes once" convention as ProvisionalLeaderboardResponse/
+ * FinalLeaderboardResponse above. Unlike those two, never gated on the whole
+ * session being revealed — a guest needs their live running balance while
+ * betting on the still-active (not yet revealed) bottle too.
+ */
+export interface CreditLedgerResponse {
+  wines: CreditLedgerWineDTO[];
+  guesses: CreditLedgerGuessDTO[];
+  guests: { id: string; displayName: string; startingCredits: number | null }[];
+  scoringVersion: ScoringVersion;
   myGuestId: string;
 }
 
@@ -826,6 +942,15 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   // Participant readiness confirmation (see README) — raised by
   // mark_participant_ready once the session has left 'registration'.
   readiness_unavailable: "Readiness can no longer be updated for this tasting.",
+
+  // Betting sub-mode (see README "Tasting modes" — "Betting").
+  invalid_betting_mode: "Betting is only available for Course-by-course reveal tastings.",
+  invalid_starting_credits: "Enter a starting credit balance between 1 and 100,000.",
+  betting_roster_locked:
+    "This tasting's betting roster is locked once tasting begins — new participants can no longer join.",
+  invalid_bet_amount: "Bets must be zero or a positive whole number.",
+  bet_exceeds_balance: "Your total bets on this bottle can't exceed your starting balance.",
+  betting_not_enabled: "This tasting doesn't have betting enabled.",
 };
 
 /** Turns a Supabase/Postgres error into a friendly, pre-written message when we recognize it. */

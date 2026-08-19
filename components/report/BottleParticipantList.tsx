@@ -39,6 +39,7 @@ export function BottleParticipantList({
               <FieldScoreTable
                 heading="Score breakdown"
                 fields={participant.score.fieldScores.filter((f) => f.category === "core")}
+                bets={Object.keys(participant.bets).length > 0 ? participant.bets : undefined}
               />
             ) : (
               <p className="text-sm text-cellar-muted">No submitted guess for this bottle.</p>

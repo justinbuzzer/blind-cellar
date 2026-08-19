@@ -3,10 +3,12 @@ import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { HomeLink } from "@/components/navigation/HomeLink";
+import { CreditsLeaderboard } from "@/components/report/CreditsLeaderboard";
 import {
   buildParticipantBottleTotals,
   buildProvisionalLeaderboard,
 } from "@/lib/resultsReveal";
+import { buildCreditLedger } from "@/lib/betting";
 import { ProvisionalLeaderboardResponse } from "@/lib/supabase/types";
 
 interface HostLeaderboardClientProps {
@@ -25,6 +27,7 @@ interface HostLeaderboardClientProps {
  */
 export function HostLeaderboardClient({ publicId, hostToken, response }: HostLeaderboardClientProps) {
   const view = buildProvisionalLeaderboard(response);
+  const creditEntries = response.bettingEnabled ? buildCreditLedger(response).entries : null;
   const hostControlsHref = `/host/${publicId}?token=${encodeURIComponent(hostToken)}`;
   const recapHref = `/host/${publicId}/recap?token=${encodeURIComponent(hostToken)}`;
 
@@ -96,6 +99,13 @@ export function HostLeaderboardClient({ publicId, hostToken, response }: HostLea
             );
           })}
         </div>
+      )}
+
+      {creditEntries && (
+        <section className="flex flex-col gap-2">
+          <SectionEyebrow>Credits leaderboard</SectionEyebrow>
+          <CreditsLeaderboard entries={creditEntries} />
+        </section>
       )}
 
       <Link href={recapHref}>

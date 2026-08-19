@@ -14,13 +14,15 @@ import { bottleRevealImage } from "@/lib/appImages";
 import { HomeLink } from "@/components/navigation/HomeLink";
 import { HostControlsLink } from "@/components/navigation/HostControlsLink";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { getBottleResultForGuest, getRevealedBottle } from "@/lib/supabase/guestActions";
+import { getBottleResultForGuest, getCreditLedger, getRevealedBottle } from "@/lib/supabase/guestActions";
 import { buildRevealedBottleResult } from "@/lib/supabase/mappers";
 import { ParticipantScoreBreakdown } from "@/components/report/ParticipantScoreBreakdown";
 import { BottleParticipantList } from "@/components/report/BottleParticipantList";
+import { CreditsLeaderboard } from "@/components/report/CreditsLeaderboard";
 import { RevealedBottleWineDTO } from "@/lib/supabase/types";
 import { formatContributorBottleLabel, wineStyleToContributorBucket } from "@/lib/contributorLabel";
 import { buildBottleResultView, BottleResultView, formatBottleAggregateSummary } from "@/lib/resultsReveal";
+import { buildCreditLedger, CreditLedgerEntry } from "@/lib/betting";
 import { WINE_STYLE_LABELS, WineResult } from "@/types/tasting";
 import { getGuestToken } from "@/lib/deviceStorage";
 
@@ -53,6 +55,11 @@ export default function BottleRevealPage() {
   const [submitted, setSubmitted] = useState(false);
   const [sessionRevealed, setSessionRevealed] = useState(false);
   const [everyoneView, setEveryoneView] = useState<BottleResultView | null>(null);
+  // Betting sub-mode only (see README "Tasting modes" — "Betting") — null
+  // for every non-betting session (the fetch below fails harmlessly with
+  // betting_not_enabled and this just never gets set).
+  const [creditEntries, setCreditEntries] = useState<CreditLedgerEntry[] | null>(null);
+  const [myGuestId, setMyGuestId] = useState<string | null>(null);
 
   useEffect(() => {
     const token = getGuestToken(params.publicId);
@@ -85,6 +92,15 @@ export default function BottleRevealPage() {
       const { data: everyoneData } = await getBottleResultForGuest(supabase, token, params.wineId);
       if (everyoneData) {
         setEveryoneView(buildBottleResultView(everyoneData));
+      }
+
+      // Betting sub-mode only — see README "Tasting modes" — "Betting".
+      // getCreditLedger fails harmlessly (betting_not_enabled) for every
+      // non-betting session, which just leaves creditEntries null.
+      const { data: ledgerData } = await getCreditLedger(supabase, token);
+      if (ledgerData) {
+        setCreditEntries(buildCreditLedger(ledgerData).entries);
+        setMyGuestId(ledgerData.myGuestId);
       }
     })();
   }, [params.publicId, params.wineId, router]);
@@ -215,6 +231,13 @@ export default function BottleRevealPage() {
             <BottleParticipantList participants={everyoneView.participants} />
           </section>
         </>
+      )}
+
+      {creditEntries && (
+        <section className="flex flex-col gap-2">
+          <SectionEyebrow>Credits leaderboard</SectionEyebrow>
+          <CreditsLeaderboard entries={creditEntries} myGuestId={myGuestId ?? undefined} />
+        </section>
       )}
 
       {sessionRevealed ? (

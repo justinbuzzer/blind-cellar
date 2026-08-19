@@ -11,6 +11,7 @@ import {
 } from "@/types/tasting";
 import { compactWineLocationLabel } from "@/lib/appellations";
 import { formatContributorBottleLabel, wineStyleToContributorBucket } from "@/lib/contributorLabel";
+import { CreditLedgerEntry } from "@/lib/betting";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 import { tastingBottlePhotoUrl } from "@/lib/photoUrl";
 import {
@@ -99,6 +100,8 @@ interface TastingReportPdfDocumentProps {
   modeLabel: string;
   /** See WineResultCard's showNotes — only true for the participant-role viewer who downloaded this PDF. */
   showNotes: boolean;
+  /** Betting sub-mode only (see README "Tasting modes" — "Betting") — undefined for a non-betting session, which never renders the credits section at all. */
+  creditEntries?: CreditLedgerEntry[];
 }
 
 /**
@@ -113,6 +116,7 @@ export function TastingReportPdfDocument({
   dateLabel,
   modeLabel,
   showNotes,
+  creditEntries,
 }: TastingReportPdfDocumentProps) {
   const { wineOfTheNight, bestTaster, mostDivisiveWine, wineResults, tasterResults, scoringVersion } = report;
 
@@ -168,6 +172,13 @@ export function TastingReportPdfDocument({
 
         <PdfSectionHeading>Taster leaderboard</PdfSectionHeading>
         <LeaderboardTable results={tasterResults} scoringVersion={scoringVersion} />
+
+        {creditEntries && (
+          <>
+            <PdfSectionHeading>Credits leaderboard</PdfSectionHeading>
+            <CreditsLeaderboardTable entries={creditEntries} />
+          </>
+        )}
 
         <PdfFooter />
       </Page>
@@ -430,6 +441,39 @@ function LeaderboardTable({ results, scoringVersion }: { results: TasterResult[]
           <Text style={{ flexBasis: "16%", fontSize: 8.5 }}>{taster.averageRatingGiven ?? "—"}</Text>
         </View>
       ))}
+    </View>
+  );
+}
+
+/** Betting sub-mode only (see README "Tasting modes" — "Betting") — PDF mirror of components/report/CreditsLeaderboard.tsx, same react-pdf structure as LeaderboardTable above. */
+function CreditsLeaderboardTable({ entries }: { entries: CreditLedgerEntry[] }) {
+  if (entries.length === 0) {
+    return <Text style={{ fontSize: 9, color: pdfColors.muted }}>No participants have a credit balance yet.</Text>;
+  }
+  return (
+    <View>
+      <View style={localStyles.lbHeaderRow}>
+        <Text style={[localStyles.fieldHeaderCell, { flexBasis: "6%" }]}>#</Text>
+        <Text style={[localStyles.fieldHeaderCell, { flexBasis: "34%" }]}>Participant</Text>
+        <Text style={[localStyles.fieldHeaderCell, { flexBasis: "20%" }]}>Balance</Text>
+        <Text style={[localStyles.fieldHeaderCell, { flexBasis: "20%" }]}>Starting</Text>
+        <Text style={[localStyles.fieldHeaderCell, { flexBasis: "20%" }]}>Change</Text>
+      </View>
+      {entries.map((entry) => {
+        const delta = entry.currentBalance - entry.startingCredits;
+        return (
+          <View key={entry.guestId} style={localStyles.lbRow}>
+            <Text style={{ flexBasis: "6%", fontSize: 8.5 }}>{entry.rank}</Text>
+            <Text style={{ flexBasis: "34%", fontSize: 8.5, fontFamily: "Helvetica-Bold" }}>{entry.guestName}</Text>
+            <Text style={{ flexBasis: "20%", fontSize: 8.5 }}>{entry.currentBalance}</Text>
+            <Text style={{ flexBasis: "20%", fontSize: 8.5 }}>{entry.startingCredits}</Text>
+            <Text style={{ flexBasis: "20%", fontSize: 8.5 }}>
+              {delta > 0 ? "+" : ""}
+              {delta}
+            </Text>
+          </View>
+        );
+      })}
     </View>
   );
 }

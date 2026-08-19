@@ -2,6 +2,7 @@ import { GuestSubmission, TastingSession, WineAnswerKey, WineGuess, WineResult }
 import { isCustomSingleGrape, reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
 import { calculateWineResults } from "@/lib/results";
 import { wineStyleToContributorBucket } from "@/lib/contributorLabel";
+import { FieldBets } from "@/lib/betting";
 import {
   GuestGuessDTO,
   GuestVisibleWineRow,
@@ -83,6 +84,25 @@ export function mapGuestGuessDtoToWineGuess(dto: GuestGuessDTO): WineGuess {
     rating: dto.rating,
     confidence: dto.confidence,
     note: dto.tastingNote ?? undefined,
+  };
+}
+
+/**
+ * Betting sub-mode only (see README "Tasting modes" — "Betting") — the
+ * guest's own already-saved bet amounts from get_active_bottle_state's
+ * myGuess, for use as *editable* bet-entry form state. Undefined/null
+ * fields (a fresh draft, or a non-betting session where these are simply
+ * never populated) become 0, matching WineGuessForm's BetInput default.
+ */
+export function mapGuestGuessDtoToBets(dto: GuestGuessDTO): FieldBets {
+  return {
+    country: dto.countryBet ?? 0,
+    region: dto.regionBet ?? 0,
+    appellation: dto.appellationBet ?? 0,
+    grapeBlend: dto.grapeBlendBet ?? 0,
+    vintage: dto.vintageBet ?? 0,
+    producer: dto.producerBet ?? 0,
+    wineName: dto.wineCuveeBet ?? 0,
   };
 }
 
