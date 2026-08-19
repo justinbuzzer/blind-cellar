@@ -63,9 +63,22 @@ interface CreateSessionBody {
   bettingEnabled?: boolean;
   /** Required when bettingEnabled — the host is also a guest/bettor via their own guests row. */
   startingCredits?: number;
+  /** Per-field decimal odds, all required when bettingEnabled — see README "Tasting modes" — "Betting". */
+  countryBetMultiplier?: number;
+  regionBetMultiplier?: number;
+  appellationBetMultiplier?: number;
+  grapeBlendBetMultiplier?: number;
+  vintageBetMultiplier?: number;
+  producerBetMultiplier?: number;
+  wineCuveeBetMultiplier?: number;
 }
 
 const MAX_JOIN_CODE_ATTEMPTS = 8;
+
+/** A valid odds multiplier is a finite number > 1 and <= 10 — see tasting_sessions_bet_multipliers_range. */
+function parseMultiplier(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 1 && value <= 10 ? value : null;
+}
 
 export async function POST(request: NextRequest) {
   const supabase = getSupabaseServerClient();
@@ -129,6 +142,26 @@ export async function POST(request: NextRequest) {
       ? Math.trunc(body.startingCredits)
       : null;
 
+  // Per-field betting odds — all seven required up front when betting is
+  // enabled (see README "Tasting modes" — "Betting"); mirrors the RPC's own
+  // invalid_bet_multiplier check so a bad request fails with the same clear
+  // error instead of a raw constraint violation.
+  const multipliers = {
+    countryBetMultiplier: parseMultiplier(body.countryBetMultiplier),
+    regionBetMultiplier: parseMultiplier(body.regionBetMultiplier),
+    appellationBetMultiplier: parseMultiplier(body.appellationBetMultiplier),
+    grapeBlendBetMultiplier: parseMultiplier(body.grapeBlendBetMultiplier),
+    vintageBetMultiplier: parseMultiplier(body.vintageBetMultiplier),
+    producerBetMultiplier: parseMultiplier(body.producerBetMultiplier),
+    wineCuveeBetMultiplier: parseMultiplier(body.wineCuveeBetMultiplier),
+  };
+  if (bettingEnabled && Object.values(multipliers).some((m) => m === null)) {
+    return NextResponse.json(
+      { error: "Every betting odds value must be greater than 1 and at most 10." },
+      { status: 400 }
+    );
+  }
+
   const hostToken = generateSecureToken();
   const hostTokenHash = hashToken(hostToken);
 
@@ -146,6 +179,13 @@ export async function POST(request: NextRequest) {
       p_tasting_mode: tastingMode,
       p_betting_enabled: bettingEnabled,
       p_starting_credits: startingCredits,
+      p_country_bet_multiplier: bettingEnabled ? multipliers.countryBetMultiplier : null,
+      p_region_bet_multiplier: bettingEnabled ? multipliers.regionBetMultiplier : null,
+      p_appellation_bet_multiplier: bettingEnabled ? multipliers.appellationBetMultiplier : null,
+      p_grape_blend_bet_multiplier: bettingEnabled ? multipliers.grapeBlendBetMultiplier : null,
+      p_vintage_bet_multiplier: bettingEnabled ? multipliers.vintageBetMultiplier : null,
+      p_producer_bet_multiplier: bettingEnabled ? multipliers.producerBetMultiplier : null,
+      p_wine_cuvee_bet_multiplier: bettingEnabled ? multipliers.wineCuveeBetMultiplier : null,
     });
 
     if (!error && data) {

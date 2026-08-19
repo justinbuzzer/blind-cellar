@@ -75,7 +75,7 @@ export function HostBottleResultClient({
 
       <section className="flex flex-col gap-2">
         <SectionEyebrow>Participant breakdown</SectionEyebrow>
-        <BottleParticipantList participants={view.participants} />
+        <BottleParticipantList participants={view.participants} multipliers={view.multipliers} />
       </section>
 
       {creditEntries && (

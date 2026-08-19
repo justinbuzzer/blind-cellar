@@ -13,7 +13,7 @@ import {
 import { scoreWineGuess } from "./scoring";
 import { calculateTasterResults, calculateWineResults } from "./results";
 import { round1 } from "./math";
-import { FieldBets } from "./betting";
+import { BettableField, FieldBets } from "./betting";
 import {
   buildCourseRevealSubmissions,
   buildRevealedSubmissions,
@@ -73,6 +73,13 @@ export interface BottleResultView {
   scoringVersion: ScoringVersion;
   participants: BottleParticipantScore[];
   aggregate: BottleResultAggregate;
+  /**
+   * Betting sub-mode only (see README "Tasting modes" — "Betting") — this
+   * session's per-field decimal odds, so a Bet column can show the payout
+   * ratio (e.g. "10 cr @ 1.3x") alongside each wager. Empty for a
+   * non-betting session.
+   */
+  multipliers: Partial<Record<BettableField, number>>;
 }
 
 /** Betting sub-mode only — see BottleParticipantScore.bets above. */
@@ -161,6 +168,15 @@ export function buildBottleResultView(response: BottleResultForHostResponse): Bo
       highestScore,
       totalPossiblePoints,
       perfectScoreCount,
+    },
+    multipliers: {
+      country: response.session.countryBetMultiplier ?? undefined,
+      region: response.session.regionBetMultiplier ?? undefined,
+      appellation: response.session.appellationBetMultiplier ?? undefined,
+      grapeBlend: response.session.grapeBlendBetMultiplier ?? undefined,
+      vintage: response.session.vintageBetMultiplier ?? undefined,
+      producer: response.session.producerBetMultiplier ?? undefined,
+      wineName: response.session.wineCuveeBetMultiplier ?? undefined,
     },
   };
 }

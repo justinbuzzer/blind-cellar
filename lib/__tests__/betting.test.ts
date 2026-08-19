@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BETTABLE_FIELDS,
+  BetMultipliers,
   SettlementWine,
   buildCreditLedger,
   findMyLedgerEntry,
@@ -23,6 +24,17 @@ const wine: SettlementWine = {
   wineStyle: "red",
   tastingOrder: 1,
   contributorGuestId: "guest-host",
+};
+
+/** Uniform 1.5x odds on every field, used by tests that aren't specifically about per-field odds variance. */
+const UNIFORM_ODDS: BetMultipliers = {
+  country: 1.5,
+  region: 1.5,
+  appellation: 1.5,
+  grapeBlend: 1.5,
+  vintage: 1.5,
+  producer: 1.5,
+  wineName: 1.5,
 };
 
 function makeGuess(overrides: Partial<WineGuess> = {}): WineGuess {
@@ -58,36 +70,43 @@ describe("BETTABLE_FIELDS", () => {
   });
 });
 
-describe("settleFieldBet — country/region (binary, no partial credit)", () => {
-  it("an exact match wins the full bet", () => {
-    const result = settleFieldBet("country", 10, makeGuess(), wine);
-    expect(result.fieldScore.correct).toBe(true);
-    expect(result.guesserDelta).toBe(10);
+describe("settleFieldBet — country/region (binary, odds-scaled win)", () => {
+  it("an exact match wins (multiplier - 1) * bet", () => {
+    const result = settleFieldBet("country", 10, 1.3, makeGuess(), wine);
+    expect(result.correct).toBe(true);
+    expect(result.guesserDelta).toBe(3); // round((1.3 - 1) * 10) = 3
   });
 
-  it("a miss loses the full bet", () => {
-    const result = settleFieldBet("country", 10, makeGuess({ country: "France" }), wine);
-    expect(result.fieldScore.correct).toBe(false);
+  it("a miss loses the full bet regardless of odds", () => {
+    const result = settleFieldBet("country", 10, 1.3, makeGuess({ country: "France" }), wine);
+    expect(result.correct).toBe(false);
     expect(result.guesserDelta).toBe(-10);
   });
 
   it("a zero bet never transfers anything, win or lose", () => {
-    expect(settleFieldBet("region", 0, makeGuess(), wine).guesserDelta).toBe(0);
-    expect(settleFieldBet("region", 0, makeGuess({ region: "Tuscany" }), wine).guesserDelta).toBe(0);
+    expect(settleFieldBet("region", 0, 1.5, makeGuess(), wine).guesserDelta).toBe(0);
+    expect(settleFieldBet("region", 0, 1.5, makeGuess({ region: "Tuscany" }), wine).guesserDelta).toBe(0);
+  });
+
+  it("rounds a non-whole-number payout to the nearest credit", () => {
+    // (1.3 - 1) * 7 = 2.1 -> rounds to 2.
+    const result = settleFieldBet("country", 7, 1.3, makeGuess(), wine);
+    expect(result.guesserDelta).toBe(2);
   });
 });
 
 describe("settleFieldBet — appellation (conditional applicability)", () => {
-  it("wins the full bet on an exact match when the wine has an appellation", () => {
+  it("wins the odds-scaled payout on an exact match when the wine has an appellation", () => {
     const wineWithAppellation: SettlementWine = { ...wine, appellation: "Barolo" };
     const result = settleFieldBet(
       "appellation",
       10,
+      1.5,
       makeGuess({ appellation: "Barolo" }),
       wineWithAppellation
     );
-    expect(result.fieldScore.applicable).toBe(true);
-    expect(result.guesserDelta).toBe(10);
+    expect(result.correct).toBe(true);
+    expect(result.guesserDelta).toBe(5); // round((1.5 - 1) * 10) = 5
   });
 
   it("loses the full bet on a miss when the wine has an appellation", () => {
@@ -95,6 +114,7 @@ describe("settleFieldBet — appellation (conditional applicability)", () => {
     const result = settleFieldBet(
       "appellation",
       10,
+      1.5,
       makeGuess({ appellation: "Barbaresco" }),
       wineWithAppellation
     );
@@ -102,136 +122,145 @@ describe("settleFieldBet — appellation (conditional applicability)", () => {
   });
 
   it("never transfers anything when the wine has no recorded appellation, regardless of the bet", () => {
-    const result = settleFieldBet("appellation", 10, makeGuess({ appellation: "Barolo" }), wine);
-    expect(result.fieldScore.applicable).toBe(false);
+    const result = settleFieldBet("appellation", 10, 1.5, makeGuess({ appellation: "Barolo" }), wine);
+    expect(result.correct).toBe(false);
     expect(result.guesserDelta).toBe(0);
   });
 });
 
-describe("settleFieldBet — vintage (half credit at exactly 1 year off)", () => {
-  it("wins the full bet on an exact match", () => {
-    expect(settleFieldBet("vintage", 10, makeGuess(), wine).guesserDelta).toBe(10);
+describe("settleFieldBet — vintage (binary — no more partial credit for a near miss)", () => {
+  it("wins the odds-scaled payout on an exact match", () => {
+    expect(settleFieldBet("vintage", 10, 1.4, makeGuess(), wine).guesserDelta).toBe(4);
   });
 
-  it("loses only half the bet when one year off", () => {
-    const result = settleFieldBet("vintage", 10, makeGuess({ vintage: "2015" }), wine);
-    expect(result.fieldScore.correct).toBe(false);
-    expect(result.fieldScore.points).toBe(5);
-    expect(result.guesserDelta).toBe(-5);
-  });
-
-  it("loses the full bet two or more years off", () => {
-    const result = settleFieldBet("vintage", 10, makeGuess({ vintage: "2013" }), wine);
+  it("loses the full bet even when only one year off (used to earn half credit — betting has no partial credit now)", () => {
+    const result = settleFieldBet("vintage", 10, 1.4, makeGuess({ vintage: "2015" }), wine);
+    expect(result.correct).toBe(false);
     expect(result.guesserDelta).toBe(-10);
   });
 
-  it("loses the full bet for an NV-vs-year mismatch (no numeric distance to award partial credit against)", () => {
-    const result = settleFieldBet("vintage", 10, makeGuess({ vintage: "NV" }), wine);
+  it("loses the full bet two or more years off", () => {
+    const result = settleFieldBet("vintage", 10, 1.4, makeGuess({ vintage: "2013" }), wine);
+    expect(result.guesserDelta).toBe(-10);
+  });
+
+  it("loses the full bet for an NV-vs-year mismatch", () => {
+    const result = settleFieldBet("vintage", 10, 1.4, makeGuess({ vintage: "NV" }), wine);
     expect(result.guesserDelta).toBe(-10);
   });
 });
 
-describe("settleFieldBet — grapeBlend (Jaccard-proportional partial credit)", () => {
+describe("settleFieldBet — grapeBlend (binary — no more Jaccard partial credit)", () => {
   const blendWine: SettlementWine = {
     ...wine,
     grapeBlendMode: "blend",
     grapeBlend: "Cabernet Sauvignon / Merlot / Petit Verdot",
   };
 
-  it("wins the full bet on an exact set match", () => {
+  it("wins the odds-scaled payout on an exact set match", () => {
     const result = settleFieldBet(
       "grapeBlend",
       12,
+      2.0,
       makeGuess({ grapeBlendMode: "blend", grapeBlend: "Cabernet Sauvignon / Merlot / Petit Verdot" }),
       blendWine
     );
-    expect(result.guesserDelta).toBe(12);
+    expect(result.guesserDelta).toBe(12); // round((2.0 - 1) * 12) = 12
   });
 
-  it("loses a fraction of the bet proportional to the missing overlap (2 of 3 shared)", () => {
+  it("loses the full bet on a partial overlap (2 of 3 shared — used to earn proportional credit)", () => {
     const result = settleFieldBet(
       "grapeBlend",
       12,
+      2.0,
       makeGuess({ grapeBlendMode: "blend", grapeBlend: "Cabernet Sauvignon / Merlot" }),
       blendWine
     );
-    // Jaccard overlap = 2/3 -> points = round(12 * 2/3) = 8 -> loses 12 - 8 = 4.
-    expect(result.fieldScore.points).toBe(8);
-    expect(result.guesserDelta).toBe(-4);
+    expect(result.correct).toBe(false);
+    expect(result.guesserDelta).toBe(-12);
   });
 
   it("loses the full bet on a mode mismatch, even with textual overlap", () => {
     const result = settleFieldBet(
       "grapeBlend",
       12,
+      2.0,
       makeGuess({ grapeBlendMode: "single", grapeBlend: "Cabernet Sauvignon" }),
       blendWine
     );
-    expect(result.fieldScore.points).toBe(0);
     expect(result.guesserDelta).toBe(-12);
   });
 });
 
-describe("settleFieldBet — producer/wineName (close-spelling half credit)", () => {
-  it("wins the full bet on an exact match", () => {
-    expect(settleFieldBet("producer", 10, makeGuess(), wine).guesserDelta).toBe(10);
+describe("settleFieldBet — producer/wineName (binary — no more close-spelling partial credit)", () => {
+  it("wins the odds-scaled payout on an exact match", () => {
+    expect(settleFieldBet("producer", 10, 2.5, makeGuess(), wine).guesserDelta).toBe(15);
   });
 
-  it("loses only half the bet on a small typo within the partial-credit distance", () => {
-    const result = settleFieldBet("producer", 10, makeGuess({ producer: "Giacomo Contero" }), wine);
-    expect(result.fieldScore.correct).toBe(false);
-    expect(result.fieldScore.points).toBe(5);
-    expect(result.guesserDelta).toBe(-5);
-  });
-
-  it("loses the full bet on a materially different name", () => {
-    const result = settleFieldBet("wineName", 10, makeGuess({ wineName: "Totally Different Cuvee" }), wine);
+  it("loses the full bet on a small typo within the old partial-credit distance", () => {
+    const result = settleFieldBet("producer", 10, 2.5, makeGuess({ producer: "Giacomo Contero" }), wine);
+    expect(result.correct).toBe(false);
     expect(result.guesserDelta).toBe(-10);
   });
 
-  it("loses the full bet on a blank guess — never awards partial credit for nothing", () => {
-    const result = settleFieldBet("producer", 10, makeGuess({ producer: "" }), wine);
+  it("loses the full bet on a materially different name", () => {
+    const result = settleFieldBet("wineName", 10, 2.5, makeGuess({ wineName: "Totally Different Cuvee" }), wine);
+    expect(result.guesserDelta).toBe(-10);
+  });
+
+  it("loses the full bet on a blank guess", () => {
+    const result = settleFieldBet("producer", 10, 2.5, makeGuess({ producer: "" }), wine);
     expect(result.guesserDelta).toBe(-10);
   });
 });
 
 describe("settleBottleBets", () => {
   it("sums one guesser's field deltas into a single net, and negates the total for the contributor", () => {
-    const settlement = settleBottleBets(wine, [
-      {
-        guestId: "guest-a",
-        guestName: "Alice",
-        guess: makeGuess({ country: "France" }), // country wrong
-        bets: { country: 10, vintage: 10 }, // vintage exact
-      },
-    ]);
+    const settlement = settleBottleBets(
+      wine,
+      [
+        {
+          guestId: "guest-a",
+          guestName: "Alice",
+          guess: makeGuess({ country: "France" }), // country wrong -> -10
+          bets: { country: 10, vintage: 10 }, // vintage exact -> +(1.5-1)*10 = 5
+        },
+      ],
+      UNIFORM_ODDS
+    );
 
     const alice = settlement.guessers[0];
-    expect(alice.netDelta).toBe(0); // -10 (country) + 10 (vintage) = 0
-    expect(settlement.contributorDelta).toBe(0);
+    expect(alice.netDelta).toBe(-5); // -10 (country) + 5 (vintage) = -5
+    expect(settlement.contributorDelta).toBe(5);
   });
 
-  it("aggregates multiple guessers' independent bilateral outcomes against the same contributor", () => {
-    const settlement = settleBottleBets(wine, [
-      { guestId: "guest-a", guestName: "Alice", guess: makeGuess(), bets: { country: 10 } }, // wins +10
-      {
-        guestId: "guest-b",
-        guestName: "Ben",
-        guess: makeGuess({ country: "France" }),
-        bets: { country: 10 },
-      }, // loses -10
-    ]);
+  it("aggregates multiple guessers' independent bilateral outcomes against the same contributor, using each field's own odds", () => {
+    const multipliers: BetMultipliers = { ...UNIFORM_ODDS, country: 1.3 };
+    const settlement = settleBottleBets(
+      wine,
+      [
+        { guestId: "guest-a", guestName: "Alice", guess: makeGuess(), bets: { country: 10 } }, // wins +3
+        {
+          guestId: "guest-b",
+          guestName: "Ben",
+          guess: makeGuess({ country: "France" }),
+          bets: { country: 10 },
+        }, // loses -10
+      ],
+      multipliers
+    );
 
-    expect(settlement.guessers.find((g) => g.guestId === "guest-a")?.netDelta).toBe(10);
+    expect(settlement.guessers.find((g) => g.guestId === "guest-a")?.netDelta).toBe(3);
     expect(settlement.guessers.find((g) => g.guestId === "guest-b")?.netDelta).toBe(-10);
-    // Zero-sum: contributor's net is the negated sum of every guesser (+10 - 10 = 0 here).
-    expect(settlement.contributorDelta).toBe(0);
+    // Zero-sum: contributor's net is the negated sum of every guesser (+3 - 10 = -7 -> contributor +7).
+    expect(settlement.contributorDelta).toBe(7);
   });
 
   it("returns a null contributorDelta when the bottle has no recorded contributor", () => {
     const settlement = settleBottleBets(
       { ...wine, contributorGuestId: null },
-      [{ guestId: "guest-a", guestName: "Alice", guess: makeGuess(), bets: { country: 10 } }]
+      [{ guestId: "guest-a", guestName: "Alice", guess: makeGuess(), bets: { country: 10 } }],
+      UNIFORM_ODDS
     );
     expect(settlement.contributorDelta).toBeNull();
   });
@@ -241,6 +270,13 @@ function ledgerResponse(): CreditLedgerResponse {
   return {
     scoringVersion: "core_v4_partial_credit",
     myGuestId: "guest-a",
+    countryBetMultiplier: 1.3,
+    regionBetMultiplier: 1.5,
+    appellationBetMultiplier: 1.5,
+    grapeBlendBetMultiplier: 2.0,
+    vintageBetMultiplier: 1.5,
+    producerBetMultiplier: 2.5,
+    wineCuveeBetMultiplier: 2.5,
     guests: [
       { id: "guest-host", displayName: "Host", startingCredits: 100 },
       { id: "guest-a", displayName: "Alice", startingCredits: 100 },
@@ -277,7 +313,7 @@ function ledgerResponse(): CreditLedgerResponse {
         producerGuess: "Giacomo Conterno",
         wineCuveeGuess: "Cascina Francia",
         vintageGuess: "2016",
-        countryBet: 10,
+        countryBet: 10, // exact -> round((1.3-1)*10) = +3
         regionBet: 0,
         appellationBet: 0,
         grapeBlendBet: 0,
@@ -298,7 +334,7 @@ function ledgerResponse(): CreditLedgerResponse {
         producerGuess: "Giacomo Conterno",
         wineCuveeGuess: "Cascina Francia",
         vintageGuess: "2016",
-        countryBet: 5,
+        countryBet: 5, // wrong -> -5
         regionBet: 0,
         appellationBet: 0,
         grapeBlendBet: 0,
@@ -318,11 +354,11 @@ describe("buildCreditLedger", () => {
     const ben = entries.find((e) => e.guestId === "guest-b");
     const host = entries.find((e) => e.guestId === "guest-host");
 
-    // Alice: country correct, bet 10 -> +10. Ben: country wrong, bet 5 -> -5.
-    expect(alice?.currentBalance).toBe(110);
+    // Alice: country correct, bet 10 @ 1.3x -> +3. Ben: country wrong, bet 5 -> -5.
+    expect(alice?.currentBalance).toBe(103);
     expect(ben?.currentBalance).toBe(45);
-    // Host (contributor): loses to Alice (-10), wins from Ben (+5) -> net -5.
-    expect(host?.currentBalance).toBe(95);
+    // Host (contributor): loses to Alice (-3), wins from Ben (+5) -> net +2.
+    expect(host?.currentBalance).toBe(102);
   });
 
   it("ranks entries descending by current balance", () => {
@@ -345,6 +381,15 @@ describe("buildCreditLedger", () => {
     response.guests[1].startingCredits = null;
     const { entries } = buildCreditLedger(response);
     expect(entries.find((e) => e.guestId === "guest-a")?.startingCredits).toBe(0);
+  });
+
+  it("leaves every guest at their starting balance when the response has no odds config (non-betting session)", () => {
+    const response = ledgerResponse();
+    response.countryBetMultiplier = null;
+    const { entries } = buildCreditLedger(response);
+    expect(entries.find((e) => e.guestId === "guest-a")?.currentBalance).toBe(100);
+    expect(entries.find((e) => e.guestId === "guest-b")?.currentBalance).toBe(50);
+    expect(entries.find((e) => e.guestId === "guest-host")?.currentBalance).toBe(100);
   });
 });
 

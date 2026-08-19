@@ -616,6 +616,47 @@ begin
   end if;
 end $$;
 
+-- 17. Per-field betting odds (see README "Tasting modes" — "Betting"): each
+-- bettable field gets its own host-configured decimal-odds multiplier,
+-- replacing the flat 1:1 payout AND partial credit within the betting
+-- settlement (accuracy/leaderboard scoring is entirely untouched — partial
+-- credit still applies there). A win now pays the guesser
+-- round((multiplier - 1) * bet) from the contributor; anything short of an
+-- exact match still costs the guesser the full bet, with no partial-credit
+-- softening (see lib/betting.ts). Session-scoped (one value per field per
+-- tasting, not per guess), so these live on tasting_sessions, not
+-- wine_guesses. Nullable with no cross-column CHECK against betting_enabled
+-- (mirrors guests.starting_credits above) — all "required when betting is
+-- enabled" enforcement happens once, in create_tasting_session below, so
+-- this never retroactively invalidates an already-created betting session's
+-- row. Bounded to (1, 10]: must exceed 1 (a 1x multiplier would pay a
+-- winning guesser nothing) and capped at 10 purely as a sanity backstop
+-- against a fat-fingered value (e.g. "13" instead of "1.3"), not a
+-- meaningful gameplay limit.
+alter table tasting_sessions add column if not exists country_bet_multiplier numeric(4, 2);
+alter table tasting_sessions add column if not exists region_bet_multiplier numeric(4, 2);
+alter table tasting_sessions add column if not exists appellation_bet_multiplier numeric(4, 2);
+alter table tasting_sessions add column if not exists grape_blend_bet_multiplier numeric(4, 2);
+alter table tasting_sessions add column if not exists vintage_bet_multiplier numeric(4, 2);
+alter table tasting_sessions add column if not exists producer_bet_multiplier numeric(4, 2);
+alter table tasting_sessions add column if not exists wine_cuvee_bet_multiplier numeric(4, 2);
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'tasting_sessions_bet_multipliers_range'
+  ) then
+    alter table tasting_sessions add constraint tasting_sessions_bet_multipliers_range check (
+      (country_bet_multiplier is null or (country_bet_multiplier > 1 and country_bet_multiplier <= 10)) and
+      (region_bet_multiplier is null or (region_bet_multiplier > 1 and region_bet_multiplier <= 10)) and
+      (appellation_bet_multiplier is null or (appellation_bet_multiplier > 1 and appellation_bet_multiplier <= 10)) and
+      (grape_blend_bet_multiplier is null or (grape_blend_bet_multiplier > 1 and grape_blend_bet_multiplier <= 10)) and
+      (vintage_bet_multiplier is null or (vintage_bet_multiplier > 1 and vintage_bet_multiplier <= 10)) and
+      (producer_bet_multiplier is null or (producer_bet_multiplier > 1 and producer_bet_multiplier <= 10)) and
+      (wine_cuvee_bet_multiplier is null or (wine_cuvee_bet_multiplier > 1 and wine_cuvee_bet_multiplier <= 10))
+    );
+  end if;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security (enabled everywhere; anon gets no default table grants,
 -- see the GRANT section below — RLS is defense-in-depth on top of that).
@@ -893,6 +934,10 @@ drop function if exists create_tasting_session(text, date, text, text, text, tex
 -- starting balance exactly like anyone who joins via join_tasting_session);
 -- explicitly drop the betting-enabled-but-no-credits overload.
 drop function if exists create_tasting_session(text, date, text, text, text, text, boolean);
+-- Signature changed a fourth time (per-field betting odds added — see
+-- README "Tasting modes" — "Betting"); explicitly drop the
+-- pre-odds-multiplier overload.
+drop function if exists create_tasting_session(text, date, text, text, text, text, boolean, int);
 
 -- Host: create a session (status='registration') and the host's own
 -- participant (guests) row in one transaction. Called from a Route Handler,
@@ -907,7 +952,14 @@ create or replace function create_tasting_session(
   p_host_display_name text,
   p_tasting_mode text,
   p_betting_enabled boolean default false,
-  p_starting_credits int default null
+  p_starting_credits int default null,
+  p_country_bet_multiplier numeric default null,
+  p_region_bet_multiplier numeric default null,
+  p_appellation_bet_multiplier numeric default null,
+  p_grape_blend_bet_multiplier numeric default null,
+  p_vintage_bet_multiplier numeric default null,
+  p_producer_bet_multiplier numeric default null,
+  p_wine_cuvee_bet_multiplier numeric default null
 ) returns table (
   id uuid,
   public_id uuid,
@@ -952,13 +1004,41 @@ begin
     if p_starting_credits is null or p_starting_credits <= 0 or p_starting_credits > 100000 then
       raise exception 'invalid_starting_credits';
     end if;
+    -- Per-field betting odds (see README "Tasting modes" — "Betting") — all
+    -- seven must be set and in range up front; mirrors
+    -- tasting_sessions_bet_multipliers_range, raised here first so a bad
+    -- request fails with a clear error instead of a raw constraint
+    -- violation.
+    if p_country_bet_multiplier is null or p_country_bet_multiplier <= 1 or p_country_bet_multiplier > 10 or
+       p_region_bet_multiplier is null or p_region_bet_multiplier <= 1 or p_region_bet_multiplier > 10 or
+       p_appellation_bet_multiplier is null or p_appellation_bet_multiplier <= 1 or p_appellation_bet_multiplier > 10 or
+       p_grape_blend_bet_multiplier is null or p_grape_blend_bet_multiplier <= 1 or p_grape_blend_bet_multiplier > 10 or
+       p_vintage_bet_multiplier is null or p_vintage_bet_multiplier <= 1 or p_vintage_bet_multiplier > 10 or
+       p_producer_bet_multiplier is null or p_producer_bet_multiplier <= 1 or p_producer_bet_multiplier > 10 or
+       p_wine_cuvee_bet_multiplier is null or p_wine_cuvee_bet_multiplier <= 1 or p_wine_cuvee_bet_multiplier > 10
+    then
+      raise exception 'invalid_bet_multiplier';
+    end if;
   end if;
 
   -- scoring_version is deliberately a hardcoded literal, never a parameter —
   -- see README "Scoring model": the client can never choose or influence
   -- which scoring model a session gets.
-  insert into tasting_sessions (title, tasting_date, join_code, host_token_hash, status, tasting_mode, scoring_version, betting_enabled)
-  values (btrim(p_title), p_tasting_date, p_join_code, p_host_token_hash, 'registration', p_tasting_mode, 'core_v4_partial_credit', coalesce(p_betting_enabled, false))
+  insert into tasting_sessions (
+    title, tasting_date, join_code, host_token_hash, status, tasting_mode, scoring_version, betting_enabled,
+    country_bet_multiplier, region_bet_multiplier, appellation_bet_multiplier, grape_blend_bet_multiplier,
+    vintage_bet_multiplier, producer_bet_multiplier, wine_cuvee_bet_multiplier
+  )
+  values (
+    btrim(p_title), p_tasting_date, p_join_code, p_host_token_hash, 'registration', p_tasting_mode, 'core_v4_partial_credit', coalesce(p_betting_enabled, false),
+    case when p_betting_enabled then p_country_bet_multiplier else null end,
+    case when p_betting_enabled then p_region_bet_multiplier else null end,
+    case when p_betting_enabled then p_appellation_bet_multiplier else null end,
+    case when p_betting_enabled then p_grape_blend_bet_multiplier else null end,
+    case when p_betting_enabled then p_vintage_bet_multiplier else null end,
+    case when p_betting_enabled then p_producer_bet_multiplier else null end,
+    case when p_betting_enabled then p_wine_cuvee_bet_multiplier else null end
+  )
   returning tasting_sessions.id, tasting_sessions.public_id into v_session_id, v_public_id;
 
   v_host_token := encode(gen_random_bytes(32), 'base64');
@@ -1152,7 +1232,14 @@ begin
       'hostGuestId', v_session.host_guest_id,
       'tastingMode', v_session.tasting_mode,
       'scoringVersion', v_session.scoring_version,
-      'bettingEnabled', v_session.betting_enabled
+      'bettingEnabled', v_session.betting_enabled,
+      'countryBetMultiplier', v_session.country_bet_multiplier,
+      'regionBetMultiplier', v_session.region_bet_multiplier,
+      'appellationBetMultiplier', v_session.appellation_bet_multiplier,
+      'grapeBlendBetMultiplier', v_session.grape_blend_bet_multiplier,
+      'vintageBetMultiplier', v_session.vintage_bet_multiplier,
+      'producerBetMultiplier', v_session.producer_bet_multiplier,
+      'wineCuveeBetMultiplier', v_session.wine_cuvee_bet_multiplier
     ),
     'wines', v_wines,
     'guests', coalesce((
@@ -2255,7 +2342,14 @@ begin
         'tastingDate', v_session.tasting_date,
         'status', v_session.status,
         'tastingMode', v_session.tasting_mode,
-        'bettingEnabled', v_session.betting_enabled
+        'bettingEnabled', v_session.betting_enabled,
+        'countryBetMultiplier', v_session.country_bet_multiplier,
+        'regionBetMultiplier', v_session.region_bet_multiplier,
+        'appellationBetMultiplier', v_session.appellation_bet_multiplier,
+        'grapeBlendBetMultiplier', v_session.grape_blend_bet_multiplier,
+        'vintageBetMultiplier', v_session.vintage_bet_multiplier,
+        'producerBetMultiplier', v_session.producer_bet_multiplier,
+        'wineCuveeBetMultiplier', v_session.wine_cuvee_bet_multiplier
       ),
       'guestName', v_guest.display_name,
       'startingCredits', v_guest.starting_credits,
@@ -2280,7 +2374,14 @@ begin
       'tastingDate', v_session.tasting_date,
       'status', v_session.status,
       'tastingMode', v_session.tasting_mode,
-      'bettingEnabled', v_session.betting_enabled
+      'bettingEnabled', v_session.betting_enabled,
+      'countryBetMultiplier', v_session.country_bet_multiplier,
+      'regionBetMultiplier', v_session.region_bet_multiplier,
+      'appellationBetMultiplier', v_session.appellation_bet_multiplier,
+      'grapeBlendBetMultiplier', v_session.grape_blend_bet_multiplier,
+      'vintageBetMultiplier', v_session.vintage_bet_multiplier,
+      'producerBetMultiplier', v_session.producer_bet_multiplier,
+      'wineCuveeBetMultiplier', v_session.wine_cuvee_bet_multiplier
     ),
     'guestName', v_guest.display_name,
     'startingCredits', v_guest.starting_credits,
@@ -2627,7 +2728,14 @@ begin
     'session', jsonb_build_object(
       'publicId', v_session.public_id,
       'status', v_session.status,
-      'scoringVersion', v_session.scoring_version
+      'scoringVersion', v_session.scoring_version,
+      'countryBetMultiplier', v_session.country_bet_multiplier,
+      'regionBetMultiplier', v_session.region_bet_multiplier,
+      'appellationBetMultiplier', v_session.appellation_bet_multiplier,
+      'grapeBlendBetMultiplier', v_session.grape_blend_bet_multiplier,
+      'vintageBetMultiplier', v_session.vintage_bet_multiplier,
+      'producerBetMultiplier', v_session.producer_bet_multiplier,
+      'wineCuveeBetMultiplier', v_session.wine_cuvee_bet_multiplier
     ),
     'wine', jsonb_build_object(
       'id', v_wine.id,
@@ -2761,7 +2869,14 @@ begin
     'session', jsonb_build_object(
       'publicId', v_session.public_id,
       'status', v_session.status,
-      'scoringVersion', v_session.scoring_version
+      'scoringVersion', v_session.scoring_version,
+      'countryBetMultiplier', v_session.country_bet_multiplier,
+      'regionBetMultiplier', v_session.region_bet_multiplier,
+      'appellationBetMultiplier', v_session.appellation_bet_multiplier,
+      'grapeBlendBetMultiplier', v_session.grape_blend_bet_multiplier,
+      'vintageBetMultiplier', v_session.vintage_bet_multiplier,
+      'producerBetMultiplier', v_session.producer_bet_multiplier,
+      'wineCuveeBetMultiplier', v_session.wine_cuvee_bet_multiplier
     ),
     'wine', jsonb_build_object(
       'id', v_wine.id,
@@ -2964,6 +3079,13 @@ begin
     'sessionStatus', v_session.status,
     'tastingMode', v_session.tasting_mode,
     'bettingEnabled', v_session.betting_enabled,
+    'countryBetMultiplier', v_session.country_bet_multiplier,
+    'regionBetMultiplier', v_session.region_bet_multiplier,
+    'appellationBetMultiplier', v_session.appellation_bet_multiplier,
+    'grapeBlendBetMultiplier', v_session.grape_blend_bet_multiplier,
+    'vintageBetMultiplier', v_session.vintage_bet_multiplier,
+    'producerBetMultiplier', v_session.producer_bet_multiplier,
+    'wineCuveeBetMultiplier', v_session.wine_cuvee_bet_multiplier,
     'totalCount', v_total_count,
     'revealedCount', v_revealed_count
   );
@@ -3088,6 +3210,13 @@ begin
     'sessionStatus', v_session.status,
     'tastingMode', v_session.tasting_mode,
     'bettingEnabled', v_session.betting_enabled,
+    'countryBetMultiplier', v_session.country_bet_multiplier,
+    'regionBetMultiplier', v_session.region_bet_multiplier,
+    'appellationBetMultiplier', v_session.appellation_bet_multiplier,
+    'grapeBlendBetMultiplier', v_session.grape_blend_bet_multiplier,
+    'vintageBetMultiplier', v_session.vintage_bet_multiplier,
+    'producerBetMultiplier', v_session.producer_bet_multiplier,
+    'wineCuveeBetMultiplier', v_session.wine_cuvee_bet_multiplier,
     'totalCount', v_total_count,
     'revealedCount', v_revealed_count,
     'title', v_session.title,
@@ -3192,7 +3321,14 @@ begin
     'guesses', v_guesses,
     'guests', v_guests,
     'scoringVersion', v_session.scoring_version,
-    'myGuestId', v_guest.id
+    'myGuestId', v_guest.id,
+    'countryBetMultiplier', v_session.country_bet_multiplier,
+    'regionBetMultiplier', v_session.region_bet_multiplier,
+    'appellationBetMultiplier', v_session.appellation_bet_multiplier,
+    'grapeBlendBetMultiplier', v_session.grape_blend_bet_multiplier,
+    'vintageBetMultiplier', v_session.vintage_bet_multiplier,
+    'producerBetMultiplier', v_session.producer_bet_multiplier,
+    'wineCuveeBetMultiplier', v_session.wine_cuvee_bet_multiplier
   );
 end;
 $$;
@@ -3488,7 +3624,7 @@ grant select (id, session_id, bottle_number, anonymous_code, created_at)
 grant select on guest_visible_wines to anon, authenticated;
 grant select on revealed_wine_guesses to anon, authenticated;
 
-grant execute on function create_tasting_session(text, date, text, text, text, text, boolean, int) to anon, authenticated;
+grant execute on function create_tasting_session(text, date, text, text, text, text, boolean, int, numeric, numeric, numeric, numeric, numeric, numeric, numeric) to anon, authenticated;
 grant execute on function get_host_session(uuid, text) to anon, authenticated;
 grant execute on function start_tasting_session(uuid, text) to anon, authenticated;
 grant execute on function reveal_tasting_session(uuid, text) to anon, authenticated;

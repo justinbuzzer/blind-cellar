@@ -1,5 +1,6 @@
 import { Card } from "@/components/Card";
 import { FieldScoreTable } from "@/components/report/WineResultCard";
+import { BettableField } from "@/lib/betting";
 import { BottleParticipantScore } from "@/lib/resultsReveal";
 
 /**
@@ -15,8 +16,11 @@ import { BottleParticipantScore } from "@/lib/resultsReveal";
  */
 export function BottleParticipantList({
   participants,
+  multipliers,
 }: {
   participants: BottleParticipantScore[];
+  /** Betting sub-mode only — see BottleResultView.multipliers. Undefined/empty for a non-betting bottle. */
+  multipliers?: Partial<Record<BettableField, number>>;
 }) {
   if (participants.length === 0) {
     return <Card className="text-sm text-cellar-muted">No eligible participants for this bottle.</Card>;
@@ -40,6 +44,7 @@ export function BottleParticipantList({
                 heading="Score breakdown"
                 fields={participant.score.fieldScores.filter((f) => f.category === "core")}
                 bets={Object.keys(participant.bets).length > 0 ? participant.bets : undefined}
+                multipliers={multipliers}
               />
             ) : (
               <p className="text-sm text-cellar-muted">No submitted guess for this bottle.</p>

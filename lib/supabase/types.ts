@@ -215,6 +215,14 @@ export interface HostSessionResponse {
     scoringVersion: ScoringVersion;
     /** Chosen once at creation, course_reveal only — see README "Tasting modes" — "Betting". Optional for the same pre-betting-fixture reason as LeaderboardWineDTO.contributorGuestId — treat a missing value as false. */
     bettingEnabled?: boolean;
+    /** Per-field decimal odds, set once at creation — see README "Tasting modes" — "Betting". Optional/nullable for the same pre-betting-fixture reason as bettingEnabled above; null for a non-betting session. */
+    countryBetMultiplier?: number | null;
+    regionBetMultiplier?: number | null;
+    appellationBetMultiplier?: number | null;
+    grapeBlendBetMultiplier?: number | null;
+    vintageBetMultiplier?: number | null;
+    producerBetMultiplier?: number | null;
+    wineCuveeBetMultiplier?: number | null;
   };
   wines: HostBottleDTO[];
   guests: HostGuestDTO[];
@@ -441,6 +449,14 @@ export interface ActiveBottleStateResponse {
     tastingMode: TastingMode;
     /** See README "Tasting modes" — "Betting". Always false outside course_reveal. */
     bettingEnabled: boolean;
+    /** Per-field decimal odds, set once at creation — see README "Tasting modes" — "Betting". Null for a non-betting session. */
+    countryBetMultiplier: number | null;
+    regionBetMultiplier: number | null;
+    appellationBetMultiplier: number | null;
+    grapeBlendBetMultiplier: number | null;
+    vintageBetMultiplier: number | null;
+    producerBetMultiplier: number | null;
+    wineCuveeBetMultiplier: number | null;
   };
   guestName: string;
   /** Betting sub-mode only — this guest's chosen balance at join time. Null for a non-betting session. */
@@ -552,7 +568,19 @@ export interface BottleResultParticipantDTO {
 
 /** Response from get_bottle_result_for_host — every eligible participant's guess for one revealed bottle. Host-token authenticated; see BottleResultForGuestResponse below for the identically-shaped participant-facing endpoint. See README "Results reveal". */
 export interface BottleResultForHostResponse {
-  session: { publicId: string; status: SessionStatus; scoringVersion: ScoringVersion };
+  session: {
+    publicId: string;
+    status: SessionStatus;
+    scoringVersion: ScoringVersion;
+    /** Per-field decimal odds, set once at creation — see README "Tasting modes" — "Betting". Optional for the same pre-betting-fixture reason as other betting fields in this file; null/absent for a non-betting session. */
+    countryBetMultiplier?: number | null;
+    regionBetMultiplier?: number | null;
+    appellationBetMultiplier?: number | null;
+    grapeBlendBetMultiplier?: number | null;
+    vintageBetMultiplier?: number | null;
+    producerBetMultiplier?: number | null;
+    wineCuveeBetMultiplier?: number | null;
+  };
   wine: RevealedBottleWineDTO;
   participants: BottleResultParticipantDTO[];
 }
@@ -654,6 +682,14 @@ export interface ProvisionalLeaderboardResponse {
   tastingMode: TastingMode;
   /** See README "Tasting modes" — "Betting". Optional for the same pre-betting-fixture reason as LeaderboardWineDTO.contributorGuestId above — treat a missing value as false. */
   bettingEnabled?: boolean;
+  /** Per-field decimal odds, set once at creation. Optional/nullable for the same pre-betting-fixture reason as bettingEnabled above; null for a non-betting session. */
+  countryBetMultiplier?: number | null;
+  regionBetMultiplier?: number | null;
+  appellationBetMultiplier?: number | null;
+  grapeBlendBetMultiplier?: number | null;
+  vintageBetMultiplier?: number | null;
+  producerBetMultiplier?: number | null;
+  wineCuveeBetMultiplier?: number | null;
   totalCount: number;
   revealedCount: number;
 }
@@ -676,6 +712,14 @@ export interface FinalLeaderboardResponse {
   tastingMode: TastingMode;
   /** See README "Tasting modes" — "Betting". Optional — see ProvisionalLeaderboardResponse.bettingEnabled. */
   bettingEnabled?: boolean;
+  /** Per-field decimal odds — see ProvisionalLeaderboardResponse's identical fields above. */
+  countryBetMultiplier?: number | null;
+  regionBetMultiplier?: number | null;
+  appellationBetMultiplier?: number | null;
+  grapeBlendBetMultiplier?: number | null;
+  vintageBetMultiplier?: number | null;
+  producerBetMultiplier?: number | null;
+  wineCuveeBetMultiplier?: number | null;
   totalCount: number;
   revealedCount: number;
   title: string;
@@ -741,6 +785,14 @@ export interface CreditLedgerResponse {
   guests: { id: string; displayName: string; startingCredits: number | null }[];
   scoringVersion: ScoringVersion;
   myGuestId: string;
+  /** Per-field decimal odds, set once at creation — see README "Tasting modes" — "Betting". Always present, since this RPC is unconditionally betting-only (raises betting_not_enabled otherwise). */
+  countryBetMultiplier: number | null;
+  regionBetMultiplier: number | null;
+  appellationBetMultiplier: number | null;
+  grapeBlendBetMultiplier: number | null;
+  vintageBetMultiplier: number | null;
+  producerBetMultiplier: number | null;
+  wineCuveeBetMultiplier: number | null;
 }
 
 // --- seen-only shapes (see get_seen_tasting_state / upsert_seen_rating) ---
@@ -946,6 +998,7 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   // Betting sub-mode (see README "Tasting modes" — "Betting").
   invalid_betting_mode: "Betting is only available for Course-by-course reveal tastings.",
   invalid_starting_credits: "Enter a starting credit balance between 1 and 100,000.",
+  invalid_bet_multiplier: "Every betting odds value must be greater than 1 and at most 10.",
   betting_roster_locked:
     "This tasting's betting roster is locked once tasting begins — new participants can no longer join.",
   invalid_bet_amount: "Bets must be zero or a positive whole number.",

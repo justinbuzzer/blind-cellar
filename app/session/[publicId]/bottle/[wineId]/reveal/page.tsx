@@ -228,7 +228,7 @@ export default function BottleRevealPage() {
 
           <section className="flex flex-col gap-2">
             <SectionEyebrow>Everyone&rsquo;s guesses</SectionEyebrow>
-            <BottleParticipantList participants={everyoneView.participants} />
+            <BottleParticipantList participants={everyoneView.participants} multipliers={everyoneView.multipliers} />
           </section>
         </>
       )}

@@ -2464,6 +2464,43 @@ Functional check: create a Course-by-course reveal session with "Enable betting"
 
 No RLS policy changed. Every new/widened RPC is `SECURITY DEFINER`, like every other tasting RPC, and does its own token-based authorization inside the function body. The two column-grant widenings (`tasting_sessions.betting_enabled`, `guests.starting_credits`) are the only new direct-table exposure, and both are deliberately non-sensitive: `betting_enabled` is session metadata already as public as `tasting_mode`, and `starting_credits` is a number this feature's own credits leaderboard already shows to every participant by design — this migration doesn't create a new secrecy boundary, it just widens the pre-existing "safe to expose broadly" grant lists to match a genuinely non-sensitive new field. Every answer-key column, `host_token_hash`, and `guest_token` remain exactly as protected as before — this feature never touches them.
 
+## Migrating for per-field betting odds
+
+Replaces betting's flat 1:1 payout (and its partial credit) with a host-configured decimal-odds multiplier per bettable field, set once at session creation (see README "Tasting modes" — "Betting"). New columns on `tasting_sessions` only, a widened `create_tasting_session`, and six widened read RPCs. Re-running the full `supabase/schema.sql` brings an existing project up to date; every statement here is additive and safe to re-run. A betting session created *before* this migration will have every new multiplier column `null` — its already-revealed bottles are unaffected (nothing here is ever recomputed retroactively into old UI state, since balances were always derived live), but such a session should be treated as a stale test artifact rather than continued, since `buildCreditLedger` now settles nothing at all for a response with no odds config (see below).
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+1. **Seven new `tasting_sessions` columns** — `country_bet_multiplier`, `region_bet_multiplier`, `appellation_bet_multiplier`, `grape_blend_bet_multiplier`, `vintage_bet_multiplier`, `producer_bet_multiplier`, `wine_cuvee_bet_multiplier` (all `numeric(4,2)`, nullable — mirrors `guests.starting_credits`'s own nullable-with-no-cross-column-check pattern, so this never retroactively invalidates an already-created betting session's row), plus one combined `tasting_sessions_bet_multipliers_range` constraint requiring every populated multiplier to be `> 1` and `<= 10`.
+2. **`create_tasting_session` gains seven trailing `numeric default null` parameters** (`p_country_bet_multiplier`, …) — when `p_betting_enabled` is true, all seven must be present and in range (`invalid_bet_multiplier` otherwise, mirroring the range constraint), and are inserted into the new columns; a non-betting session stores `null` for all seven. The old 8-parameter signature is explicitly dropped.
+3. **Six RPCs are widened with the same seven `*BetMultiplier` fields** (`countryBetMultiplier`, …), read straight off the session row: `get_host_session` and `get_active_bottle_state` (nested under `session`, so the guess form can show each field's odds before a guesser bets), `get_provisional_leaderboard_for_host` and `get_final_leaderboard_for_guest` (top level, needed for settlement), `get_credit_ledger_for_guest` (top level, unconditional — this RPC is already betting-only gated), and `get_bottle_result_for_host`/`get_bottle_result_for_guest` (nested under `session`, so the already-shipped "Everyone's guesses" Bet column can show the odds beside each wager, e.g. `10 cr @ 1.3x`).
+4. **`upsert_wine_guess` needed no changes** — bet amounts per guess are unaffected; odds live on the session, not the guess.
+5. **No grant widened** beyond the `create_tasting_session` function-signature grant — the seven new columns are never read via a raw `select`, only through the RPCs above, so no column-grant list needed a new entry.
+
+### 2. Verification queries
+
+```sql
+-- confirm the new columns and constraint exist
+select column_name from information_schema.columns
+  where table_name = 'tasting_sessions' and column_name like '%_bet_multiplier';
+-- expect: country_bet_multiplier, region_bet_multiplier, appellation_bet_multiplier,
+--         grape_blend_bet_multiplier, vintage_bet_multiplier, producer_bet_multiplier,
+--         wine_cuvee_bet_multiplier
+
+-- confirm create_tasting_session's new 15-parameter signature is live
+select pg_get_function_arguments(oid) from pg_proc where proname = 'create_tasting_session';
+
+-- confirm a betting-enabled session actually gets its configured odds
+-- (create one via the app's "Betting odds" inputs, then:)
+select country_bet_multiplier, producer_bet_multiplier from tasting_sessions order by created_at desc limit 1;
+-- expect: whatever you entered, not null
+```
+
+Functional check: create a Course-by-course reveal session with betting enabled and distinct odds per field (e.g. Country 1.3x, Producer 2.8x), join 2+ guests, register a bottle, place a mix of exact and wrong bets across fields (including a near-miss that would have earned partial credit under accuracy scoring — vintage one year off, say), reveal it, and confirm each guesser's credit change matches by hand: an exact match wins `round((multiplier - 1) * bet)`, everything else loses the full bet — see README "Tasting modes" — "Betting" and its manual test checklist entries.
+
+### RLS summary
+
+No RLS policy changed and no new column grant — the seven new columns are only ever read through existing `SECURITY DEFINER` RPCs, never a direct `select`. Odds are exactly as non-sensitive as `betting_enabled`/`starting_credits` already are (every bettor sees every field's odds on the guess form by design), so this migration doesn't create or need a new secrecy boundary.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

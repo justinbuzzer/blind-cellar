@@ -1,22 +1,19 @@
-import { FieldScore, GrapeBlendMode, WineAnswerKey, WineGuess } from "@/types/tasting";
-import { isNormalizedMatch } from "./normalize";
-import {
-  scoreCuveeWithPartialCredit,
-  scoreGrapeBlend,
-  scoreProducerWithPartialCredit,
-  scoreVintageWithPartialCredit,
-} from "./scoring";
+import { GrapeBlendMode, WineAnswerKey, WineGuess } from "@/types/tasting";
+import { isCuveeBlindMatch, isNormalizedMatch, isProducerBlindMatch } from "./normalize";
+import { scoreGrapeBlend } from "./scoring";
 import { rankByDescendingKeys } from "./results";
 
 /**
  * The betting sub-mode's settlement engine (see README "Tasting modes" —
- * "Betting"). Deliberately never duplicates any scoring math: every field's
- * correctness/partial-credit fraction is computed by calling the exact same
- * lib/scoring.ts functions the accuracy-scoring pipeline already uses,
- * passing the guest's own bet amount in as `pointsAvailable` instead of a
- * fixed weight. Like every other scoring computation in this app, nothing
- * here is ever persisted — a guest's credit balance is derived live from the
- * raw bet/guess rows on every load (see buildCreditLedger).
+ * "Betting"). Deliberately never duplicates any correctness-matching logic:
+ * every field's exact-match check reuses the exact same primitives
+ * (isNormalizedMatch/isProducerBlindMatch/isCuveeBlindMatch/scoreGrapeBlend's
+ * `.correct`) the accuracy-scoring pipeline computes from — but, unlike
+ * accuracy scoring, betting has no partial credit of its own: a field's odds
+ * multiplier (see BetMultipliers below) is what tunes the risk/reward
+ * instead. Like every other scoring computation in this app, nothing here is
+ * ever persisted — a guest's credit balance is derived live from the raw
+ * bet/guess rows on every load (see buildCreditLedger).
  */
 export const BETTABLE_FIELDS = [
   "country",
@@ -33,10 +30,22 @@ export type BettableField = (typeof BETTABLE_FIELDS)[number];
 /** One guest's chosen wager per field, in the same shape as WineGuess's own field names. 0/undefined means "no bet on this field" — never forced. */
 export type FieldBets = Partial<Record<BettableField, number>>;
 
+/**
+ * One session's host-configured decimal odds per bettable field (see README
+ * "Tasting modes" — "Betting") — payout on a win is `(multiplier - 1) *
+ * bet`. Required (not partial) for a betting-enabled session: every field
+ * always has a multiplier, set once at session creation and never editable
+ * afterwards (balances are recomputed live on every load, so a
+ * mid-tasting change would silently rewrite already-shown history).
+ */
+export type BetMultipliers = Record<BettableField, number>;
+
 export interface FieldSettlement {
   field: BettableField;
   /** The amount actually wagered (never negative — see upsert_wine_guess's own validation). */
   bet: number;
+  /** Whether this field's guess was an exact match — the sole determinant of win/loss under the odds-multiplier system (no partial credit in betting). */
+  correct: boolean;
   /**
    * From the guesser's perspective: positive = won this amount from the
    * bottle's contributor, negative = lost this amount to them. Always 0 when
@@ -45,23 +54,20 @@ export interface FieldSettlement {
    * never treated as a loss, since there was nothing to guess.
    */
   guesserDelta: number;
-  /** The underlying score, reused verbatim from lib/scoring.ts for display (e.g. the same Correct/Partial/Incorrect badge accuracy scoring already uses) — pointsAvailable here equals `bet`, not a fixed weight. */
-  fieldScore: FieldScore;
 }
 
 /**
  * Settlement formula (see README "Tasting modes" — "Betting"): an exact
- * match wins the guesser the full bet; anything short of exact — partial
- * credit or a total miss — costs the guesser `bet - points` (a total miss
- * costs the full bet, a half-credit result costs half the bet, a grape-blend
- * guess sharing 2 of 3 grapes costs 1/3 of the bet, etc). Never a smooth
- * function of the score fraction: exact match is a genuine win, not merely
- * "no loss".
+ * match wins the guesser `round((multiplier - 1) * bet)` from the
+ * contributor; anything short of exact — no partial credit here, unlike
+ * accuracy scoring — costs the guesser the full bet. Never a smooth function
+ * of closeness: exact match is a genuine win, everything else is a total
+ * loss, and the multiplier is the only lever that shapes the payout.
  */
-function settlementDeltaFor(fieldScore: FieldScore, bet: number): number {
-  if (fieldScore.applicable === false) return 0;
-  const delta = fieldScore.correct ? bet : -(bet - fieldScore.points);
-  return delta || 0; // normalizes -0 (e.g. a 0 bet's -(0-0)) to a plain 0
+function settlementDeltaFor(applicable: boolean, correct: boolean, bet: number, multiplier: number): number {
+  if (!applicable) return 0;
+  const delta = correct ? Math.round((multiplier - 1) * bet) : -bet;
+  return delta || 0; // normalizes -0 (e.g. a 0 bet's -bet) to a plain 0
 }
 
 /**
@@ -73,77 +79,52 @@ function settlementDeltaFor(fieldScore: FieldScore, bet: number): number {
 export function settleFieldBet(
   field: BettableField,
   bet: number,
+  multiplier: number,
   guess: WineGuess,
   answer: Omit<WineAnswerKey, "contributorGuestId">
 ): FieldSettlement {
   const b = Math.max(0, bet);
-  let fieldScore: FieldScore;
+  let applicable = true;
+  let correct: boolean;
 
   switch (field) {
-    case "country": {
-      const correct = isNormalizedMatch(guess.country, answer.country);
-      fieldScore = {
-        field: "country",
-        category: "core",
-        guessedValue: guess.country.trim() || "—",
-        answerValue: answer.country || "—",
-        correct,
-        points: correct ? b : 0,
-        pointsAvailable: b,
-      };
+    case "country":
+      correct = isNormalizedMatch(guess.country, answer.country);
       break;
-    }
-    case "region": {
-      const correct = isNormalizedMatch(guess.region, answer.region);
-      fieldScore = {
-        field: "region",
-        category: "core",
-        guessedValue: guess.region.trim() || "—",
-        answerValue: answer.region || "—",
-        correct,
-        points: correct ? b : 0,
-        pointsAvailable: b,
-      };
+    case "region":
+      correct = isNormalizedMatch(guess.region, answer.region);
       break;
-    }
     case "appellation": {
       const actualAppellation = (answer.appellation ?? "").trim();
-      const applicable = actualAppellation.length > 0;
-      const correct = applicable ? isNormalizedMatch(guess.appellation, actualAppellation) : false;
-      fieldScore = {
-        field: "appellation",
-        category: "core",
-        guessedValue: guess.appellation.trim() || "—",
-        answerValue: actualAppellation || "—",
-        correct,
-        points: applicable && correct ? b : 0,
-        pointsAvailable: applicable ? b : 0,
-        applicable,
-      };
+      applicable = actualAppellation.length > 0;
+      correct = applicable ? isNormalizedMatch(guess.appellation, actualAppellation) : false;
       break;
     }
     case "grapeBlend":
-      fieldScore = scoreGrapeBlend(
+      correct = scoreGrapeBlend(
         guess.grapeBlendMode,
         guess.grapeBlend,
         answer.grapeBlendMode,
-        answer.grapeBlend,
-        b,
-        true
-      );
+        answer.grapeBlend
+      ).correct;
       break;
     case "vintage":
-      fieldScore = scoreVintageWithPartialCredit(guess.vintage, answer.vintage, b);
+      correct = isNormalizedMatch(guess.vintage, answer.vintage);
       break;
     case "producer":
-      fieldScore = scoreProducerWithPartialCredit(guess.producer, answer.producer, b);
+      correct = isProducerBlindMatch(guess.producer, answer.producer);
       break;
     case "wineName":
-      fieldScore = scoreCuveeWithPartialCredit(guess.wineName, answer.wineName, b);
+      correct = isCuveeBlindMatch(guess.wineName, answer.wineName);
       break;
   }
 
-  return { field, bet: b, guesserDelta: settlementDeltaFor(fieldScore, b), fieldScore };
+  return {
+    field,
+    bet: b,
+    correct,
+    guesserDelta: settlementDeltaFor(applicable, correct, b, multiplier),
+  };
 }
 
 /**
@@ -184,10 +165,13 @@ export interface BottleSettlement {
 /** Settles every guesser's bets against one revealed bottle. */
 export function settleBottleBets(
   wine: SettlementWine,
-  guessers: { guestId: string; guestName: string; guess: WineGuess; bets: FieldBets }[]
+  guessers: { guestId: string; guestName: string; guess: WineGuess; bets: FieldBets }[],
+  multipliers: BetMultipliers
 ): BottleSettlement {
   const guesserSettlements: GuesserBetSettlement[] = guessers.map((g) => {
-    const fields = BETTABLE_FIELDS.map((field) => settleFieldBet(field, g.bets[field] ?? 0, g.guess, wine));
+    const fields = BETTABLE_FIELDS.map((field) =>
+      settleFieldBet(field, g.bets[field] ?? 0, multipliers[field], g.guess, wine)
+    );
     const netDelta = fields.reduce((sum, f) => sum + f.guesserDelta, 0);
     return { guestId: g.guestId, guestName: g.guestName, fields, netDelta };
   });
@@ -267,6 +251,34 @@ export interface CreditLedgerSource {
     wineCuveeBet?: number | null;
   }[];
   guests: { id: string; displayName: string; startingCredits?: number | null }[];
+  /**
+   * Session-scoped odds (see BetMultipliers above) — optional for the same
+   * pre-betting-fixture reason as every other betting-only field here.
+   * `null`/absent for a non-betting session, in which case buildCreditLedger
+   * never calls the settlement engine at all (nothing to settle).
+   */
+  countryBetMultiplier?: number | null;
+  regionBetMultiplier?: number | null;
+  appellationBetMultiplier?: number | null;
+  grapeBlendBetMultiplier?: number | null;
+  vintageBetMultiplier?: number | null;
+  producerBetMultiplier?: number | null;
+  wineCuveeBetMultiplier?: number | null;
+}
+
+/** Null if any field's multiplier is missing — i.e. a non-betting session, where there is nothing to settle. */
+function multipliersFromSource(response: CreditLedgerSource): BetMultipliers | null {
+  const m: FieldBets = {
+    country: response.countryBetMultiplier ?? undefined,
+    region: response.regionBetMultiplier ?? undefined,
+    appellation: response.appellationBetMultiplier ?? undefined,
+    grapeBlend: response.grapeBlendBetMultiplier ?? undefined,
+    vintage: response.vintageBetMultiplier ?? undefined,
+    producer: response.producerBetMultiplier ?? undefined,
+    wineName: response.wineCuveeBetMultiplier ?? undefined,
+  };
+  if (BETTABLE_FIELDS.some((field) => m[field] === undefined)) return null;
+  return m as BetMultipliers;
 }
 
 function mapLedgerWineToAnswerKey(w: CreditLedgerSource["wines"][number]): SettlementWine {
@@ -331,29 +343,37 @@ export function buildCreditLedger(response: CreditLedgerSource): CreditLedgerVie
     balances.set(g.id, g.startingCredits ?? 0);
   }
 
-  const lockedGuesses = response.guesses.filter((g) => g.lockedAt !== null);
+  // Null only for a non-betting session (or a response missing its odds
+  // config) — nothing to settle, every guest just sits at their starting
+  // balance.
+  const multipliers = multipliersFromSource(response);
 
-  for (const wineDto of response.wines) {
-    const wine = mapLedgerWineToAnswerKey(wineDto);
-    const guessesForWine = lockedGuesses.filter((g) => g.wineId === wine.id);
-    const settlement = settleBottleBets(
-      wine,
-      guessesForWine.map((g) => ({
-        guestId: g.guestId,
-        guestName: g.guestName,
-        guess: mapLedgerGuessToWineGuess(wine.id, g),
-        bets: betsFromDto(g),
-      }))
-    );
+  if (multipliers) {
+    const lockedGuesses = response.guesses.filter((g) => g.lockedAt !== null);
 
-    for (const g of settlement.guessers) {
-      balances.set(g.guestId, (balances.get(g.guestId) ?? 0) + g.netDelta);
-    }
-    if (settlement.contributorGuestId && settlement.contributorDelta !== null) {
-      balances.set(
-        settlement.contributorGuestId,
-        (balances.get(settlement.contributorGuestId) ?? 0) + settlement.contributorDelta
+    for (const wineDto of response.wines) {
+      const wine = mapLedgerWineToAnswerKey(wineDto);
+      const guessesForWine = lockedGuesses.filter((g) => g.wineId === wine.id);
+      const settlement = settleBottleBets(
+        wine,
+        guessesForWine.map((g) => ({
+          guestId: g.guestId,
+          guestName: g.guestName,
+          guess: mapLedgerGuessToWineGuess(wine.id, g),
+          bets: betsFromDto(g),
+        })),
+        multipliers
       );
+
+      for (const g of settlement.guessers) {
+        balances.set(g.guestId, (balances.get(g.guestId) ?? 0) + g.netDelta);
+      }
+      if (settlement.contributorGuestId && settlement.contributorDelta !== null) {
+        balances.set(
+          settlement.contributorGuestId,
+          (balances.get(settlement.contributorGuestId) ?? 0) + settlement.contributorDelta
+        );
+      }
     }
   }
 

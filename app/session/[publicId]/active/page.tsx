@@ -32,7 +32,7 @@ import { getGuestToken, getHostToken } from "@/lib/deviceStorage";
 import { waitingToRevealImage } from "@/lib/appImages";
 import { buildBottleDisplayLabels, formatBottleAccessibleLabel, formatContributorBottleLabel } from "@/lib/contributorLabel";
 import { WineGuess } from "@/types/tasting";
-import { BETTABLE_FIELDS, FieldBets, buildCreditLedger, findMyLedgerEntry } from "@/lib/betting";
+import { BETTABLE_FIELDS, BettableField, FieldBets, buildCreditLedger, findMyLedgerEntry } from "@/lib/betting";
 
 type LoadState =
   | "loading"
@@ -77,6 +77,7 @@ export default function ActiveBottlePage() {
   const [bets, setBets] = useState<FieldBets>({});
   const [currentBalance, setCurrentBalance] = useState<number | null>(null);
   const [betError, setBetError] = useState<string | null>(null);
+  const [multipliers, setMultipliers] = useState<Partial<Record<BettableField, number>> | null>(null);
 
   const guestTokenRef = useRef<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -191,8 +192,18 @@ export default function ActiveBottlePage() {
         const mine = findMyLedgerEntry(entries, ledgerData.myGuestId);
         setCurrentBalance(mine?.currentBalance ?? data.startingCredits ?? 0);
       });
+      setMultipliers({
+        country: data.session.countryBetMultiplier ?? undefined,
+        region: data.session.regionBetMultiplier ?? undefined,
+        appellation: data.session.appellationBetMultiplier ?? undefined,
+        grapeBlend: data.session.grapeBlendBetMultiplier ?? undefined,
+        vintage: data.session.vintageBetMultiplier ?? undefined,
+        producer: data.session.producerBetMultiplier ?? undefined,
+        wineName: data.session.wineCuveeBetMultiplier ?? undefined,
+      });
     } else {
       setCurrentBalance(null);
+      setMultipliers(null);
     }
 
     if (isHostRef.current) {
@@ -499,6 +510,7 @@ export default function ActiveBottlePage() {
             blendError={blendError ?? otherGrapeError ?? undefined}
             bets={bettingEnabled ? bets : undefined}
             onBetsChange={bettingEnabled ? updateBets : undefined}
+            multipliers={bettingEnabled ? multipliers ?? undefined : undefined}
           />
 
           <SavingIndicator state={saveState} />

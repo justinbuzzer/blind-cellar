@@ -35,14 +35,19 @@ function BetInput({
   field,
   bets,
   onBetsChange,
+  multiplier,
 }: {
   field: BettableField;
   bets: FieldBets;
   onBetsChange: (bets: FieldBets) => void;
+  /** This field's decimal odds — see README "Tasting modes" — "Betting". Shown beside the "Bet" label so a guesser knows the payout ratio before wagering. Omitted only if the session response hasn't loaded its odds config yet. */
+  multiplier?: number;
 }) {
   return (
     <label className="flex shrink-0 flex-col gap-1">
-      <span className="text-xs font-medium uppercase tracking-wide text-cellar-gold">Bet</span>
+      <span className="text-xs font-medium uppercase tracking-wide text-cellar-gold">
+        Bet{typeof multiplier === "number" ? ` (${multiplier}x)` : ""}
+      </span>
       <input
         type="number"
         inputMode="numeric"
@@ -88,6 +93,8 @@ interface WineGuessFormProps {
    */
   bets?: FieldBets;
   onBetsChange?: (bets: FieldBets) => void;
+  /** This session's per-field decimal odds — see README "Tasting modes" — "Betting". Only meaningful alongside bets/onBetsChange; shown beside each "Bet" label. */
+  multipliers?: Partial<Record<BettableField, number>>;
 }
 
 export function WineGuessForm({
@@ -100,6 +107,7 @@ export function WineGuessForm({
   styleHint,
   bets,
   onBetsChange,
+  multipliers,
 }: WineGuessFormProps) {
   const [clearedMessage, setClearedMessage] = useState("");
   const bettingEnabled = bets !== undefined && onBetsChange !== undefined;
@@ -188,7 +196,9 @@ export function WineGuessForm({
                 className="w-full"
               />
             </div>
-            {bettingEnabled && <BetInput field="country" bets={bets} onBetsChange={onBetsChange} />}
+            {bettingEnabled && (
+              <BetInput field="country" bets={bets} onBetsChange={onBetsChange} multiplier={multipliers?.country} />
+            )}
           </div>
           <div className="flex items-end gap-2">
             <div className="min-w-0 flex-1">
@@ -202,7 +212,9 @@ export function WineGuessForm({
                 className="w-full"
               />
             </div>
-            {bettingEnabled && <BetInput field="region" bets={bets} onBetsChange={onBetsChange} />}
+            {bettingEnabled && (
+              <BetInput field="region" bets={bets} onBetsChange={onBetsChange} multiplier={multipliers?.region} />
+            )}
           </div>
         </div>
         {showAppellation && (
@@ -218,7 +230,14 @@ export function WineGuessForm({
                 className="w-full"
               />
             </div>
-            {bettingEnabled && <BetInput field="appellation" bets={bets} onBetsChange={onBetsChange} />}
+            {bettingEnabled && (
+              <BetInput
+                field="appellation"
+                bets={bets}
+                onBetsChange={onBetsChange}
+                multiplier={multipliers?.appellation}
+              />
+            )}
           </div>
         )}
         <p role="status" aria-live="polite" className="sr-only">
@@ -243,7 +262,14 @@ export function WineGuessForm({
               wineStyle={styleFilterKey}
             />
           </div>
-          {bettingEnabled && <BetInput field="grapeBlend" bets={bets} onBetsChange={onBetsChange} />}
+          {bettingEnabled && (
+            <BetInput
+              field="grapeBlend"
+              bets={bets}
+              onBetsChange={onBetsChange}
+              multiplier={multipliers?.grapeBlend}
+            />
+          )}
         </div>
         {grapeAssistanceMessage && (
           <p role="status" aria-live="polite" className="text-xs text-cellar-text/60">
@@ -257,7 +283,9 @@ export function WineGuessForm({
               onChange={(next) => set("vintage", next)}
             />
           </div>
-          {bettingEnabled && <BetInput field="vintage" bets={bets} onBetsChange={onBetsChange} />}
+          {bettingEnabled && (
+            <BetInput field="vintage" bets={bets} onBetsChange={onBetsChange} multiplier={multipliers?.vintage} />
+          )}
         </div>
       </div>
 
@@ -274,7 +302,9 @@ export function WineGuessForm({
                 className="w-full"
               />
             </div>
-            {bettingEnabled && <BetInput field="producer" bets={bets} onBetsChange={onBetsChange} />}
+            {bettingEnabled && (
+              <BetInput field="producer" bets={bets} onBetsChange={onBetsChange} multiplier={multipliers?.producer} />
+            )}
           </div>
           <div className="flex items-end gap-2">
             <div className="min-w-0 flex-1">
@@ -287,7 +317,9 @@ export function WineGuessForm({
                 className="w-full"
               />
             </div>
-            {bettingEnabled && <BetInput field="wineName" bets={bets} onBetsChange={onBetsChange} />}
+            {bettingEnabled && (
+              <BetInput field="wineName" bets={bets} onBetsChange={onBetsChange} multiplier={multipliers?.wineName} />
+            )}
           </div>
         </div>
       </div>

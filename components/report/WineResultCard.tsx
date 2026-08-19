@@ -4,7 +4,7 @@ import {
   WineResult,
 } from "@/types/tasting";
 import { compactWineLocationLabel, wineDisplayName } from "@/lib/appellations";
-import { FieldBets } from "@/lib/betting";
+import { BettableField, FieldBets } from "@/lib/betting";
 import { Card } from "@/components/Card";
 import { MatchBadge } from "@/components/MatchBadge";
 import { Stat } from "@/components/Stat";
@@ -227,6 +227,7 @@ export function FieldScoreTable({
   heading,
   fields,
   bets,
+  multipliers,
 }: {
   heading: string;
   fields: FieldScore[];
@@ -237,6 +238,8 @@ export function FieldScoreTable({
    * which renders exactly as it did before this prop existed.
    */
   bets?: FieldBets;
+  /** This session's per-field decimal odds, shown as "{bet} cr @ {multiplier}x" when both a bet and its odds are known. Undefined shows just "{bet} cr". */
+  multipliers?: Partial<Record<BettableField, number>>;
 }) {
   if (fields.length === 0) return null;
   const gridColsClass = bets
@@ -281,7 +284,11 @@ export function FieldScoreTable({
             </span>
             {bets && (
               <span className="text-cellar-muted">
-                {bets[fieldScore.field] ? `${bets[fieldScore.field]} cr` : "—"}
+                {bets[fieldScore.field]
+                  ? `${bets[fieldScore.field]} cr${
+                      multipliers?.[fieldScore.field] ? ` @ ${multipliers[fieldScore.field]}x` : ""
+                    }`
+                  : "—"}
               </span>
             )}
             <MatchBadge correct={fieldScore.correct} points={fieldScore.points} pointsAvailable={fieldScore.pointsAvailable} />
