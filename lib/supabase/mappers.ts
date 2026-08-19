@@ -82,7 +82,6 @@ export function mapGuestGuessDtoToWineGuess(dto: GuestGuessDTO): WineGuess {
     wineName: dto.wineCuveeGuess,
     vintage: dto.vintageGuess,
     rating: dto.rating,
-    confidence: dto.confidence,
     note: dto.tastingNote ?? undefined,
   };
 }
@@ -128,7 +127,6 @@ export function mapRevealedGuessRowToWineGuess(row: RevealedWineGuessRow): WineG
     wineName: row.wine_cuvee_guess,
     vintage: row.vintage_guess,
     rating: row.rating,
-    confidence: row.confidence,
     note: row.tasting_note ?? undefined,
   };
 }
@@ -210,7 +208,6 @@ function mapRevealedBottleGuessToWineGuess(wineId: string, dto: RevealedBottleGu
     wineName: dto.wineCuveeGuess,
     vintage: dto.vintageGuess,
     rating: dto.rating,
-    confidence: dto.confidence,
   };
 }
 

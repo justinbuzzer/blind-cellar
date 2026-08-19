@@ -348,7 +348,6 @@ function makeGuess(overrides: Partial<WineGuess> = {}): WineGuess {
     wineName: "",
     vintage: "",
     rating: null,
-    confidence: "medium",
     ...overrides,
   };
 }

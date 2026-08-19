@@ -167,7 +167,6 @@ describe("calculateTasterResults ranking", () => {
           wineName: "",
           vintage: "",
           rating,
-          confidence: "medium",
         },
       ],
     };
@@ -214,7 +213,6 @@ describe("calculateTasterResults ranking", () => {
             wineName: "",
             vintage: "",
             rating: 90,
-            confidence: "medium",
           },
         ],
       },
@@ -238,7 +236,6 @@ describe("calculateTasterResults ranking", () => {
             wineName: "Cuvee Wine A",
             vintage: "",
             rating: 90,
-            confidence: "medium",
           },
         ],
       },
@@ -288,7 +285,6 @@ describe("calculateTasterResults ranking", () => {
             wineName: "",
             vintage: "",
             rating: 90,
-            confidence: "medium",
           },
           {
             wineId: "w2",
@@ -303,7 +299,6 @@ describe("calculateTasterResults ranking", () => {
             wineName: "",
             vintage: "",
             rating: 90,
-            confidence: "medium",
           },
         ],
       },
@@ -327,7 +322,6 @@ describe("calculateTasterResults ranking", () => {
             wineName: "",
             vintage: "",
             rating: 90,
-            confidence: "medium",
           },
           {
             wineId: "w2",
@@ -342,7 +336,6 @@ describe("calculateTasterResults ranking", () => {
             wineName: "",
             vintage: "2020",
             rating: 90,
-            confidence: "medium",
           },
         ],
       },
@@ -376,7 +369,6 @@ describe("calculateTasterResults ranking", () => {
         wineName: "",
         vintage: "",
         rating: 90,
-        confidence: "medium",
       },
     ];
     const submissions: GuestSubmission[] = [
@@ -456,7 +448,6 @@ describe("calculateTasterResults ranking (core_v3_appellation_conditional)", () 
       wineName: overrides.wineName ?? "Cuvee",
       vintage: overrides.vintage ?? "2018",
       rating: 90,
-      confidence: "medium",
     };
   }
 
@@ -637,7 +628,6 @@ describe("calculateTasterResults ranking (core_v4_partial_credit)", () => {
       wineName: overrides.wineName ?? "Cuvee",
       vintage: overrides.vintage ?? "2018",
       rating: 90,
-      confidence: "medium",
     };
   }
 

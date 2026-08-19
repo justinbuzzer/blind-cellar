@@ -1,7 +1,6 @@
 import {
   BottleFormat,
   CellarBottleStatus,
-  Confidence,
   ContributorStyleBucket,
   GrapeBlendMode,
   ScoringVersion,
@@ -96,7 +95,6 @@ export interface RevealedWineGuessRow {
   wine_cuvee_guess: string;
   vintage_guess: string;
   rating: number | null;
-  confidence: Confidence;
   tasting_note: string | null;
   submitted_at: string;
   locked_at: string | null;
@@ -256,7 +254,6 @@ export interface GuestGuessDTO {
   wineCuveeGuess: string;
   vintageGuess: string;
   rating: number | null;
-  confidence: Confidence;
   tastingNote: string | null;
   /**
    * Betting sub-mode only (see README "Tasting modes" — "Betting") —
@@ -481,7 +478,6 @@ export interface RevealedBottleGuessDTO {
   wineCuveeGuess: string;
   vintageGuess: string;
   rating: number | null;
-  confidence: Confidence;
 }
 
 export interface RevealedBottleWineDTO {
@@ -541,7 +537,6 @@ export interface BottleResultGuessDTO {
   wineCuveeGuess: string;
   vintageGuess: string;
   rating: number | null;
-  confidence: Confidence;
   /**
    * Betting sub-mode only (see README "Tasting modes" — "Betting") — always
    * null for a non-betting session. Optional (rather than required) for the
@@ -661,7 +656,6 @@ export interface LeaderboardGuessDTO {
   wineCuveeGuess: string;
   vintageGuess: string;
   rating: number | null;
-  confidence: Confidence;
   /** Betting sub-mode only — see README "Tasting modes" — "Betting". Null/0/undefined all mean no bet was placed on this field; optional for the same pre-betting-fixture reason as LeaderboardWineDTO.contributorGuestId above. */
   countryBet?: number | null;
   regionBet?: number | null;
@@ -824,7 +818,6 @@ export interface SeenBottleDTO {
   /** See README "Bottle photos" — Seen shows this unmasked from the start, same as every other field here. */
   photoPath: string | null;
   myRating: number | null;
-  myConfidence: Confidence | null;
   myNote: string | null;
   /** Null until the host reveals this specific bottle's group rating — see README "Seen Host Controls". */
   ratingsRevealedAt: string | null;

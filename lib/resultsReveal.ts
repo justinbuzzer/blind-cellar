@@ -109,7 +109,6 @@ function mapBottleGuessDtoToWineGuess(wineId: string, dto: BottleResultGuessDTO)
     wineName: dto.wineCuveeGuess,
     vintage: dto.vintageGuess,
     rating: dto.rating,
-    confidence: dto.confidence,
   };
 }
 
@@ -267,7 +266,6 @@ function buildRankedResults(source: RankedResultsSource): RankedResults {
     wine_cuvee_guess: g.wineCuveeGuess,
     vintage_guess: g.vintageGuess,
     rating: g.rating,
-    confidence: g.confidence,
     tasting_note: null,
     submitted_at: "",
     locked_at: g.lockedAt,

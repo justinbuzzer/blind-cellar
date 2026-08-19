@@ -90,7 +90,6 @@ const demoSubmissions: GuestSubmission[] = [
         wineName: "Chaupin",
         vintage: "2019",
         rating: 89,
-        confidence: "high",
         note: "Peppery and warm, classic southern Rhone.",
       }),
       guess("demo-wine-b", {
@@ -102,7 +101,6 @@ const demoSubmissions: GuestSubmission[] = [
         wineName: "Cascina Francia",
         vintage: "2016",
         rating: 95,
-        confidence: "high",
         note: "Structured, floral, clearly serious Piedmont.",
       }),
       guess("demo-wine-c", {
@@ -114,7 +112,6 @@ const demoSubmissions: GuestSubmission[] = [
         wineName: "Sauvignon Blanc",
         vintage: "2021",
         rating: 84,
-        confidence: "medium",
         note: "",
       }),
     ],
@@ -136,7 +133,6 @@ const demoSubmissions: GuestSubmission[] = [
         wineName: "Chaupin",
         vintage: "2018",
         rating: 92,
-        confidence: "medium",
         note: "",
       }),
       guess("demo-wine-b", {
@@ -148,7 +144,6 @@ const demoSubmissions: GuestSubmission[] = [
         wineName: "Cascina Francia",
         vintage: "2015",
         rating: 90,
-        confidence: "low",
         note: "Tough to place exactly, but clearly top-tier Piedmont.",
       }),
       guess("demo-wine-c", {
@@ -160,7 +155,6 @@ const demoSubmissions: GuestSubmission[] = [
         wineName: "Sauvignon Blanc",
         vintage: "2022",
         rating: 78,
-        confidence: "medium",
         note: "",
       }),
     ],
@@ -182,7 +176,6 @@ const demoSubmissions: GuestSubmission[] = [
         wineName: "Chaupin",
         vintage: "2019",
         rating: 85,
-        confidence: "low",
         note: "",
       }),
       guess("demo-wine-b", {
@@ -194,7 +187,6 @@ const demoSubmissions: GuestSubmission[] = [
         wineName: "Monfortino",
         vintage: "2016",
         rating: 97,
-        confidence: "high",
         note: "One of the best things I've tasted this year.",
       }),
       guess("demo-wine-c", {
@@ -206,7 +198,6 @@ const demoSubmissions: GuestSubmission[] = [
         wineName: "Sauvignon Blanc",
         vintage: "2022",
         rating: 88,
-        confidence: "high",
         note: "Textbook Marlborough, very confident on this one.",
       }),
     ],

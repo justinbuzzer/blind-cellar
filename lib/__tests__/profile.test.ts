@@ -85,7 +85,6 @@ function scoredGuess(overrides: Partial<ScoredGuess> = {}, correctFields: string
     coreAccuracyPercent: (corePoints / 100) * 100,
     overallAccuracyPercent: ((corePoints + bonusPoints) / 120) * 100,
     rating: 88,
-    confidence: "medium",
     ...overrides,
   };
 }
@@ -385,7 +384,6 @@ describe("computeBlindPalate and scope independence", () => {
       wineName: "Cuvee A",
       vintage: "2019",
       rating: 90,
-      confidence: "medium" as const,
     };
     const legacyScored = scoreWineGuessLegacyV1("guest-1", "Alice", legacyGuessInput, legacyAnswer);
     expect(legacyScored.totalPoints).toBe(120);

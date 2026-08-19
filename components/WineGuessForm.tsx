@@ -15,7 +15,6 @@ import { TextField } from "./TextField";
 import { SelectField } from "./SelectField";
 import { TextAreaField } from "./TextAreaField";
 import { RatingSlider } from "./RatingSlider";
-import { ConfidencePicker } from "./ConfidencePicker";
 import { VintageField } from "./VintageField";
 import { GrapeBlendField, GrapeBlendFormValue } from "./GrapeBlendField";
 import { SectionEyebrow } from "./SectionEyebrow";
@@ -330,10 +329,6 @@ export function WineGuessForm({
           value={value.rating}
           onChange={(rating) => set("rating", rating)}
           error={ratingError}
-        />
-        <ConfidencePicker
-          value={value.confidence}
-          onChange={(confidence) => set("confidence", confidence)}
         />
         <TextAreaField
           label="Tasting note (optional)"

@@ -56,7 +56,6 @@ function makeGuess(overrides: Partial<BottleResultGuessDTO> = {}): BottleResultG
     wineCuveeGuess: "Les Caillerets",
     vintageGuess: "2019",
     rating: 90,
-    confidence: "high",
     ...overrides,
   };
 }
@@ -201,7 +200,6 @@ function makeLeaderboardGuess(overrides: Partial<LeaderboardGuessDTO> = {}): Lea
     wineCuveeGuess: "Les Caillerets",
     vintageGuess: "2019",
     rating: 90,
-    confidence: "high",
     ...overrides,
   };
 }

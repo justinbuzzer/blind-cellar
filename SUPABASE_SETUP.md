@@ -2501,6 +2501,40 @@ Functional check: create a Course-by-course reveal session with betting enabled 
 
 No RLS policy changed and no new column grant — the seven new columns are only ever read through existing `SECURITY DEFINER` RPCs, never a direct `select`. Odds are exactly as non-sensitive as `betting_enabled`/`starting_credits` already are (every bettor sees every field's odds on the guess form by design), so this migration doesn't create or need a new secrecy boundary.
 
+## Migrating for removing the confidence field
+
+Removes the "Confidence" Low/Medium/High picker entirely — it was always captured-but-never-scored and never displayed anywhere, not even back to the person who set it (see README "Data model notes"). The underlying `wine_guesses.confidence` column is deliberately left in place (`not null default 'medium'`) rather than dropped, mirroring how `price_band`/`price_band_guess` were retired earlier — every new row just gets that default forever, and no existing data is touched.
+
+### 1. Run the SQL (already correct if you paste the whole file)
+
+1. **`upsert_wine_guess` loses its `p_confidence text` parameter** and no longer writes to the `confidence` column — the old 21-parameter overload is explicitly dropped.
+2. **`upsert_seen_rating` loses its `p_confidence text` parameter** the same way — the old 5-parameter overload is explicitly dropped.
+3. **Eight RPCs stop emitting `confidence`/`myConfidence`** in their JSON responses: `get_guest_session_state`, `get_active_bottle_state`, `get_revealed_bottle`, `get_bottle_result_for_host`, `get_bottle_result_for_guest`, `get_provisional_leaderboard_for_host`, `get_final_leaderboard_for_guest`, and `get_seen_tasting_state`.
+4. **Both function-signature grants are updated** to the new, shorter parameter lists.
+
+### 2. Verification queries
+
+```sql
+-- confirm the column still exists (deliberately not dropped)
+select column_name, is_nullable, column_default from information_schema.columns
+  where table_name = 'wine_guesses' and column_name = 'confidence';
+-- expect: confidence, NO, 'medium'::text
+
+-- confirm upsert_wine_guess's new 20-parameter signature is live
+select pg_get_function_arguments(oid) from pg_proc where proname = 'upsert_wine_guess';
+-- expect: no p_confidence anywhere in the list
+
+-- confirm upsert_seen_rating's new 4-parameter signature is live
+select pg_get_function_arguments(oid) from pg_proc where proname = 'upsert_seen_rating';
+-- expect: p_guest_token, p_wine_id, p_rating, p_tasting_note only
+```
+
+Functional check: submit a guess (any tasting mode) or a Seen rating from the app and confirm it saves successfully with no "Confidence" field anywhere on the form; spot-check the row afterward and confirm `confidence` still reads `'medium'` (nothing writes to it anymore, but the column's own default still fires on every insert, exactly as before).
+
+### RLS summary
+
+No RLS policy changed, and no grant was newly added — this migration only ever removes surface area (a parameter, a handful of JSON keys) from functions that were already `SECURITY DEFINER` and already granted.
+
 ## Bottle numbering and concurrency
 
 Every bottle gets a permanent, sequential number starting at 1 per session, and a deleted number is never reused. This is enforced entirely in `register_bottle` (see `supabase/schema.sql`):

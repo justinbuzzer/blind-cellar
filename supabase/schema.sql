@@ -214,6 +214,12 @@ create table if not exists wine_guesses (
   -- guess-entry form) — kept nullable so existing rows are unaffected.
   price_band_guess text check (price_band_guess is null or price_band_guess in ('under-100', '100-199', '200-399', '400-plus')),
   rating int check (rating is null or (rating between 50 and 100)),
+  -- No longer written by upsert_wine_guess/upsert_seen_rating (the
+  -- confidence picker was removed from every guess/rating form — it was
+  -- always captured-but-never-scored, see README "Data model notes") —
+  -- kept not-null with its 'medium' default so existing rows and the
+  -- column's own constraint are unaffected; every new row just gets the
+  -- same default forever.
   confidence text not null default 'medium' check (confidence in ('low', 'medium', 'high')),
   tasting_note text,
   -- MIGRATION-SENSITIVE: per-bottle finalize signal used only by course_reveal
@@ -446,8 +452,8 @@ create index if not exists wines_session_revealed_order_idx on wines(session_id,
 
 -- 11. Seen tasting mode (see README "Tasting modes"): widen the tasting_mode
 -- check constraint to also allow 'seen'. No new columns — a Seen rating is
--- just a wine_guesses row that only ever sets rating/confidence/tasting_note
--- (see upsert_seen_rating below), relying on the identification-guess
+-- just a wine_guesses row that only ever sets rating/tasting_note (see
+-- upsert_seen_rating below), relying on the identification-guess
 -- columns' existing blank defaults ('' / null) rather than inventing new
 -- ones. Existing full_blind/course_reveal sessions and rows are completely
 -- untouched by this step.
@@ -2113,7 +2119,6 @@ begin
         'wineCuveeGuess', wg.wine_cuvee_guess,
         'vintageGuess', wg.vintage_guess,
         'rating', wg.rating,
-        'confidence', wg.confidence,
         'tastingNote', wg.tasting_note
       ))
       from wine_guesses wg where wg.guest_id = v_guest.id
@@ -2138,6 +2143,10 @@ drop function if exists upsert_wine_guess(text, uuid, text, text, text, text, te
 -- sub-mode — see README "Tasting modes" — "Betting"); explicitly drop the
 -- pre-betting overload.
 drop function if exists upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text, jsonb, text);
+-- Signature changed a third time (confidence removed — the confidence
+-- picker was removed from the guess form entirely, see README "Data model
+-- notes"); explicitly drop the with-confidence overload.
+drop function if exists upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text, jsonb, text, int, int, int, int, int, int, int);
 
 create or replace function upsert_wine_guess(
   p_guest_token text,
@@ -2150,7 +2159,6 @@ create or replace function upsert_wine_guess(
   p_wine_cuvee_guess text,
   p_vintage_guess text,
   p_rating int,
-  p_confidence text,
   p_tasting_note text,
   p_grape_blend_components jsonb,
   p_appellation_guess text,
@@ -2262,14 +2270,14 @@ begin
   insert into wine_guesses (
     session_id, wine_id, guest_id, country_guess, region_guess, appellation_guess, grape_style_guess,
     grape_blend_mode, grape_blend_components, producer_guess, wine_cuvee_guess, vintage_guess, rating,
-    confidence, tasting_note, submitted_at,
+    tasting_note, submitted_at,
     country_bet, region_bet, appellation_bet, grape_blend_bet, vintage_bet, producer_bet, wine_cuvee_bet
   ) values (
     v_session.id, p_wine_id, v_guest.id, coalesce(p_country_guess, ''), coalesce(p_region_guess, ''),
     nullif(btrim(coalesce(p_appellation_guess, '')), ''),
     coalesce(p_grape_blend_guess, ''), nullif(p_grape_blend_mode, ''), p_grape_blend_components,
     coalesce(p_producer_guess, ''), coalesce(p_wine_cuvee_guess, ''), coalesce(p_vintage_guess, ''), p_rating,
-    coalesce(nullif(p_confidence, ''), 'medium'), nullif(p_tasting_note, ''), now(),
+    nullif(p_tasting_note, ''), now(),
     p_country_bet, p_region_bet, p_appellation_bet, p_grape_blend_bet, p_vintage_bet, p_producer_bet, p_wine_cuvee_bet
   )
   on conflict (guest_id, wine_id) do update set
@@ -2283,7 +2291,6 @@ begin
     wine_cuvee_guess = excluded.wine_cuvee_guess,
     vintage_guess = excluded.vintage_guess,
     rating = excluded.rating,
-    confidence = excluded.confidence,
     tasting_note = excluded.tasting_note,
     submitted_at = now(),
     country_bet = excluded.country_bet,
@@ -2416,7 +2423,6 @@ begin
       'wineCuveeGuess', v_my_guess.wine_cuvee_guess,
       'vintageGuess', v_my_guess.vintage_guess,
       'rating', v_my_guess.rating,
-      'confidence', v_my_guess.confidence,
       'tastingNote', v_my_guess.tasting_note,
       'countryBet', v_my_guess.country_bet,
       'regionBet', v_my_guess.region_bet,
@@ -2604,8 +2610,7 @@ begin
         'producerGuess', wg.producer_guess,
         'wineCuveeGuess', wg.wine_cuvee_guess,
         'vintageGuess', wg.vintage_guess,
-        'rating', wg.rating,
-        'confidence', wg.confidence
+        'rating', wg.rating
       ))
       from wine_guesses wg
       join guests g on g.id = wg.guest_id
@@ -2683,8 +2688,7 @@ begin
           'producerGuess', wg.producer_guess,
           'wineCuveeGuess', wg.wine_cuvee_guess,
           'vintageGuess', wg.vintage_guess,
-          'rating', wg.rating,
-          'confidence', wg.confidence
+          'rating', wg.rating
         )
         from wine_guesses wg where wg.wine_id = v_wine.id and wg.guest_id = g.id
       ) else null end
@@ -2705,7 +2709,6 @@ begin
         'wineCuveeGuess', wg.wine_cuvee_guess,
         'vintageGuess', wg.vintage_guess,
         'rating', wg.rating,
-        'confidence', wg.confidence,
         -- Betting sub-mode only (see README "Tasting modes" — "Betting") —
         -- always null for a non-betting session, since these columns are
         -- never written outside upsert_wine_guess's betting-enabled path.
@@ -2824,8 +2827,7 @@ begin
           'producerGuess', wg.producer_guess,
           'wineCuveeGuess', wg.wine_cuvee_guess,
           'vintageGuess', wg.vintage_guess,
-          'rating', wg.rating,
-          'confidence', wg.confidence
+          'rating', wg.rating
         )
         from wine_guesses wg where wg.wine_id = v_wine.id and wg.guest_id = g.id
       ) else null end
@@ -2846,7 +2848,6 @@ begin
         'wineCuveeGuess', wg.wine_cuvee_guess,
         'vintageGuess', wg.vintage_guess,
         'rating', wg.rating,
-        'confidence', wg.confidence,
         -- Betting sub-mode only (see README "Tasting modes" — "Betting") —
         -- always null for a non-betting session, since these columns are
         -- never written outside upsert_wine_guess's betting-enabled path.
@@ -3047,7 +3048,6 @@ begin
     'wineCuveeGuess', wg.wine_cuvee_guess,
     'vintageGuess', wg.vintage_guess,
     'rating', wg.rating,
-    'confidence', wg.confidence,
     'countryBet', wg.country_bet,
     'regionBet', wg.region_bet,
     'appellationBet', wg.appellation_bet,
@@ -3178,7 +3178,6 @@ begin
     'wineCuveeGuess', wg.wine_cuvee_guess,
     'vintageGuess', wg.vintage_guess,
     'rating', wg.rating,
-    'confidence', wg.confidence,
     'countryBet', wg.country_bet,
     'regionBet', wg.region_bet,
     'appellationBet', wg.appellation_bet,
@@ -3339,8 +3338,8 @@ $$;
 -- tasting — there is no per-bottle blind guess, no identification scoring,
 -- just an own-pace, freely-revisitable rating per bottle until the host ends
 -- the tasting. A "seen rating" is stored in the existing wine_guesses table
--- (see upsert_seen_rating below) but only ever sets rating/confidence/
--- tasting_note — the identification-guess columns simply keep their existing
+-- (see upsert_seen_rating below) but only ever sets rating/tasting_note —
+-- the identification-guess columns simply keep their existing
 -- table defaults ('' / null), exactly as an untouched draft guess already
 -- does in full_blind/course_reveal, so nothing fake is fabricated to satisfy
 -- old constraints. full_blind and course_reveal are entirely unaffected:
@@ -3413,7 +3412,6 @@ begin
         'contributorStyleSequence', w.contributor_style_sequence,
         'photoPath', w.photo_path,
         'myRating', (select rating from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
-        'myConfidence', (select confidence from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
         'myNote', (select tasting_note from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
         'ratingsRevealedAt', w.ratings_revealed_at,
         'groupRating', case when w.ratings_revealed_at is not null then (
@@ -3442,11 +3440,15 @@ $$;
 -- rating can't be added or changed for that bottle after its reveal, even
 -- though the tasting overall is still collecting. This is unrelated to (and
 -- does not reuse) course_reveal's lock_wine_guess.
+-- Signature changed (confidence removed — the confidence picker was removed
+-- from every guess/rating form, see README "Data model notes"); explicitly
+-- drop the with-confidence overload.
+drop function if exists upsert_seen_rating(text, uuid, int, text, text);
+
 create or replace function upsert_seen_rating(
   p_guest_token text,
   p_wine_id uuid,
   p_rating int,
-  p_confidence text,
   p_tasting_note text
 ) returns void
 language plpgsql
@@ -3481,14 +3483,13 @@ begin
     raise exception 'ratings_already_revealed';
   end if;
 
-  insert into wine_guesses (session_id, wine_id, guest_id, rating, confidence, tasting_note, submitted_at)
+  insert into wine_guesses (session_id, wine_id, guest_id, rating, tasting_note, submitted_at)
   values (
     v_session.id, p_wine_id, v_guest.id, p_rating,
-    coalesce(nullif(p_confidence, ''), 'medium'), nullif(p_tasting_note, ''), now()
+    nullif(p_tasting_note, ''), now()
   )
   on conflict (guest_id, wine_id) do update set
     rating = excluded.rating,
-    confidence = excluded.confidence,
     tasting_note = excluded.tasting_note,
     submitted_at = now();
 end;
@@ -3644,13 +3645,13 @@ grant execute on function authorize_bottle_photo_upload(text, text) to anon, aut
 grant execute on function delete_bottle(text, uuid) to anon, authenticated;
 grant execute on function reorder_wines(uuid, text, uuid[]) to anon, authenticated;
 grant execute on function get_guest_session_state(text) to anon, authenticated;
-grant execute on function upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, text, jsonb, text, int, int, int, int, int, int, int) to anon, authenticated;
+grant execute on function upsert_wine_guess(text, uuid, text, text, text, text, text, text, text, int, text, jsonb, text, int, int, int, int, int, int, int) to anon, authenticated;
 grant execute on function get_active_bottle_state(text) to anon, authenticated;
 grant execute on function lock_wine_guess(text, uuid) to anon, authenticated;
 grant execute on function get_revealed_bottle(text, uuid) to anon, authenticated;
 
 grant execute on function get_seen_tasting_state(text) to anon, authenticated;
-grant execute on function upsert_seen_rating(text, uuid, int, text, text) to anon, authenticated;
+grant execute on function upsert_seen_rating(text, uuid, int, text) to anon, authenticated;
 grant execute on function end_seen_tasting(uuid, text) to anon, authenticated;
 
 grant execute on function complete_guest_submission(text) to anon, authenticated;

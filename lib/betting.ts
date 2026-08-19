@@ -313,7 +313,6 @@ function mapLedgerGuessToWineGuess(wineId: string, dto: CreditLedgerSource["gues
     wineName: dto.wineCuveeGuess,
     vintage: dto.vintageGuess,
     rating: null,
-    confidence: "medium",
   };
 }
 

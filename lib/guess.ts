@@ -30,7 +30,6 @@ export function emptyWineGuess(wineId: string): WineGuess {
     wineName: "",
     vintage: "",
     rating: null,
-    confidence: "medium",
     note: "",
   };
 }

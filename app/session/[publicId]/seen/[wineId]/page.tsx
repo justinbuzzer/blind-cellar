@@ -8,7 +8,6 @@ import { Card } from "@/components/Card";
 import { BottlePhoto } from "@/components/BottlePhoto";
 import { SectionEyebrow } from "@/components/SectionEyebrow";
 import { RatingSlider } from "@/components/RatingSlider";
-import { ConfidencePicker } from "@/components/ConfidencePicker";
 import { TextAreaField } from "@/components/TextAreaField";
 import { LoadingState } from "@/components/LoadingState";
 import { UnavailableScreen } from "@/components/UnavailableScreen";
@@ -19,7 +18,7 @@ import { getSeenTastingState, upsertSeenRating } from "@/lib/supabase/guestActio
 import { friendlyRpcError, SeenBottleDTO } from "@/lib/supabase/types";
 import { formatSeenGroupRating } from "@/lib/seenHostControls";
 import { formatContributorBottleLabel, wineStyleToContributorBucket } from "@/lib/contributorLabel";
-import { Confidence, WINE_STYLE_LABELS } from "@/types/tasting";
+import { WINE_STYLE_LABELS } from "@/types/tasting";
 import { getGuestToken } from "@/lib/deviceStorage";
 
 type LoadState = "loading" | "no-config" | "invalid-token" | "not-found" | "ready";
@@ -28,7 +27,7 @@ type LoadState = "loading" | "no-config" | "invalid-token" | "not-found" | "read
  * Rating entry for one bottle in a seen tasting (see README "Tasting modes").
  * Unlike full_blind/course_reveal's autosave-as-you-type guess forms, saving
  * here is an explicit action — there is no identification guess to draft,
- * just a rating (plus optional confidence/note) that stays freely editable
+ * just a rating (plus an optional note) that stays freely editable
  * until the host ends the tasting.
  */
 export default function SeenBottleRatingPage() {
@@ -38,7 +37,6 @@ export default function SeenBottleRatingPage() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [bottle, setBottle] = useState<SeenBottleDTO | null>(null);
   const [rating, setRating] = useState<number | null>(null);
-  const [confidence, setConfidence] = useState<Confidence>("medium");
   const [note, setNote] = useState("");
   const [ratingError, setRatingError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -80,7 +78,6 @@ export default function SeenBottleRatingPage() {
 
       setBottle(found);
       setRating(found.myRating);
-      setConfidence(found.myConfidence ?? "medium");
       setNote(found.myNote ?? "");
       setLoadState("ready");
     })();
@@ -112,14 +109,13 @@ export default function SeenBottleRatingPage() {
       token,
       bottle.id,
       rating,
-      confidence,
       note
     );
     setSaving(false);
     if (error) {
-      // Form state (rating/confidence/note) is deliberately left exactly as
-      // the participant entered it — a network hiccup or a since-ended
-      // tasting should never silently discard what they typed.
+      // Form state (rating/note) is deliberately left exactly as the
+      // participant entered it — a network hiccup or a since-ended tasting
+      // should never silently discard what they typed.
       setSaveError(friendlyRpcError(error));
       return;
     }
@@ -214,15 +210,6 @@ export default function SeenBottleRatingPage() {
         />
 
         <div className="flex flex-col gap-4 border-t border-cellar-border pt-4">
-          <ConfidencePicker
-            value={confidence}
-            onChange={(next) => {
-              setConfidence(next);
-              setSavedJustNow(false);
-            }}
-            disabled={ratingsRevealed}
-          />
-
           <TextAreaField
             label="Tasting note (optional)"
             value={note}

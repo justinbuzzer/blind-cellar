@@ -2,10 +2,6 @@
 // Everything here is plain, serialisable data so it can be persisted to
 // localStorage as JSON without any transformation.
 
-export type Confidence = "low" | "medium" | "high";
-
-export const CONFIDENCE_LEVELS: Confidence[] = ["low", "medium", "high"];
-
 /**
  * How a wine's grape/blend answer (or a guess) was captured:
  * - "single": one variety chosen from the curated dropdown.
@@ -271,7 +267,6 @@ export interface WineGuess {
   vintage: string;
   /** Whole number 50-100. Null until the guest sets it. */
   rating: number | null;
-  confidence: Confidence;
   note?: string;
 }
 
@@ -463,7 +458,6 @@ export interface ScoredGuess {
   /** totalPoints / totalPossiblePoints * 100. */
   overallAccuracyPercent: number;
   rating: number | null;
-  confidence: Confidence;
   /**
    * The guest's own final submitted tasting note, carried straight through
    * for display only — never scored, never compared. Undefined/null when no

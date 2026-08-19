@@ -1,5 +1,5 @@
 import { SupabaseClient } from "@supabase/supabase-js";
-import { Confidence, WineGuess, WineIdentityInput } from "@/types/tasting";
+import { WineGuess, WineIdentityInput } from "@/types/tasting";
 import { isCustomSingleGrape, reconstructBlendComponentsFromText } from "@/lib/wineReferenceData";
 import { FieldBets } from "@/lib/betting";
 import {
@@ -72,7 +72,6 @@ export async function upsertGuess(
     p_wine_cuvee_guess: guess.wineName,
     p_vintage_guess: guess.vintage,
     p_rating: guess.rating,
-    p_confidence: guess.confidence,
     p_tasting_note: guess.note || null,
     p_grape_blend_components:
       guess.grapeBlendMode === "blend"
@@ -231,14 +230,12 @@ export async function upsertSeenRating(
   guestToken: string,
   wineId: string,
   rating: number,
-  confidence: Confidence,
   note: string
 ) {
   return supabase.rpc("upsert_seen_rating", {
     p_guest_token: guestToken,
     p_wine_id: wineId,
     p_rating: rating,
-    p_confidence: confidence,
     p_tasting_note: note || null,
   });
 }

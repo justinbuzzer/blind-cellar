@@ -204,7 +204,6 @@ export function scoreWineGuessLegacyV1(
     coreAccuracyPercent: round1((corePoints / CORE_MAX_POINTS) * 100),
     overallAccuracyPercent: round1((totalPoints / TOTAL_MAX_POINTS_PER_WINE) * 100),
     rating: guess.rating,
-    confidence: guess.confidence,
     note: guess.note ?? null,
   };
 }
@@ -401,7 +400,6 @@ export function scoreWineGuessCoreV3(
     overallAccuracyPercent:
       blind.totalPossiblePoints > 0 ? round1((blind.totalPoints / blind.totalPossiblePoints) * 100) : 0,
     rating: guess.rating,
-    confidence: guess.confidence,
     note: guess.note ?? null,
   };
 }
@@ -726,7 +724,6 @@ export function scoreWineGuessCoreV4(
     overallAccuracyPercent:
       blind.totalPossiblePoints > 0 ? round1((blind.totalPoints / blind.totalPossiblePoints) * 100) : 0,
     rating: guess.rating,
-    confidence: guess.confidence,
     note: guess.note ?? null,
   };
 }

@@ -51,7 +51,6 @@ function makeGuess(overrides: Partial<WineGuess> = {}): WineGuess {
     wineName: "Cascina Francia",
     vintage: "2016",
     rating: 90,
-    confidence: "high",
     ...overrides,
   };
 }

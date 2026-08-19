@@ -20,7 +20,6 @@ function makeGuessDto(overrides: Partial<GuestGuessDTO> = {}): GuestGuessDTO {
     wineCuveeGuess: "",
     vintageGuess: "",
     rating: null,
-    confidence: "medium",
     tastingNote: null,
     ...overrides,
   };
@@ -41,7 +40,6 @@ function makeGuessRow(overrides: Partial<RevealedWineGuessRow> = {}): RevealedWi
     wine_cuvee_guess: "",
     vintage_guess: "",
     rating: 90,
-    confidence: "high",
     tasting_note: null,
     submitted_at: "2026-08-05T00:00:00Z",
     locked_at: "2026-08-05T00:05:00Z",
@@ -109,7 +107,6 @@ describe("buildRevealedBottleResult", () => {
         wineCuveeGuess: "Cascina Francia",
         vintageGuess: "2016",
         rating: 92,
-        confidence: "high",
       },
     ]);
 
@@ -134,7 +131,6 @@ describe("buildRevealedBottleResult", () => {
         wineCuveeGuess: "Cascina Francia",
         vintageGuess: "2016",
         rating: 92,
-        confidence: "high",
       },
     ]);
 
@@ -166,7 +162,6 @@ describe("buildRevealedBottleResult", () => {
         wineCuveeGuess: "",
         vintageGuess: "",
         rating: 80,
-        confidence: "medium",
       },
       {
         guestId: "g2",
@@ -180,7 +175,6 @@ describe("buildRevealedBottleResult", () => {
         wineCuveeGuess: "",
         vintageGuess: "",
         rating: 90,
-        confidence: "medium",
       },
     ]);
 
