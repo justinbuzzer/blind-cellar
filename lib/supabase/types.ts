@@ -287,7 +287,8 @@ export interface GuestSessionWineDTO {
 }
 
 export interface GuestSessionStateResponse {
-  guest: { id: string; displayName: string; completedAt: string | null };
+  /** isHost is server-verified (guest.id = tasting_sessions.host_guest_id) — never inferred client-side from whether a host token merely exists in this browser. See README "Host per-bottle response progress" for the bug that caused. */
+  guest: { id: string; displayName: string; completedAt: string | null; isHost: boolean };
   session: {
     publicId: string;
     title: string;
@@ -456,6 +457,8 @@ export interface ActiveBottleStateResponse {
     wineCuveeBetMultiplier: number | null;
   };
   guestName: string;
+  /** Server-verified — see GuestSessionStateResponse.guest.isHost for the full rationale. */
+  isHost: boolean;
   /** Betting sub-mode only — this guest's chosen balance at join time. Null for a non-betting session. */
   startingCredits: number | null;
   /** Null once every bottle has been revealed (session will already be 'revealed'). */

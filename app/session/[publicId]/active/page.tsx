@@ -28,7 +28,7 @@ import { friendlyRpcError, ActiveBottleDTO, HostGuessProgressDTO } from "@/lib/s
 import { mapGuestGuessDtoToBets, mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
 import { emptyWineGuess } from "@/lib/guess";
 import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend, invalidOtherGrapeGuessMessage } from "@/lib/validation";
-import { getGuestToken, getHostToken } from "@/lib/deviceStorage";
+import { getGuestToken } from "@/lib/deviceStorage";
 import { waitingToRevealImage } from "@/lib/appImages";
 import { buildBottleDisplayLabels, formatBottleAccessibleLabel, formatContributorBottleLabel } from "@/lib/contributorLabel";
 import { WineGuess } from "@/types/tasting";
@@ -86,11 +86,12 @@ export default function ActiveBottlePage() {
   // when a refresh shows a *different* active bottle we know ours was just
   // revealed — the server no longer reports a revealed bottle as "active".
   const trackedBottleRef = useRef<ActiveBottleDTO | null>(null);
-  // Set once, synchronously, before the first refresh() call — see README
-  // "Host per-bottle response progress" — "Host guess screen group
-  // progress". A UI-only decision (same local host-token check as
-  // HostControlsLink); get_host_guess_progress independently re-verifies
-  // this guest token actually belongs to the session's host.
+  // Set from get_active_bottle_state's server-verified isHost on every
+  // refresh() — see README "Host per-bottle response progress" — "Host
+  // guess screen group progress". Deliberately never inferred from whether
+  // a host token merely exists somewhere in this browser (a device can
+  // legitimately hold more than one participant's tokens at once) — this
+  // reflects whether guestTokenRef.current's own identity is the host.
   const isHostRef = useRef(false);
   // Guards against a stale in-flight progress fetch for a previous active
   // bottle overwriting the count for whichever bottle is now active.
@@ -137,6 +138,7 @@ export default function ActiveBottlePage() {
       setLoadState("invalid-token");
       return;
     }
+    isHostRef.current = data.isHost;
     if (data.session.status === "revealed") {
       router.replace(`/results/${params.publicId}`);
       return;
@@ -231,7 +233,6 @@ export default function ActiveBottlePage() {
       return;
     }
     guestTokenRef.current = token;
-    isHostRef.current = !!getHostToken(params.publicId);
 
     const supabase = getSupabaseBrowserClient();
     if (!supabase) {

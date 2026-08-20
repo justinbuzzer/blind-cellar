@@ -116,7 +116,7 @@ function guestSession(
   overrides: Partial<GuestSessionStateResponse["session"]> = {}
 ): GuestSessionStateResponse {
   return {
-    guest: { id: "guest-2", displayName: "Ben", completedAt: "2026-08-14T20:05:00.000Z" },
+    guest: { id: "guest-2", displayName: "Ben", completedAt: "2026-08-14T20:05:00.000Z", isHost: false },
     session: {
       id: "internal-1",
       publicId: "pub-1",

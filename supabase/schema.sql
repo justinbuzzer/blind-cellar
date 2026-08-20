@@ -2054,7 +2054,15 @@ begin
     'guest', jsonb_build_object(
       'id', v_guest.id,
       'displayName', v_guest.display_name,
-      'completedAt', v_guest.completed_at
+      'completedAt', v_guest.completed_at,
+      -- Server-verified, same convention as wines.isOwnBottle just below —
+      -- lets the client show host-only affordances (e.g. group guess
+      -- progress) for whichever identity this token actually belongs to,
+      -- never inferred from "does a host token exist somewhere in this
+      -- browser" (see README "Host per-bottle response progress" for the
+      -- bug that check caused on a device holding more than one
+      -- participant's tokens).
+      'isHost', coalesce(v_guest.id = v_session.host_guest_id, false)
     ),
     'session', jsonb_build_object(
       'publicId', v_session.public_id,
@@ -2359,6 +2367,10 @@ begin
         'wineCuveeBetMultiplier', v_session.wine_cuvee_bet_multiplier
       ),
       'guestName', v_guest.display_name,
+      -- Server-verified — see get_guest_session_state's identical field for
+      -- the full rationale (avoids inferring host status from "does a host
+      -- token exist somewhere in this browser").
+      'isHost', coalesce(v_guest.id = v_session.host_guest_id, false),
       'startingCredits', v_guest.starting_credits,
       'activeBottle', null,
       'myGuess', null,
@@ -2391,6 +2403,7 @@ begin
       'wineCuveeBetMultiplier', v_session.wine_cuvee_bet_multiplier
     ),
     'guestName', v_guest.display_name,
+    'isHost', coalesce(v_guest.id = v_session.host_guest_id, false),
     'startingCredits', v_guest.starting_credits,
     'activeBottle', jsonb_build_object(
       'id', v_active.id,

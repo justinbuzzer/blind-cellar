@@ -32,7 +32,7 @@ import {
 import { mapGuestGuessDtoToWineGuess } from "@/lib/supabase/mappers";
 import { emptyWineGuess, winesRequiringGuess } from "@/lib/guess";
 import { BLEND_MIN_GRAPES_MESSAGE, hasIncompleteBlend, invalidOtherGrapeGuessMessage } from "@/lib/validation";
-import { getGuestToken, getHostToken } from "@/lib/deviceStorage";
+import { getGuestToken } from "@/lib/deviceStorage";
 import { scrollToFirstInvalidField } from "@/lib/formFocus";
 import { buildBottleDisplayLabels, formatBottleAccessibleLabel } from "@/lib/contributorLabel";
 import { WineGuess } from "@/types/tasting";
@@ -154,15 +154,16 @@ export default function GuestTastingPage() {
       setLoadState(data.guest.completedAt !== null ? "locked" : "ready");
 
       // Host-only live group-progress count (see README "Host per-bottle
-      // response progress" — "Host guess screen group progress"). This local
-      // host-token check is a UI-only decision, exactly like
-      // HostControlsLink's — get_host_guess_progress independently
-      // re-verifies this guest token actually belongs to the session's host
-      // before returning anything, so a non-host can never trigger or see
-      // this fetch's result even if this check were somehow bypassed. The
+      // response progress" — "Host guess screen group progress").
+      // data.guest.isHost is server-verified (the caller's own guest row
+      // compared against tasting_sessions.host_guest_id) — deliberately
+      // never inferred from whether a host token merely exists somewhere in
+      // this browser, which a device can legitimately hold for a *different*
+      // participant than the one currently active (see the bug this caused,
+      // documented in that field's own comment in supabase/schema.sql). The
       // fetch itself happens in the effect below, keyed on the currently
       // viewed wine — see README "Own-bottle guessing exclusion".
-      if (getHostToken(params.publicId) && data.wines.length > 0) {
+      if (data.guest.isHost && data.wines.length > 0) {
         setSessionId(data.session.id);
         setIsHost(true);
       }

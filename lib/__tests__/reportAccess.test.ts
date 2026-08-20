@@ -34,7 +34,7 @@ function makeGuestSessionResponse(
   overrides: Partial<GuestSessionStateResponse["session"]> = {}
 ): GuestSessionStateResponse {
   return {
-    guest: { id: "guest-1", displayName: "Ava", completedAt: null },
+    guest: { id: "guest-1", displayName: "Ava", completedAt: null, isHost: false },
     session: {
       id: "session-1",
       publicId: "public-1",
