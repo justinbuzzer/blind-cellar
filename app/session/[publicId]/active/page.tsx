@@ -354,7 +354,9 @@ export default function ActiveBottlePage() {
           <ResultsLink href={`/session/${params.publicId}/results`} />
         </div>
         <div className="relative flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden rounded-sm px-6 py-16 text-center">
-          <ImageBand image={waitingToRevealImage} className="absolute inset-0" />
+          <div className="absolute inset-0">
+            <ImageBand image={waitingToRevealImage} className="h-full" />
+          </div>
           <div className="relative flex flex-col items-center gap-2">
             <h1 className="font-display text-2xl font-semibold text-cellar-bg">
               Waiting for the host
@@ -398,7 +400,9 @@ export default function ActiveBottlePage() {
           <ResultsLink href={`/session/${params.publicId}/results`} />
         </div>
         <div className="relative flex flex-1 flex-col items-center justify-center gap-4 overflow-hidden rounded-sm px-6 py-16 text-center">
-          <ImageBand image={waitingToRevealImage} className="absolute inset-0" />
+          <div className="absolute inset-0">
+            <ImageBand image={waitingToRevealImage} className="h-full" />
+          </div>
           <div className="relative flex flex-col items-center gap-4">
             <h1 className="font-display text-2xl font-semibold text-cellar-bg">
               {revealedBottle.anonymousCode} revealed!
@@ -431,7 +435,9 @@ export default function ActiveBottlePage() {
           <ResultsLink href={`/session/${params.publicId}/results`} />
         </div>
         <div className="relative flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden rounded-sm px-6 py-16 text-center">
-          <ImageBand image={waitingToRevealImage} className="absolute inset-0" />
+          <div className="absolute inset-0">
+            <ImageBand image={waitingToRevealImage} className="h-full" />
+          </div>
           <div className="relative flex flex-col items-center gap-2">
             <p className="text-xs font-medium uppercase tracking-[0.2em] text-cellar-gold">
               {activeBottle ? `Bottle ${activeBottle.bottleNumber}` : "Your bottle"}
