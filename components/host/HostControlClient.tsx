@@ -877,11 +877,6 @@ export function HostControlClient({
                       Enter my guesses
                     </Button>
                   </Link>
-                  {activeBottle && (
-                    <Button fullWidth onClick={() => setShowRevealBottleConfirm(true)}>
-                      Reveal {activeBottle.anonymousCode}
-                    </Button>
-                  )}
                   <Link href={`/host/${publicId}/leaderboard?token=${encodeURIComponent(hostToken)}`}>
                     <Button variant="secondary" fullWidth>
                       View leaderboard

@@ -425,7 +425,7 @@ export default function JoinSessionPage() {
           {session.status === "collecting" && (
             <Card className="flex flex-col gap-2">
               <p className="text-sm font-medium text-cellar-text">
-                {wines.length} bottles, tasted blind:
+                {wines.length} {wines.length === 1 ? "bottle" : "bottles"}, tasted blind:
               </p>
               <p className="text-sm text-cellar-muted">
                 {wines.map((w) => w.anonymous_code).join(", ")}
