@@ -653,11 +653,23 @@ export function HostControlClient({
         />
       )}
 
-      {status !== "revealed" && (
+      {status === "registration" && (
         <Card className="flex flex-col gap-3">
           <SectionEyebrow>Invite the table</SectionEyebrow>
           <QRCodeCard url={joinUrl} joinCode={session.joinCode} />
         </Card>
+      )}
+
+      {status === "collecting" && (
+        <details className="rounded-sm border border-cellar-border">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-sm px-3 py-2 text-sm font-medium text-cellar-text hover:bg-cellar-bg">
+            <span>Invite the table</span>
+            <span className="text-cellar-muted">{session.joinCode}</span>
+          </summary>
+          <div className="flex flex-col gap-3 border-t border-cellar-border px-3 py-3">
+            <QRCodeCard url={joinUrl} joinCode={session.joinCode} />
+          </div>
+        </details>
       )}
 
       {status === "registration" && (
@@ -724,76 +736,90 @@ export function HostControlClient({
       {status === "collecting" && (
         <>
           {tastingMode !== "seen" && (
-            <div className="flex flex-col gap-2">
-              <SectionEyebrow>The table ({wines.length})</SectionEyebrow>
-              <Card className="p-0">
-                <ol className="divide-y divide-cellar-border">
-                  {wines.map((wine) => (
-                    <li key={wine.id} className="flex items-center gap-3 px-4 py-3">
-                      <span
-                        aria-hidden="true"
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cellar-maroon/10 text-sm font-semibold text-cellar-maroon"
-                      >
-                        {wine.tastingOrder}
+            <details className="rounded-sm border border-cellar-border">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-sm px-3 py-2 text-sm font-medium text-cellar-text hover:bg-cellar-bg">
+                <span>The table ({wines.length})</span>
+                <span className="text-cellar-muted">Bottle order &amp; labels</span>
+              </summary>
+              <div className="flex flex-col gap-2 border-t border-cellar-border px-3 py-3">
+                <Card className="p-0">
+                  <ol className="divide-y divide-cellar-border">
+                    {wines.map((wine) => (
+                      <li key={wine.id} className="flex items-center gap-3 px-4 py-3">
+                        <span
+                          aria-hidden="true"
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cellar-maroon/10 text-sm font-semibold text-cellar-maroon"
+                        >
+                          {wine.tastingOrder}
+                        </span>
+                        <span className="text-sm font-medium text-cellar-text">{wine.anonymousCode}</span>
+                        <span className="ml-auto rounded-full border border-cellar-border px-2 py-0.5 text-xs text-cellar-muted">
+                          {WINE_STYLE_LABELS[wine.wineStyle]}
+                        </span>
+                        {(tastingMode === "full_blind" ||
+                          (tastingMode === "course_reveal" && activeBottle?.id === wine.id)) && (
+                          <BottleProgressControl
+                            publicId={publicId}
+                            hostToken={hostToken}
+                            wineId={wine.id}
+                            responseKind="guess"
+                            title={formatGuessProgressTitle(wine.bottleNumber)}
+                            accessibleLabel={formatProgressAccessibleLabel("guess", {
+                              bottleNumber: wine.bottleNumber,
+                            })}
+                          />
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                </Card>
+                <p className="text-xs text-cellar-muted">
+                  Registration is closed and bottle numbers are final.
+                </p>
+              </div>
+            </details>
+          )}
+
+          <details className="rounded-sm border border-cellar-border">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-sm px-3 py-2 text-sm font-medium text-cellar-text hover:bg-cellar-bg">
+              <span>Participants ({guests.length})</span>
+              {tastingMode !== "seen" && (
+                <span className="text-cellar-muted">
+                  {guests.filter((g) => g.completedAt).length} submitted
+                </span>
+              )}
+            </summary>
+            <div className="border-t border-cellar-border px-3 py-3">
+              {guests.length === 0 ? (
+                <p className="text-sm text-cellar-muted">No one has joined yet.</p>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {guests.map((guest) => (
+                    <li
+                      key={guest.id}
+                      className="flex items-center justify-between text-sm text-cellar-text/80"
+                    >
+                      <span>
+                        {guest.displayName}
+                        {guest.id === session.hostGuestId ? " (you)" : ""}
                       </span>
-                      <span className="text-sm font-medium text-cellar-text">{wine.anonymousCode}</span>
-                      <span className="ml-auto rounded-full border border-cellar-border px-2 py-0.5 text-xs text-cellar-muted">
-                        {WINE_STYLE_LABELS[wine.wineStyle]}
-                      </span>
-                      {(tastingMode === "full_blind" ||
-                        (tastingMode === "course_reveal" && activeBottle?.id === wine.id)) && (
-                        <BottleProgressControl
-                          publicId={publicId}
-                          hostToken={hostToken}
-                          wineId={wine.id}
-                          responseKind="guess"
-                          title={formatGuessProgressTitle(wine.bottleNumber)}
-                          accessibleLabel={formatProgressAccessibleLabel("guess", {
-                            bottleNumber: wine.bottleNumber,
-                          })}
-                        />
+                      {tastingMode !== "seen" && (
+                        <span
+                          className={
+                            guest.completedAt
+                              ? "font-medium text-cellar-maroon"
+                              : "text-cellar-text/50"
+                          }
+                        >
+                          {guest.completedAt ? "Submitted" : "In progress"}
+                        </span>
                       )}
                     </li>
                   ))}
-                </ol>
-              </Card>
-              <p className="text-xs text-cellar-muted">
-                Registration is closed and bottle numbers are final.
-              </p>
+                </ul>
+              )}
             </div>
-          )}
-
-          <Card className="flex flex-col gap-2">
-            <SectionEyebrow>Participants ({guests.length})</SectionEyebrow>
-            {guests.length === 0 ? (
-              <p className="text-sm text-cellar-muted">No one has joined yet.</p>
-            ) : (
-              <ul className="flex flex-col gap-1">
-                {guests.map((guest) => (
-                  <li
-                    key={guest.id}
-                    className="flex items-center justify-between text-sm text-cellar-text/80"
-                  >
-                    <span>
-                      {guest.displayName}
-                      {guest.id === session.hostGuestId ? " (you)" : ""}
-                    </span>
-                    {tastingMode !== "seen" && (
-                      <span
-                        className={
-                          guest.completedAt
-                            ? "font-medium text-cellar-maroon"
-                            : "text-cellar-text/50"
-                        }
-                      >
-                        {guest.completedAt ? "Submitted" : "In progress"}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
+          </details>
 
           {tastingMode === "full_blind" && (
             <>
