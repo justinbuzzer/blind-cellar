@@ -13,6 +13,7 @@ import { AccountNav } from "@/components/navigation/AccountNav";
 import { ProfileLink } from "@/components/navigation/ProfileLink";
 import { TastingReportView } from "@/components/report/TastingReportView";
 import { SeenTastingReportView } from "@/components/report/SeenTastingReportView";
+import { MatchTastingReportView } from "@/components/report/MatchTastingReportView";
 import { ClaimPanel } from "@/components/archive/ClaimPanel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { loadTastingReportData } from "@/lib/supabase/reportData";
@@ -29,7 +30,7 @@ import {
 import { ArchiveRole } from "@/lib/archive";
 import { HostSessionResponse } from "@/lib/supabase/types";
 import { buildCreditLedger, CreditLedgerEntry } from "@/lib/betting";
-import { SeenTastingReport, TASTING_MODE_LABELS, TastingReport } from "@/types/tasting";
+import { MatchTastingReport, SeenTastingReport, TASTING_MODE_LABELS, TastingReport } from "@/types/tasting";
 
 type LoadState = "loading" | "no-config" | "not-authorized" | "locked" | "ready";
 /** Which "From …" banner + "Back to …" link this report was opened with — a display marker only, never used for authorization. See README "Tasting archive" / "Account-linked tasting records". */
@@ -47,6 +48,7 @@ export default function ResultsPage() {
   const [access, setAccess] = useState<ReportAccessResult | null>(null);
   const [report, setReport] = useState<TastingReport | null>(null);
   const [seenReport, setSeenReport] = useState<SeenTastingReport | null>(null);
+  const [matchReport, setMatchReport] = useState<MatchTastingReport | null>(null);
   // Betting sub-mode only (see README "Tasting modes" — "Betting") — only
   // ever populated for a participant viewer (the host has their own
   // dedicated leaderboard/recap pages that already show credits); null for
@@ -121,6 +123,8 @@ export default function ResultsPage() {
 
     if (data.kind === "seen") {
       setSeenReport(data.report);
+    } else if (data.kind === "match") {
+      setMatchReport(data.report);
     } else {
       setReport(data.report);
     }
@@ -186,7 +190,7 @@ export default function ResultsPage() {
    * actually clicks the button, never into this page's initial bundle.
    */
   const handleDownloadPdf = useCallback(async () => {
-    if (!access || (!report && !seenReport)) return;
+    if (!access || (!report && !seenReport && !matchReport)) return;
     setPdfState("generating");
     try {
       const { pdf } = await import("@react-pdf/renderer");
@@ -207,6 +211,18 @@ export default function ResultsPage() {
         blob = await pdf(
           <SeenTastingReportPdfDocument
             report={seenReport}
+            title={access.session.title}
+            dateLabel={dateLabelForPdf}
+            modeLabel={modeLabelForPdf}
+          />
+        ).toBlob();
+      } else if (matchReport) {
+        const { MatchTastingReportPdfDocument } = await import(
+          "@/components/report/pdf/MatchTastingReportPdfDocument"
+        );
+        blob = await pdf(
+          <MatchTastingReportPdfDocument
+            report={matchReport}
             title={access.session.title}
             dateLabel={dateLabelForPdf}
             modeLabel={modeLabelForPdf}
@@ -240,7 +256,7 @@ export default function ResultsPage() {
     } catch {
       setPdfState("error");
     }
-  }, [access, report, seenReport, creditEntries]);
+  }, [access, report, seenReport, matchReport, creditEntries]);
 
   const refresh = useCallback(async () => {
     const resolved = await resolveAccess();
@@ -355,7 +371,7 @@ export default function ResultsPage() {
     );
   }
 
-  if ((!report && !seenReport) || !access) return null;
+  if ((!report && !seenReport && !matchReport) || !access) return null;
 
   const modeLabel = TASTING_MODE_LABELS[access.session.tastingMode];
   const dateLabel = access.session.tastingDate
@@ -415,6 +431,8 @@ export default function ResultsPage() {
 
       {seenReport ? (
         <SeenTastingReportView report={seenReport} />
+      ) : matchReport ? (
+        <MatchTastingReportView report={matchReport} />
       ) : (
         report && (
           <TastingReportView

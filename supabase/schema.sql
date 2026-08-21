@@ -456,10 +456,11 @@ create index if not exists wines_session_revealed_order_idx on wines(session_id,
 -- upsert_seen_rating below), relying on the identification-guess
 -- columns' existing blank defaults ('' / null) rather than inventing new
 -- ones. Existing full_blind/course_reveal sessions and rows are completely
--- untouched by this step.
-alter table tasting_sessions drop constraint if exists tasting_sessions_tasting_mode_check;
-alter table tasting_sessions add constraint tasting_sessions_tasting_mode_check
-  check (tasting_mode in ('full_blind', 'course_reveal', 'seen'));
+-- untouched by this step. The actual constraint widening now happens once,
+-- unconditionally, in step 18 below (which supersedes this step's original
+-- drop+recreate) — re-running this step's own narrower 3-value version on
+-- every fresh apply would transiently exclude 'blind_match' and fail
+-- against any blind_match session already in the table.
 
 -- 12. Scoring model replacement (see README "Scoring model"): country(20)/
 -- region(20)/appellation(20, conditional)/grape-blend(20)/vintage(20), no
@@ -667,15 +668,15 @@ end $$;
 -- tasting_mode check constraint to also allow 'blind_match'. Unlike Seen,
 -- this mode does need one new column: wine_guesses.matched_wine_id records
 -- which registered wine the guest picked for a given glass (a foreign-key
--- selection from the session's own wine list, not a free-text guess) — the
--- existing identification-guess columns (country_guess/producer_guess/...)
--- are then populated FROM that matched wine's own fields (see
--- upsert_match_guess below), so the existing scoring/leaderboard/report
--- pipeline scores this mode with zero changes of its own: a correct match
--- scores 100% because every field trivially agrees with the answer key, an
--- incorrect match gets whatever partial credit its coincidental field
--- overlap already earns. Nullable, untouched by every other mode, same
--- additive-column discipline as ratings_revealed_at above.
+-- selection from the session's own wine list, not a free-text guess).
+-- Correctness is a plain 1/0 (matched_wine_id = this glass's actual wine or
+-- not), computed client-side once revealed (see lib/matchResults.ts) — this
+-- mode deliberately does NOT feed the field-by-field partial-credit scoring
+-- engine full_blind/course_reveal use (see upsert_match_guess below and
+-- get_provisional_leaderboard_for_host/get_final_leaderboard_for_guest's
+-- mode allowlists, which exclude blind_match the same way they exclude
+-- Seen). Nullable, untouched by every other mode, same additive-column
+-- discipline as ratings_revealed_at above.
 alter table tasting_sessions drop constraint if exists tasting_sessions_tasting_mode_check;
 alter table tasting_sessions add constraint tasting_sessions_tasting_mode_check
   check (tasting_mode in ('full_blind', 'course_reveal', 'seen', 'blind_match'));
@@ -3060,7 +3061,7 @@ begin
   if v_session.host_token_hash <> encode(digest(p_host_token, 'sha256'), 'hex') then
     raise exception 'invalid_host_token';
   end if;
-  if v_session.tasting_mode not in ('full_blind', 'course_reveal', 'blind_match') then
+  if v_session.tasting_mode not in ('full_blind', 'course_reveal') then
     raise exception 'invalid_tasting_mode';
   end if;
 
@@ -3191,7 +3192,7 @@ begin
   end if;
   select * into v_session from tasting_sessions where id = v_guest.session_id;
 
-  if v_session.tasting_mode not in ('full_blind', 'course_reveal', 'blind_match') then
+  if v_session.tasting_mode not in ('full_blind', 'course_reveal') then
     raise exception 'invalid_tasting_mode';
   end if;
   if v_session.status <> 'revealed' then
@@ -3642,18 +3643,19 @@ $$;
 -- is visible to every participant from the start, but which numbered glass
 -- is which wine is not — each participant matches every glass to a wine on
 -- the list, scores it, and notes it, freely revisable on one page until the
--- host ends the tasting in a single action. Unlike Seen, this mode does have
--- real correct/incorrect scoring: matching a glass to a wine copies that
--- wine's own country/region/appellation/grape/producer/wine_cuvee/vintage
--- into the guess row's *_guess columns (see upsert_match_guess below), so
--- the existing scoreWineGuess/calculateTasterResults/calculateWineResults
--- pipeline (identical to full_blind/course_reveal) scores this mode with no
--- code of its own — a correct match scores 100% because every field
--- trivially agrees with the answer key, a wrong one gets whatever partial
--- credit its coincidental field overlap already earns. No own-bottle
--- exclusion in this mode (see README) — the wine list is public to everyone
--- including the contributor, so which glass their own wine ended up as is
--- still genuinely unknown to them.
+-- host ends the tasting in a single action. Correctness is a plain 1/0 per
+-- glass (matched_wine_id = its actual wine or not) — deliberately NOT the
+-- field-by-field partial-credit scoring full_blind/course_reveal use, so
+-- upsert_match_guess below only ever stores the pick itself, never copies
+-- its fields into the identification-guess columns, and this mode is
+-- excluded from get_provisional_leaderboard_for_host/
+-- get_final_leaderboard_for_guest the same way Seen already is (see
+-- lib/matchResults.ts for the actual correct/incorrect computation, done
+-- client-side from the revealed wine_guesses rows, mirroring
+-- lib/seenResults.ts's pattern). No own-bottle exclusion in this mode (see
+-- README) — the wine list is public to everyone including the contributor,
+-- so which glass their own wine ended up as is still genuinely unknown to
+-- them.
 -- ---------------------------------------------------------------------------
 
 -- Guest: fetch the full wine list (the picker's choices) plus every glass in
@@ -3728,12 +3730,13 @@ $$;
 -- Guest: save (create or update) the caller's own match/rating/note for one
 -- glass. No own-bottle exclusion, no active-bottle gating, no lock — every
 -- glass is always editable at once, freely, until the host ends the tasting
--- (see README "Tasting modes" — "Blind match"). When p_matched_wine_id is
--- provided, copies that wine's own fields into this guess row's *_guess
--- columns so the existing scoring pipeline works unmodified (see the
--- section comment above); when null (the guest clears their pick), blanks
--- those fields back out to the same empty-draft state an untouched
--- full_blind/course_reveal guess already has.
+-- (see README "Tasting modes" — "Blind match"). Correctness is a plain 1/0
+-- (matched_wine_id = this glass's actual wine or not), computed client-side
+-- in lib/matchResults.ts once revealed — not the field-by-field partial-credit
+-- scoring engine full_blind/course_reveal use — so this only ever stores the
+-- pick itself, never copies its fields into the identification-guess
+-- columns (those stay at their existing blank defaults, exactly like
+-- upsert_seen_rating already leaves them for Seen).
 create or replace function upsert_match_guess(
   p_guest_token text,
   p_wine_id uuid,
@@ -3749,7 +3752,6 @@ declare
   v_guest guests%rowtype;
   v_session tasting_sessions%rowtype;
   v_wine wines%rowtype;
-  v_matched wines%rowtype;
 begin
   select * into v_guest from guests where guest_token = p_guest_token;
   if not found then
@@ -3768,56 +3770,18 @@ begin
     raise exception 'wine_not_in_session';
   end if;
 
-  if p_matched_wine_id is not null then
-    select * into v_matched from wines where id = p_matched_wine_id and session_id = v_session.id;
-    if not found then
-      raise exception 'matched_wine_not_in_session';
-    end if;
-
-    insert into wine_guesses (
-      session_id, wine_id, guest_id, matched_wine_id,
-      country_guess, region_guess, appellation_guess, grape_blend_mode, grape_style_guess,
-      grape_blend_components, producer_guess, wine_cuvee_guess, vintage_guess,
-      rating, tasting_note, submitted_at
-    )
-    values (
-      v_session.id, p_wine_id, v_guest.id, p_matched_wine_id,
-      v_matched.country, v_matched.region, v_matched.appellation, v_matched.grape_blend_mode, v_matched.grape_style,
-      v_matched.grape_blend_components, v_matched.producer, v_matched.wine_cuvee, v_matched.vintage,
-      p_rating, nullif(p_tasting_note, ''), now()
-    )
-    on conflict (guest_id, wine_id) do update set
-      matched_wine_id = excluded.matched_wine_id,
-      country_guess = excluded.country_guess,
-      region_guess = excluded.region_guess,
-      appellation_guess = excluded.appellation_guess,
-      grape_blend_mode = excluded.grape_blend_mode,
-      grape_style_guess = excluded.grape_style_guess,
-      grape_blend_components = excluded.grape_blend_components,
-      producer_guess = excluded.producer_guess,
-      wine_cuvee_guess = excluded.wine_cuvee_guess,
-      vintage_guess = excluded.vintage_guess,
-      rating = excluded.rating,
-      tasting_note = excluded.tasting_note,
-      submitted_at = now();
-  else
-    insert into wine_guesses (session_id, wine_id, guest_id, rating, tasting_note, submitted_at)
-    values (v_session.id, p_wine_id, v_guest.id, p_rating, nullif(p_tasting_note, ''), now())
-    on conflict (guest_id, wine_id) do update set
-      matched_wine_id = null,
-      country_guess = '',
-      region_guess = '',
-      appellation_guess = null,
-      grape_blend_mode = null,
-      grape_style_guess = '',
-      grape_blend_components = null,
-      producer_guess = '',
-      wine_cuvee_guess = '',
-      vintage_guess = '',
-      rating = excluded.rating,
-      tasting_note = excluded.tasting_note,
-      submitted_at = now();
+  if p_matched_wine_id is not null
+     and not exists (select 1 from wines where id = p_matched_wine_id and session_id = v_session.id) then
+    raise exception 'matched_wine_not_in_session';
   end if;
+
+  insert into wine_guesses (session_id, wine_id, guest_id, matched_wine_id, rating, tasting_note, submitted_at)
+  values (v_session.id, p_wine_id, v_guest.id, p_matched_wine_id, p_rating, nullif(p_tasting_note, ''), now())
+  on conflict (guest_id, wine_id) do update set
+    matched_wine_id = excluded.matched_wine_id,
+    rating = excluded.rating,
+    tasting_note = excluded.tasting_note,
+    submitted_at = now();
 end;
 $$;
 

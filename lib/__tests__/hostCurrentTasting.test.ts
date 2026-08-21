@@ -305,14 +305,13 @@ describe("resolveHostCurrentTastingState — completion", () => {
     });
   });
 
-  it("resolves complete with a final-leaderboard primary and recap secondary for blind_match too (it does have real scoring)", () => {
+  it("resolves complete with only a view_results action for blind_match (correctness is a plain 1/0 in the shared report, not a dedicated leaderboard/recap)", () => {
     const state = resolveHostCurrentTastingState(
       makeInput({ tastingMode: "blind_match", status: "revealed" })
     );
     expect(state).toEqual({
       kind: "complete",
-      primaryAction: { type: "view_final_leaderboard", label: "View final leaderboard" },
-      secondaryAction: { type: "view_tasting_recap", label: "View tasting recap" },
+      primaryAction: { type: "view_results", label: "View shared results" },
     });
   });
 });

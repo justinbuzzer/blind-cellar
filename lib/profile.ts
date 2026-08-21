@@ -213,6 +213,36 @@ export function buildWineObservationsForSession(
     return observations;
   }
 
+  if (reportData.kind === "match") {
+    // Blind match scores a plain 1/0 (see lib/matchResults.ts), not the
+    // field-by-field ScoredGuess shape "Blind palate" analysis needs — so
+    // this pushes an observation the same way Seen does (scoredGuess: null),
+    // which naturally excludes it from "Blind palate" via
+    // extractBlindObservations's existing scoredGuess !== null filter,
+    // while still counting toward tastings-attended/wine-record stats.
+    for (const bottle of reportData.report.bottleResults) {
+      const mine = bottle.participantPicks.find((p) => p.guestId === engagementGuestId);
+      if (!mine || mine.rating === null) continue;
+      observations.push({
+        sessionId: meta.sessionId,
+        publicId: meta.publicId,
+        sessionTitle: meta.title,
+        tastingDate: meta.tastingDate,
+        sessionCreatedAt: meta.createdAt,
+        tastingMode: meta.tastingMode,
+        role,
+        wine: bottle.wine,
+        identityKey: normalizeWineIdentityKey(bottle.wine),
+        personalRating: mine.rating,
+        groupAverageRating: bottle.averageRating,
+        groupNumRatings: bottle.numRatings,
+        scoredGuess: null,
+        contributedByYou: bottle.wine.contributorGuestId === engagementGuestId,
+      });
+    }
+    return observations;
+  }
+
   for (const wineResult of reportData.report.wineResults) {
     const mine = wineResult.guesses.find((g) => g.guestId === engagementGuestId);
     if (!mine) continue;

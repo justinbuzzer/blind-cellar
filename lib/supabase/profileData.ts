@@ -89,7 +89,9 @@ export async function loadProfileData(supabase: SupabaseClient): Promise<Profile
       ]);
 
       const bottleCount =
-        reportData.kind === "seen" ? reportData.report.bottleResults.length : reportData.report.wineResults.length;
+        reportData.kind === "seen" || reportData.kind === "match"
+          ? reportData.report.bottleResults.length
+          : reportData.report.wineResults.length;
 
       const meta: SessionMeta = {
         sessionId: row.id,

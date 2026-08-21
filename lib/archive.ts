@@ -93,9 +93,7 @@ function buildWineHighlight(wine: WineAnswerKey | undefined): ArchiveWineHighlig
 }
 
 function reportWineOfTheNight(report: ReportData): WineAnswerKey | undefined {
-  return report.kind === "seen"
-    ? report.report.wineOfTheNight[0]?.wine
-    : report.report.wineOfTheNight[0]?.wine;
+  return report.report.wineOfTheNight[0]?.wine;
 }
 
 /** Full_blind/course_reveal only — seen tasting has no scoring, so this always returns null there. */

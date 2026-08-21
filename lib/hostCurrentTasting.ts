@@ -137,7 +137,11 @@ export interface HostCurrentTastingInput {
 }
 
 function completeState(tastingMode: TastingMode): HostCurrentTastingState {
-  if (tastingMode === "seen") {
+  // Seen has no scoring at all, and blind_match's correctness is a plain
+  // 1/0 computed client-side (lib/matchResults.ts) rather than through the
+  // field-scoring leaderboard/recap pipeline full_blind/course_reveal use —
+  // both route to the shared report instead of a dedicated leaderboard/recap.
+  if (tastingMode === "seen" || tastingMode === "blind_match") {
     return {
       kind: "complete",
       primaryAction: { type: "view_results", label: "View shared results" },

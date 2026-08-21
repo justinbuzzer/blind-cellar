@@ -578,3 +578,66 @@ export interface SeenTastingReport {
   totalRaters: number;
   totalBottles: number;
 }
+
+/**
+ * Blind match (see README "Tasting modes") scores each glass a plain 1/0 —
+ * did the participant match it to its actual wine or not — deliberately
+ * never the field-by-field partial-credit scoring WineGuess/ScoredGuess/
+ * TastingReport represent. Separate from Seen's types too: unlike Seen,
+ * this mode has real correctness and a taster leaderboard, so it's not a
+ * pure rating-only shape either.
+ */
+export interface MatchParticipantPick {
+  guestId: string;
+  guestName: string;
+  /** Null means this participant never picked a wine for this glass — never fabricated. */
+  pickedWine: WineAnswerKey | null;
+  /** Null exactly when pickedWine is null; otherwise pickedWine.id === this glass's wine.id. */
+  correct: boolean | null;
+  rating: number | null;
+  note?: string;
+}
+
+export interface MatchBottleResult {
+  wine: WineAnswerKey;
+  /** 1-based rank by average rating (ties share a rank), same convention as SeenBottleResult.rank. */
+  rank: number;
+  averageRating: number | null;
+  numRatings: number;
+  lowestRating: number | null;
+  highestRating: number | null;
+  ratingSpread: number | null;
+  /** How many participants matched this glass to its actual wine. */
+  correctCount: number;
+  /** Participants who made any pick at all for this glass (correct or not). */
+  totalPicks: number;
+  /** Every participant in the session, in join order — including those with pickedWine: null. */
+  participantPicks: MatchParticipantPick[];
+}
+
+export interface MatchTasterResult {
+  guestId: string;
+  guestName: string;
+  correctCount: number;
+  totalBottles: number;
+  /** 0 when totalBottles is 0 — never NaN. */
+  accuracyPercent: number;
+  /** 1-based rank by correctCount descending (ties share a rank). */
+  rank: number;
+}
+
+export interface MatchTastingReport {
+  /** Ranked highest average rating first, same tie-break order as Seen. */
+  bottleResults: MatchBottleResult[];
+  /** Ranked highest correctCount first. */
+  tasterResults: MatchTasterResult[];
+  /** Highest average rating; spread breaks ties; more than one entry means a shared tie. */
+  wineOfTheNight: MatchBottleResult[];
+  /** Largest rating spread; more than one entry means a tie. */
+  mostDivisiveWine: MatchBottleResult[];
+  totalRatings: number;
+  /** Distinct guests who rated at least one bottle. */
+  totalRaters: number;
+  totalBottles: number;
+  totalParticipants: number;
+}

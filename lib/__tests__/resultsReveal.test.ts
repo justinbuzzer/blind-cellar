@@ -251,24 +251,6 @@ describe("buildProvisionalLeaderboard", () => {
     expect(view.tasterResults.map((t) => t.guestName)).toEqual(["Alice"]);
   });
 
-  it("includes a blind_match guest the same way as full_blind — gated on completedAt, not a mode-specific branch", () => {
-    // blind_match has no self-submit button (continuous revision until the
-    // host ends the tasting, like Seen) — end_match_tasting bulk-stamps
-    // every guest's completedAt at reveal time instead, specifically so this
-    // falls into the exact same buildRevealedSubmissions path full_blind
-    // already uses, with zero new branching in buildRankedResults.
-    const response = makeLeaderboardResponse({
-      tastingMode: "blind_match",
-      guesses: [makeLeaderboardGuess({ guestId: "g1", guestName: "Alice" })],
-      guests: [
-        { id: "g1", displayName: "Alice", completedAt: "2026-08-01T00:00:00Z" },
-        { id: "g2", displayName: "Bob", completedAt: null },
-      ],
-    });
-    const view = buildProvisionalLeaderboard(response);
-    expect(view.tasterResults.map((t) => t.guestName)).toEqual(["Alice"]);
-  });
-
   it("scopes a course_reveal leaderboard to locked guesses only, independent of completedAt", () => {
     const response = makeLeaderboardResponse({
       tastingMode: "course_reveal",

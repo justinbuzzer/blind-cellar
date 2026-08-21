@@ -1,6 +1,14 @@
 import { SupabaseClient } from "@supabase/supabase-js";
-import { ScoringVersion, SeenTastingReport, TastingMode, TastingReport, TastingSession } from "@/types/tasting";
+import {
+  MatchTastingReport,
+  ScoringVersion,
+  SeenTastingReport,
+  TastingMode,
+  TastingReport,
+  TastingSession,
+} from "@/types/tasting";
 import { buildSeenTastingReport, SeenRatingRow } from "@/lib/seenResults";
+import { buildMatchTastingReport, MatchGuessRow } from "@/lib/matchResults";
 import { buildTastingReport } from "@/lib/results";
 import {
   buildCourseRevealSubmissions,
@@ -18,6 +26,7 @@ export interface ReportSessionRef {
 
 export type ReportData =
   | { kind: "seen"; report: SeenTastingReport }
+  | { kind: "match"; report: MatchTastingReport }
   | { kind: "standard"; report: TastingReport };
 
 /**
@@ -64,6 +73,18 @@ export async function loadTastingReportData(
     }));
     const guests = (guestRows ?? []).map((g) => ({ id: g.id, displayName: g.display_name }));
     return { kind: "seen", report: buildSeenTastingReport(wines, guests, ratingRows) };
+  }
+
+  if (session.tastingMode === "blind_match") {
+    const matchRows: MatchGuessRow[] = (guessRows ?? []).map((row) => ({
+      wineId: row.wine_id,
+      guestId: row.guest_id,
+      matchedWineId: row.matched_wine_id,
+      rating: row.rating,
+      note: row.tasting_note ?? undefined,
+    }));
+    const guests = (guestRows ?? []).map((g) => ({ id: g.id, displayName: g.display_name }));
+    return { kind: "match", report: buildMatchTastingReport(wines, guests, matchRows) };
   }
 
   const domainSession: TastingSession = {
