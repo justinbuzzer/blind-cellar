@@ -201,14 +201,15 @@ export const SESSION_STATUSES: SessionStatus[] = [
  * "Tasting modes"). Every session created before this feature existed
  * safely defaults/backfills to "full_blind" — today's only behaviour.
  */
-export type TastingMode = "full_blind" | "course_reveal" | "seen";
+export type TastingMode = "full_blind" | "course_reveal" | "seen" | "blind_match";
 
-export const TASTING_MODES: TastingMode[] = ["full_blind", "course_reveal", "seen"];
+export const TASTING_MODES: TastingMode[] = ["full_blind", "course_reveal", "seen", "blind_match"];
 
 export const TASTING_MODE_LABELS: Record<TastingMode, string> = {
   full_blind: "Full blind tasting",
   course_reveal: "Course-by-course reveal",
   seen: "Seen tasting",
+  blind_match: "Blind match",
 };
 
 export const TASTING_MODE_DESCRIPTIONS: Record<TastingMode, string> = {
@@ -218,6 +219,8 @@ export const TASTING_MODE_DESCRIPTIONS: Record<TastingMode, string> = {
     "Each bottle is tasted blind, then revealed before moving to the next. Best for casual dinners and relaxed tasting discussions.",
   seen:
     "All bottles are visible from the start. Best for relaxed tastings where guests want to compare wines openly and rate them at their own pace.",
+  blind_match:
+    "The full wine list is visible from the start. Match each glass to a wine, score it, and jot notes — revise anytime until the host reveals the answers.",
 };
 
 export interface TastingSession {

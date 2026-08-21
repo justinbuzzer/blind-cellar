@@ -17,6 +17,7 @@ interface CurrentTastingCardProps {
   /** Opens the correct existing confirmation — the same one the detailed per-bottle/active-bottle controls already use. */
   onRevealClick: (wineId: string) => void;
   onEndSeenTastingClick: () => void;
+  onEndMatchTastingClick: () => void;
   /** Polite live-region text for a progress change; empty string announces nothing. */
   announcement: string;
 }
@@ -38,6 +39,7 @@ export function CurrentTastingCard({
   resultsHref,
   onRevealClick,
   onEndSeenTastingClick,
+  onEndMatchTastingClick,
   announcement,
 }: CurrentTastingCardProps) {
   return (
@@ -56,6 +58,7 @@ export function CurrentTastingCard({
           state={state}
           onRevealClick={onRevealClick}
           onEndSeenTastingClick={onEndSeenTastingClick}
+          onEndMatchTastingClick={onEndMatchTastingClick}
         />
       )}
 
@@ -105,10 +108,12 @@ function AwaitingResponses({
   state,
   onRevealClick,
   onEndSeenTastingClick,
+  onEndMatchTastingClick,
 }: {
   state: Extract<HostCurrentTastingState, { kind: "awaiting_responses" }>;
   onRevealClick: (wineId: string) => void;
   onEndSeenTastingClick: () => void;
+  onEndMatchTastingClick: () => void;
 }) {
   const progressKind = state.progress?.noun === "rated" ? "rating" : "guess";
 
@@ -141,6 +146,8 @@ function AwaitingResponses({
               onRevealClick(state.primaryAction.wineId);
             } else if (state.primaryAction?.type === "end_seen_tasting") {
               onEndSeenTastingClick();
+            } else if (state.primaryAction?.type === "end_match_tasting") {
+              onEndMatchTastingClick();
             }
           }}
           aria-label={

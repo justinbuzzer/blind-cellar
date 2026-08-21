@@ -27,6 +27,7 @@ function makeHostSessionResponse(
     guests: [],
     activeBottle: null,
     seenProgress: null,
+    matchProgress: null,
   };
 }
 

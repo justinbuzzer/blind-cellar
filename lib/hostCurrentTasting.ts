@@ -1,5 +1,5 @@
 import { bottleLabel } from "./codes";
-import { HostActiveBottleDTO, HostBottleDTO, HostSeenProgressDTO } from "./supabase/types";
+import { HostActiveBottleDTO, HostBottleDTO, HostMatchProgressDTO, HostSeenProgressDTO } from "./supabase/types";
 import { SessionStatus, TastingMode } from "@/types/tasting";
 
 /**
@@ -45,6 +45,7 @@ export type HostCurrentTastingActionType =
   | "reveal_results"
   | "view_results"
   | "end_seen_tasting"
+  | "end_match_tasting"
   | "view_final_leaderboard";
 
 export interface HostCurrentTastingAction {
@@ -131,6 +132,8 @@ export interface HostCurrentTastingInput {
   activeBottle: HostActiveBottleDTO | null;
   /** seen only. */
   seenProgress: HostSeenProgressDTO | null;
+  /** blind_match only. */
+  matchProgress: HostMatchProgressDTO | null;
 }
 
 function completeState(tastingMode: TastingMode): HostCurrentTastingState {
@@ -150,8 +153,16 @@ function completeState(tastingMode: TastingMode): HostCurrentTastingState {
 export function resolveHostCurrentTastingState(
   input: HostCurrentTastingInput
 ): HostCurrentTastingState {
-  const { tastingMode, status, wines, completedCount, eligibleCount, activeBottle, seenProgress } =
-    input;
+  const {
+    tastingMode,
+    status,
+    wines,
+    completedCount,
+    eligibleCount,
+    activeBottle,
+    seenProgress,
+    matchProgress,
+  } = input;
 
   // Every mode reaches `status === "revealed"` only once its own completion
   // rule has already fired (reveal_full_blind_bottle/reveal_bottle's
@@ -177,6 +188,18 @@ export function resolveHostCurrentTastingState(
       progress: { completedCount: submitted, eligibleCount: total, noun: "rated" },
       allComplete: total > 0 && submitted === total,
       primaryAction: { type: "end_seen_tasting", label: "End tasting and reveal results" },
+    };
+  }
+
+  if (tastingMode === "blind_match") {
+    if (wines.length === 0) return { kind: "no_eligible_bottles" };
+    const total = matchProgress?.totalPossibleRatings ?? 0;
+    const submitted = matchProgress?.ratingsSubmitted ?? 0;
+    return {
+      kind: "awaiting_responses",
+      progress: { completedCount: submitted, eligibleCount: total, noun: "rated" },
+      allComplete: total > 0 && submitted === total,
+      primaryAction: { type: "end_match_tasting", label: "End tasting and reveal results" },
     };
   }
 

@@ -398,7 +398,7 @@ export function computeBlindPalate(blindObservations: WineObservation[]): BlindP
   };
 }
 
-/** Blind palate is always Full blind + Course-by-course with a submitted guess, independent of the Seen scope toggle — filter the user's full observation set with this before calling computeBlindPalate. */
+/** Blind palate is every mode except Seen (Full blind, Course-by-course, Blind match) with a submitted guess, independent of the Seen scope toggle — filter the user's full observation set with this before calling computeBlindPalate. */
 export function extractBlindObservations(allObservations: WineObservation[]): WineObservation[] {
   return allObservations.filter((o) => o.tastingMode !== "seen" && o.scoredGuess !== null);
 }

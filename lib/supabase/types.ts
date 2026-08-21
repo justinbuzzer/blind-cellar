@@ -172,6 +172,14 @@ export interface HostSeenProgressDTO {
   totalPossibleRatings: number;
 }
 
+/** blind_match only: aggregate match/rating progress — never an individual participant's guess. Same shape as HostSeenProgressDTO (submitted = has a rating). */
+export interface HostMatchProgressDTO {
+  ratersCount: number;
+  totalParticipants: number;
+  ratingsSubmitted: number;
+  totalPossibleRatings: number;
+}
+
 /** Response from reveal_seen_ratings — see README "Seen Host Controls". */
 export interface RevealSeenRatingsResponse {
   wineId: string;
@@ -228,6 +236,8 @@ export interface HostSessionResponse {
   activeBottle: HostActiveBottleDTO | null;
   /** Non-null only when tastingMode is seen and status is collecting. */
   seenProgress: HostSeenProgressDTO | null;
+  /** Non-null only when tastingMode is blind_match and status is collecting. */
+  matchProgress: HostMatchProgressDTO | null;
 }
 
 export interface CreateSessionRpcResult {
@@ -840,6 +850,49 @@ export interface SeenTastingStateResponse {
   bottles: SeenBottleDTO[];
 }
 
+// --- blind_match-only shapes (see get_match_tasting_state / upsert_match_guess) ---
+
+/** One choice in the wine picker — see get_match_tasting_state. */
+export interface MatchWineListEntryDTO {
+  id: string;
+  producer: string;
+  wineCuvee: string;
+  vintage: string;
+  country: string;
+  region: string;
+  wineStyle: WineStyle;
+}
+
+/**
+ * One glass in a blind_match session, plus the caller's own current
+ * match/rating/note only — never another participant's, and never which
+ * wine this glass actually is (that stays secret until the host ends the
+ * tasting).
+ */
+export interface MatchBottleDTO {
+  id: string;
+  bottleNumber: number;
+  anonymousCode: string;
+  wineStyle: WineStyle;
+  contributorName: string | null;
+  myMatchedWineId: string | null;
+  myRating: number | null;
+  myNote: string | null;
+}
+
+export interface MatchTastingStateResponse {
+  session: {
+    publicId: string;
+    title: string;
+    tastingDate: string;
+    status: SessionStatus;
+    tastingMode: TastingMode;
+  };
+  guestName: string;
+  wineList: MatchWineListEntryDTO[];
+  bottles: MatchBottleDTO[];
+}
+
 // --- Personal Cellar (see README "Personal Cellar") ---
 
 /**
@@ -944,6 +997,7 @@ export const RPC_ERROR_MESSAGES: Record<string, string> = {
   not_fully_revealed: "The final leaderboard and tasting recap will be available once every bottle has been revealed.",
   rating_required: "A rating is required.",
   ratings_already_revealed: "This wine's group rating has been revealed, so ratings for it are now locked.",
+  matched_wine_not_in_session: "That wine doesn't belong to this tasting.",
 
   // Personal Cellar (see README "Personal Cellar") — cellar_bottle_unavailable
   // deliberately covers every "can't use this bottle" case (not found, not

@@ -122,8 +122,8 @@ describe("WINE_STYLES", () => {
 });
 
 describe("TASTING_MODES", () => {
-  it("lists full_blind, then course_reveal, then seen", () => {
-    expect(TASTING_MODES).toEqual(["full_blind", "course_reveal", "seen"]);
+  it("lists full_blind, then course_reveal, then seen, then blind_match", () => {
+    expect(TASTING_MODES).toEqual(["full_blind", "course_reveal", "seen", "blind_match"]);
   });
 
   it("defaults to full_blind as the first (host-preselected) option", () => {

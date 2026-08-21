@@ -26,6 +26,7 @@ import {
   formatGuessProgressTitle,
   formatGroupProgressUpdateAnnouncement,
   formatProgressAccessibleLabel,
+  RATING_PROGRESS_TITLE,
 } from "@/lib/hostProgress";
 import { resolveHostCurrentTastingState } from "@/lib/hostCurrentTasting";
 import { bottleLabel } from "@/lib/codes";
@@ -34,6 +35,7 @@ import {
   HostActiveBottleDTO,
   HostBottleDTO,
   HostGuestDTO,
+  HostMatchProgressDTO,
   HostSeenProgressDTO,
   HostSessionResponse,
   RevealFullBlindBottleResponse,
@@ -88,9 +90,13 @@ export function HostControlClient({
   const [seenProgress, setSeenProgress] = useState<HostSeenProgressDTO | null>(
     initialData.seenProgress
   );
+  const [matchProgress, setMatchProgress] = useState<HostMatchProgressDTO | null>(
+    initialData.matchProgress
+  );
   const [showStartConfirm, setShowStartConfirm] = useState(false);
   const [showRevealBottleConfirm, setShowRevealBottleConfirm] = useState(false);
   const [showEndSeenConfirm, setShowEndSeenConfirm] = useState(false);
+  const [showEndMatchConfirm, setShowEndMatchConfirm] = useState(false);
   const [confirmingSeenWineId, setConfirmingSeenWineId] = useState<string | null>(null);
   const [confirmingFullBlindWineId, setConfirmingFullBlindWineId] = useState<string | null>(null);
   const [revealingBottle, setRevealingBottle] = useState(false);
@@ -98,6 +104,7 @@ export function HostControlClient({
   const [releasingWineId, setReleasingWineId] = useState<string | null>(null);
   const [revealingSeenRatings, setRevealingSeenRatings] = useState(false);
   const [endingSeen, setEndingSeen] = useState(false);
+  const [endingMatch, setEndingMatch] = useState(false);
   const [starting, setStarting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [realtimeOk, setRealtimeOk] = useState(true);
@@ -161,8 +168,9 @@ export function HostControlClient({
             eligibleCount: guests.length,
             activeBottle,
             seenProgress,
+            matchProgress,
           }),
-    [status, tastingMode, wines, completedCount, guests.length, activeBottle, seenProgress]
+    [status, tastingMode, wines, completedCount, guests.length, activeBottle, seenProgress, matchProgress]
   );
 
   const [currentTastingAnnouncement, setCurrentTastingAnnouncement] = useState("");
@@ -253,6 +261,7 @@ export function HostControlClient({
       setWines(data.wines);
       setActiveBottle(data.activeBottle);
       setSeenProgress(data.seenProgress);
+      setMatchProgress(data.matchProgress);
     }
 
     const channel = supabase
@@ -343,6 +352,29 @@ export function HostControlClient({
       if (data && !cancelled) {
         setWines(data.wines);
         setSeenProgress(data.seenProgress);
+      }
+    }
+
+    const intervalId = setInterval(poll, SEEN_PROGRESS_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [tastingMode, status, fetchHostSession]);
+
+  // Polling fallback for blind_match's aggregate match/rating progress and
+  // per-bottle progress badges — same reasoning as the seen poll above:
+  // wine_guesses changes aren't realtime-broadcast, and matching/scoring a
+  // glass never touches the `wines` table itself.
+  useEffect(() => {
+    if (tastingMode !== "blind_match" || status !== "collecting") return;
+
+    let cancelled = false;
+    async function poll() {
+      const data = await fetchHostSession();
+      if (data && !cancelled) {
+        setWines(data.wines);
+        setMatchProgress(data.matchProgress);
       }
     }
 
@@ -574,6 +606,30 @@ export function HostControlClient({
     }
   }
 
+  async function handleEndMatchTasting() {
+    setEndingMatch(true);
+    setActionError(null);
+    try {
+      const response = await fetch("/api/host/end-match-tasting", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicId, hostToken }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setActionError(data.error ?? "Couldn't end the tasting.");
+        setEndingMatch(false);
+        return;
+      }
+      setStatus("revealed");
+      setShowEndMatchConfirm(false);
+      setEndingMatch(false);
+    } catch {
+      setActionError(friendlyRpcError(null));
+      setEndingMatch(false);
+    }
+  }
+
   const statusTone = status === "revealed" ? "success" : status === "collecting" ? "active" : "neutral";
 
   return (
@@ -649,6 +705,7 @@ export function HostControlClient({
           resultsHref={`/results/${publicId}`}
           onRevealClick={handleCurrentTastingRevealClick}
           onEndSeenTastingClick={() => setShowEndSeenConfirm(true)}
+          onEndMatchTastingClick={() => setShowEndMatchConfirm(true)}
           announcement={currentTastingAnnouncement}
         />
       )}
@@ -757,16 +814,23 @@ export function HostControlClient({
                           {WINE_STYLE_LABELS[wine.wineStyle]}
                         </span>
                         {(tastingMode === "full_blind" ||
+                          tastingMode === "blind_match" ||
                           (tastingMode === "course_reveal" && activeBottle?.id === wine.id)) && (
                           <BottleProgressControl
                             publicId={publicId}
                             hostToken={hostToken}
                             wineId={wine.id}
-                            responseKind="guess"
-                            title={formatGuessProgressTitle(wine.bottleNumber)}
-                            accessibleLabel={formatProgressAccessibleLabel("guess", {
-                              bottleNumber: wine.bottleNumber,
-                            })}
+                            responseKind={tastingMode === "blind_match" ? "rating" : "guess"}
+                            title={
+                              tastingMode === "blind_match"
+                                ? RATING_PROGRESS_TITLE
+                                : formatGuessProgressTitle(wine.bottleNumber)
+                            }
+                            accessibleLabel={
+                              tastingMode === "blind_match"
+                                ? `View rating progress for ${bottleLabel(wine.bottleNumber)}`
+                                : formatProgressAccessibleLabel("guess", { bottleNumber: wine.bottleNumber })
+                            }
                           />
                         )}
                       </li>
@@ -783,7 +847,7 @@ export function HostControlClient({
           <details className="rounded-sm border border-cellar-border">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-sm px-3 py-2 text-sm font-medium text-cellar-text hover:bg-cellar-bg">
               <span>Participants ({guests.length})</span>
-              {tastingMode !== "seen" && (
+              {tastingMode !== "seen" && tastingMode !== "blind_match" && (
                 <span className="text-cellar-muted">
                   {guests.filter((g) => g.completedAt).length} submitted
                 </span>
@@ -803,7 +867,7 @@ export function HostControlClient({
                         {guest.displayName}
                         {guest.id === session.hostGuestId ? " (you)" : ""}
                       </span>
-                      {tastingMode !== "seen" && (
+                      {tastingMode !== "seen" && tastingMode !== "blind_match" && (
                         <span
                           className={
                             guest.completedAt
@@ -954,6 +1018,22 @@ export function HostControlClient({
                 </div>
               </div>
             </>
+          )}
+
+          {tastingMode === "blind_match" && (
+            <div className="flex flex-col gap-3 border-t border-cellar-border pt-5">
+              <SectionEyebrow>Host actions</SectionEyebrow>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Link href={`/session/${publicId}/match`}>
+                  <Button variant="secondary" fullWidth>
+                    Match my bottles
+                  </Button>
+                </Link>
+                <Button fullWidth onClick={() => setShowEndMatchConfirm(true)}>
+                  End tasting and reveal results
+                </Button>
+              </div>
+            </div>
           )}
         </>
       )}
@@ -1113,6 +1193,31 @@ export function HostControlClient({
             </Button>
             <Button onClick={handleEndSeenTasting} disabled={endingSeen}>
               {endingSeen ? "Ending…" : "End tasting and reveal results"}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {showEndMatchConfirm && (
+        <Modal
+          title="End blind match tasting?"
+          onClose={() => !endingMatch && setShowEndMatchConfirm(false)}
+        >
+          <p>
+            This will lock every match, score, and note, and reveal which
+            glass is which wine to everyone. Participants will no longer be
+            able to change their answers.
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setShowEndMatchConfirm(false)}
+              disabled={endingMatch}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleEndMatchTasting} disabled={endingMatch}>
+              {endingMatch ? "Ending…" : "End tasting and reveal results"}
             </Button>
           </div>
         </Modal>

@@ -23,6 +23,12 @@ const TASTING_FORMATS = [
     description:
       "All bottles are visible from the start. Best for relaxed tastings where guests want to compare wines openly and rate them at their own pace.",
   },
+  {
+    number: "04",
+    title: "Blind match",
+    description:
+      "The full wine list is visible from the start, but which glass is which stays secret. Best for tastings that turn into a matching game.",
+  },
 ] as const;
 
 export default function HomePage() {
@@ -40,7 +46,7 @@ export default function HomePage() {
             </h2>
           </div>
 
-          <div className="mt-6 divide-y divide-landing-stone sm:mt-8 sm:grid sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+          <div className="mt-6 divide-y divide-landing-stone sm:mt-8 sm:grid sm:grid-cols-4 sm:divide-x sm:divide-y-0">
             {TASTING_FORMATS.map((format) => (
               <TastingModeCard
                 key={format.number}

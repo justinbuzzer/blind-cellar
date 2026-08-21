@@ -9,6 +9,7 @@ import {
   FinalLeaderboardResponse,
   GuestSessionStateResponse,
   HostGuessProgressDTO,
+  MatchTastingStateResponse,
   MyBottleDTO,
   RegisterBottleResponse,
   RegistrationStateResponse,
@@ -235,6 +236,35 @@ export async function upsertSeenRating(
   return supabase.rpc("upsert_seen_rating", {
     p_guest_token: guestToken,
     p_wine_id: wineId,
+    p_rating: rating,
+    p_tasting_note: note || null,
+  });
+}
+
+// --- blind_match only ---
+
+export async function getMatchTastingState(
+  supabase: SupabaseClient,
+  guestToken: string
+) {
+  const { data, error } = await supabase.rpc("get_match_tasting_state", {
+    p_guest_token: guestToken,
+  });
+  return { data: data as MatchTastingStateResponse | null, error };
+}
+
+export async function upsertMatchGuess(
+  supabase: SupabaseClient,
+  guestToken: string,
+  wineId: string,
+  matchedWineId: string | null,
+  rating: number | null,
+  note: string
+) {
+  return supabase.rpc("upsert_match_guess", {
+    p_guest_token: guestToken,
+    p_wine_id: wineId,
+    p_matched_wine_id: matchedWineId,
     p_rating: rating,
     p_tasting_note: note || null,
   });

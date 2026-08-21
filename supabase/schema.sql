@@ -663,6 +663,25 @@ begin
   end if;
 end $$;
 
+-- 18. Blind match tasting mode (see README "Tasting modes"): widen the
+-- tasting_mode check constraint to also allow 'blind_match'. Unlike Seen,
+-- this mode does need one new column: wine_guesses.matched_wine_id records
+-- which registered wine the guest picked for a given glass (a foreign-key
+-- selection from the session's own wine list, not a free-text guess) — the
+-- existing identification-guess columns (country_guess/producer_guess/...)
+-- are then populated FROM that matched wine's own fields (see
+-- upsert_match_guess below), so the existing scoring/leaderboard/report
+-- pipeline scores this mode with zero changes of its own: a correct match
+-- scores 100% because every field trivially agrees with the answer key, an
+-- incorrect match gets whatever partial credit its coincidental field
+-- overlap already earns. Nullable, untouched by every other mode, same
+-- additive-column discipline as ratings_revealed_at above.
+alter table tasting_sessions drop constraint if exists tasting_sessions_tasting_mode_check;
+alter table tasting_sessions add constraint tasting_sessions_tasting_mode_check
+  check (tasting_mode in ('full_blind', 'course_reveal', 'seen', 'blind_match'));
+
+alter table wine_guesses add column if not exists matched_wine_id uuid references wines(id);
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security (enabled everywhere; anon gets no default table grants,
 -- see the GRANT section below — RLS is defense-in-depth on top of that).
@@ -993,7 +1012,7 @@ begin
   if length(v_host_name) > 60 then
     raise exception 'display_name_too_long';
   end if;
-  if p_tasting_mode not in ('full_blind', 'course_reveal', 'seen') then
+  if p_tasting_mode not in ('full_blind', 'course_reveal', 'seen', 'blind_match') then
     raise exception 'invalid_tasting_mode';
   end if;
   -- Betting is a course_reveal-only sub-mode (see README "Tasting modes" —
@@ -1077,6 +1096,7 @@ declare
   v_active_wine wines%rowtype;
   v_active_bottle jsonb := null;
   v_seen_progress jsonb := null;
+  v_match_progress jsonb := null;
   v_wines jsonb;
   v_seen_eligible_count int;
   v_result jsonb;
@@ -1112,6 +1132,32 @@ begin
         * (select count(*) from guests where session_id = v_session.id)
       )
     ) into v_seen_progress;
+  end if;
+
+  -- blind_match only: same shape/computation as the seen progress above
+  -- (submitted = has a rating — matching mode's own upsert_match_guess,
+  -- which always sets rating alongside a match/note) — never which glass a
+  -- participant matched to which wine, which stays secret from the host too
+  -- until end_match_tasting's single reveal (see README "Tasting modes" —
+  -- "Blind match").
+  if v_session.tasting_mode = 'blind_match' and v_session.status = 'collecting' then
+    select jsonb_build_object(
+      'ratersCount', (
+        select count(distinct wg.guest_id) from wine_guesses wg
+        join wines w on w.id = wg.wine_id
+        where w.session_id = v_session.id and wg.rating is not null
+      ),
+      'totalParticipants', (select count(*) from guests where session_id = v_session.id),
+      'ratingsSubmitted', (
+        select count(*) from wine_guesses wg
+        join wines w on w.id = wg.wine_id
+        where w.session_id = v_session.id and wg.rating is not null
+      ),
+      'totalPossibleRatings', (
+        (select count(*) from wines where session_id = v_session.id)
+        * (select count(*) from guests where session_id = v_session.id)
+      )
+    ) into v_match_progress;
   end if;
 
   -- course_reveal only: the host's active-bottle card needs the current
@@ -1258,7 +1304,8 @@ begin
       from guests g where g.session_id = v_session.id
     ), '[]'::jsonb),
     'activeBottle', v_active_bottle,
-    'seenProgress', v_seen_progress
+    'seenProgress', v_seen_progress,
+    'matchProgress', v_match_progress
   ) into v_result;
 
   return v_result;
@@ -3013,7 +3060,7 @@ begin
   if v_session.host_token_hash <> encode(digest(p_host_token, 'sha256'), 'hex') then
     raise exception 'invalid_host_token';
   end if;
-  if v_session.tasting_mode not in ('full_blind', 'course_reveal') then
+  if v_session.tasting_mode not in ('full_blind', 'course_reveal', 'blind_match') then
     raise exception 'invalid_tasting_mode';
   end if;
 
@@ -3144,7 +3191,7 @@ begin
   end if;
   select * into v_session from tasting_sessions where id = v_guest.session_id;
 
-  if v_session.tasting_mode not in ('full_blind', 'course_reveal') then
+  if v_session.tasting_mode not in ('full_blind', 'course_reveal', 'blind_match') then
     raise exception 'invalid_tasting_mode';
   end if;
   if v_session.status <> 'revealed' then
@@ -3591,6 +3638,229 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Blind match tasting mode (see README "Tasting modes"): the full wine list
+-- is visible to every participant from the start, but which numbered glass
+-- is which wine is not — each participant matches every glass to a wine on
+-- the list, scores it, and notes it, freely revisable on one page until the
+-- host ends the tasting in a single action. Unlike Seen, this mode does have
+-- real correct/incorrect scoring: matching a glass to a wine copies that
+-- wine's own country/region/appellation/grape/producer/wine_cuvee/vintage
+-- into the guess row's *_guess columns (see upsert_match_guess below), so
+-- the existing scoreWineGuess/calculateTasterResults/calculateWineResults
+-- pipeline (identical to full_blind/course_reveal) scores this mode with no
+-- code of its own — a correct match scores 100% because every field
+-- trivially agrees with the answer key, a wrong one gets whatever partial
+-- credit its coincidental field overlap already earns. No own-bottle
+-- exclusion in this mode (see README) — the wine list is public to everyone
+-- including the contributor, so which glass their own wine ended up as is
+-- still genuinely unknown to them.
+-- ---------------------------------------------------------------------------
+
+-- Guest: fetch the full wine list (the picker's choices) plus every glass in
+-- the session with the caller's own current match/rating/note — never
+-- another participant's guess, and never which glass is actually which wine
+-- (that stays secret, even from the host, until end_match_tasting's single
+-- reveal). Rejects during 'registration', same as get_seen_tasting_state.
+create or replace function get_match_tasting_state(
+  p_guest_token text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_guest guests%rowtype;
+  v_session tasting_sessions%rowtype;
+  v_result jsonb;
+begin
+  select * into v_guest from guests where guest_token = p_guest_token;
+  if not found then
+    raise exception 'invalid_guest_token';
+  end if;
+  select * into v_session from tasting_sessions where id = v_guest.session_id;
+  if v_session.tasting_mode <> 'blind_match' then
+    raise exception 'invalid_tasting_mode';
+  end if;
+  if v_session.status = 'registration' then
+    raise exception 'registration_closed';
+  end if;
+
+  select jsonb_build_object(
+    'session', jsonb_build_object(
+      'publicId', v_session.public_id,
+      'title', v_session.title,
+      'tastingDate', v_session.tasting_date,
+      'status', v_session.status,
+      'tastingMode', v_session.tasting_mode
+    ),
+    'guestName', v_guest.display_name,
+    'wineList', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', w.id,
+        'producer', w.producer,
+        'wineCuvee', w.wine_cuvee,
+        'vintage', w.vintage,
+        'country', w.country,
+        'region', w.region,
+        'wineStyle', w.wine_style
+      ) order by w.producer, w.wine_cuvee)
+      from wines w where w.session_id = v_session.id
+    ), '[]'::jsonb),
+    'bottles', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', w.id,
+        'bottleNumber', w.bottle_number,
+        'anonymousCode', w.anonymous_code,
+        'wineStyle', w.wine_style,
+        'contributorName', (select display_name from guests where id = w.contributor_guest_id),
+        'myMatchedWineId', (select matched_wine_id from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
+        'myRating', (select rating from wine_guesses where wine_id = w.id and guest_id = v_guest.id),
+        'myNote', (select tasting_note from wine_guesses where wine_id = w.id and guest_id = v_guest.id)
+      ) order by w.tasting_order)
+      from wines w where w.session_id = v_session.id
+    ), '[]'::jsonb)
+  ) into v_result;
+
+  return v_result;
+end;
+$$;
+
+-- Guest: save (create or update) the caller's own match/rating/note for one
+-- glass. No own-bottle exclusion, no active-bottle gating, no lock — every
+-- glass is always editable at once, freely, until the host ends the tasting
+-- (see README "Tasting modes" — "Blind match"). When p_matched_wine_id is
+-- provided, copies that wine's own fields into this guess row's *_guess
+-- columns so the existing scoring pipeline works unmodified (see the
+-- section comment above); when null (the guest clears their pick), blanks
+-- those fields back out to the same empty-draft state an untouched
+-- full_blind/course_reveal guess already has.
+create or replace function upsert_match_guess(
+  p_guest_token text,
+  p_wine_id uuid,
+  p_matched_wine_id uuid,
+  p_rating int,
+  p_tasting_note text
+) returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_guest guests%rowtype;
+  v_session tasting_sessions%rowtype;
+  v_wine wines%rowtype;
+  v_matched wines%rowtype;
+begin
+  select * into v_guest from guests where guest_token = p_guest_token;
+  if not found then
+    raise exception 'invalid_guest_token';
+  end if;
+  select * into v_session from tasting_sessions where id = v_guest.session_id;
+  if v_session.tasting_mode <> 'blind_match' then
+    raise exception 'invalid_tasting_mode';
+  end if;
+  if v_session.status <> 'collecting' then
+    raise exception 'session_not_collecting';
+  end if;
+
+  select * into v_wine from wines where id = p_wine_id and session_id = v_session.id;
+  if not found then
+    raise exception 'wine_not_in_session';
+  end if;
+
+  if p_matched_wine_id is not null then
+    select * into v_matched from wines where id = p_matched_wine_id and session_id = v_session.id;
+    if not found then
+      raise exception 'matched_wine_not_in_session';
+    end if;
+
+    insert into wine_guesses (
+      session_id, wine_id, guest_id, matched_wine_id,
+      country_guess, region_guess, appellation_guess, grape_blend_mode, grape_style_guess,
+      grape_blend_components, producer_guess, wine_cuvee_guess, vintage_guess,
+      rating, tasting_note, submitted_at
+    )
+    values (
+      v_session.id, p_wine_id, v_guest.id, p_matched_wine_id,
+      v_matched.country, v_matched.region, v_matched.appellation, v_matched.grape_blend_mode, v_matched.grape_style,
+      v_matched.grape_blend_components, v_matched.producer, v_matched.wine_cuvee, v_matched.vintage,
+      p_rating, nullif(p_tasting_note, ''), now()
+    )
+    on conflict (guest_id, wine_id) do update set
+      matched_wine_id = excluded.matched_wine_id,
+      country_guess = excluded.country_guess,
+      region_guess = excluded.region_guess,
+      appellation_guess = excluded.appellation_guess,
+      grape_blend_mode = excluded.grape_blend_mode,
+      grape_style_guess = excluded.grape_style_guess,
+      grape_blend_components = excluded.grape_blend_components,
+      producer_guess = excluded.producer_guess,
+      wine_cuvee_guess = excluded.wine_cuvee_guess,
+      vintage_guess = excluded.vintage_guess,
+      rating = excluded.rating,
+      tasting_note = excluded.tasting_note,
+      submitted_at = now();
+  else
+    insert into wine_guesses (session_id, wine_id, guest_id, rating, tasting_note, submitted_at)
+    values (v_session.id, p_wine_id, v_guest.id, p_rating, nullif(p_tasting_note, ''), now())
+    on conflict (guest_id, wine_id) do update set
+      matched_wine_id = null,
+      country_guess = '',
+      region_guess = '',
+      appellation_guess = null,
+      grape_blend_mode = null,
+      grape_style_guess = '',
+      grape_blend_components = null,
+      producer_guess = '',
+      wine_cuvee_guess = '',
+      vintage_guess = '',
+      rating = excluded.rating,
+      tasting_note = excluded.tasting_note,
+      submitted_at = now();
+  end if;
+end;
+$$;
+
+-- Host: end a blind_match tasting — reveals every glass's true wine and
+-- locks every guess in one step, mirroring end_seen_tasting's strictness
+-- (not idempotent — a host can't re-trigger this once revealed). Unlike
+-- end_seen_tasting, this mode DOES feed the standard scoring/leaderboard
+-- pipeline (see the section comment above), which reads
+-- wines.revealed_at/guests.completed_at exactly like full_blind does — so
+-- this stamps both, in bulk, for the whole session at once, rather than
+-- requiring a per-bottle reveal or a per-guest self-submit.
+create or replace function end_match_tasting(
+  p_public_id uuid,
+  p_host_token text
+) returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_session tasting_sessions%rowtype;
+begin
+  select * into v_session from tasting_sessions where public_id = p_public_id for update;
+  if not found then
+    raise exception 'session_not_found';
+  end if;
+  if v_session.host_token_hash <> encode(digest(p_host_token, 'sha256'), 'hex') then
+    raise exception 'invalid_host_token';
+  end if;
+  if v_session.tasting_mode <> 'blind_match' then
+    raise exception 'invalid_tasting_mode';
+  end if;
+  if v_session.status <> 'collecting' then
+    raise exception 'session_not_collecting';
+  end if;
+
+  update wines set revealed_at = now() where session_id = v_session.id and revealed_at is null;
+  update guests set completed_at = now() where session_id = v_session.id and completed_at is null;
+  update tasting_sessions set status = 'revealed' where id = v_session.id;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Grants. anon and authenticated get EXECUTE on the RPC functions and SELECT
 -- on the views, plus narrow column-level SELECT on three "safe" base tables
 -- (needed so Realtime postgres_changes has something non-sensitive to
@@ -3668,6 +3938,10 @@ grant execute on function upsert_seen_rating(text, uuid, int, text) to anon, aut
 grant execute on function end_seen_tasting(uuid, text) to anon, authenticated;
 
 grant execute on function complete_guest_submission(text) to anon, authenticated;
+
+grant execute on function get_match_tasting_state(text) to anon, authenticated;
+grant execute on function upsert_match_guess(text, uuid, uuid, int, text) to anon, authenticated;
+grant execute on function end_match_tasting(uuid, text) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Realtime: broadcast changes on the three safe tables so host/participant
@@ -5010,10 +5284,17 @@ begin
   -- exclusion"): this bottle's own canonical contributor, if any, is never
   -- expected to submit for it — excluded from eligible/submitted/missing
   -- below for full_blind and course_reveal (never applies to seen, which is
-  -- out of scope for this feature).
+  -- out of scope for this feature). Also never applies to blind_match (see
+  -- README "Tasting modes" — "Blind match"): the wine list is public to
+  -- everyone including the contributor, so which glass it ended up as is
+  -- still a genuine unknown for them too.
   select count(*) into v_eligible_count from guests
     where session_id = v_session.id
-      and (v_wine.contributor_guest_id is null or id <> v_wine.contributor_guest_id);
+      and (
+        v_session.tasting_mode = 'blind_match'
+        or v_wine.contributor_guest_id is null
+        or id <> v_wine.contributor_guest_id
+      );
 
   if v_session.tasting_mode = 'full_blind' then
     v_response_kind := 'guess';
@@ -5049,6 +5330,23 @@ begin
         );
 
   elsif v_session.tasting_mode = 'seen' then
+    v_response_kind := 'rating';
+    select count(*) into v_submitted_count from wine_guesses
+      where wine_id = p_wine_id and rating is not null;
+    select coalesce(jsonb_agg(g.display_name order by g.created_at), '[]'::jsonb) into v_missing_names
+      from guests g
+      where g.session_id = v_session.id
+        and not exists (
+          select 1 from wine_guesses wg
+          where wg.wine_id = p_wine_id and wg.guest_id = g.id and wg.rating is not null
+        );
+
+  elsif v_session.tasting_mode = 'blind_match' then
+    -- Same shape as seen just above (submitted = has a rating), and same
+    -- no-own-bottle-exclusion policy as every other blind_match check (see
+    -- README "Tasting modes" — "Blind match") — a contributor is expected
+    -- to match/rate their own bottle's glass too, since the wine list alone
+    -- never reveals which glass it ended up as.
     v_response_kind := 'rating';
     select count(*) into v_submitted_count from wine_guesses
       where wine_id = p_wine_id and rating is not null;

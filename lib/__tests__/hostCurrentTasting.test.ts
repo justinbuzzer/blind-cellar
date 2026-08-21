@@ -3,7 +3,12 @@ import {
   HostCurrentTastingInput,
   resolveHostCurrentTastingState,
 } from "@/lib/hostCurrentTasting";
-import { HostActiveBottleDTO, HostBottleDTO, HostSeenProgressDTO } from "@/lib/supabase/types";
+import {
+  HostActiveBottleDTO,
+  HostBottleDTO,
+  HostMatchProgressDTO,
+  HostSeenProgressDTO,
+} from "@/lib/supabase/types";
 
 function makeWine(overrides: Partial<HostBottleDTO> = {}): HostBottleDTO {
   return {
@@ -41,6 +46,16 @@ function makeSeenProgress(overrides: Partial<HostSeenProgressDTO> = {}): HostSee
   };
 }
 
+function makeMatchProgress(overrides: Partial<HostMatchProgressDTO> = {}): HostMatchProgressDTO {
+  return {
+    ratersCount: 4,
+    totalParticipants: 5,
+    ratingsSubmitted: 12,
+    totalPossibleRatings: 20,
+    ...overrides,
+  };
+}
+
 function makeInput(overrides: Partial<HostCurrentTastingInput> = {}): HostCurrentTastingInput {
   return {
     tastingMode: "full_blind",
@@ -50,6 +65,7 @@ function makeInput(overrides: Partial<HostCurrentTastingInput> = {}): HostCurren
     eligibleCount: 5,
     activeBottle: null,
     seenProgress: null,
+    matchProgress: null,
     ...overrides,
   };
 }
@@ -233,6 +249,44 @@ describe("resolveHostCurrentTastingState — seen", () => {
   });
 });
 
+describe("resolveHostCurrentTastingState — blind_match", () => {
+  it("uses session-wide match/rating progress with no fabricated current bottle", () => {
+    const state = resolveHostCurrentTastingState(
+      makeInput({
+        tastingMode: "blind_match",
+        wines: [makeWine()],
+        matchProgress: makeMatchProgress({ ratingsSubmitted: 12, totalPossibleRatings: 20 }),
+      })
+    );
+    if (state.kind !== "awaiting_responses") throw new Error("unreachable");
+    expect(state.currentBottle).toBeUndefined();
+    expect(state.progress).toEqual({ completedCount: 12, eligibleCount: 20, noun: "rated" });
+    expect(state.primaryAction).toEqual({
+      type: "end_match_tasting",
+      label: "End tasting and reveal results",
+    });
+  });
+
+  it("marks allComplete once every possible match/rating has been submitted", () => {
+    const state = resolveHostCurrentTastingState(
+      makeInput({
+        tastingMode: "blind_match",
+        wines: [makeWine()],
+        matchProgress: makeMatchProgress({ ratingsSubmitted: 20, totalPossibleRatings: 20 }),
+      })
+    );
+    if (state.kind !== "awaiting_responses") throw new Error("unreachable");
+    expect(state.allComplete).toBe(true);
+  });
+
+  it("resolves no_eligible_bottles when zero bottles are registered", () => {
+    const state = resolveHostCurrentTastingState(
+      makeInput({ tastingMode: "blind_match", wines: [], matchProgress: makeMatchProgress() })
+    );
+    expect(state).toEqual({ kind: "no_eligible_bottles" });
+  });
+});
+
 describe("resolveHostCurrentTastingState — completion", () => {
   it("resolves complete with a final-leaderboard primary and recap secondary for full_blind/course_reveal", () => {
     const state = resolveHostCurrentTastingState(makeInput({ status: "revealed" }));
@@ -248,6 +302,17 @@ describe("resolveHostCurrentTastingState — completion", () => {
     expect(state).toEqual({
       kind: "complete",
       primaryAction: { type: "view_results", label: "View shared results" },
+    });
+  });
+
+  it("resolves complete with a final-leaderboard primary and recap secondary for blind_match too (it does have real scoring)", () => {
+    const state = resolveHostCurrentTastingState(
+      makeInput({ tastingMode: "blind_match", status: "revealed" })
+    );
+    expect(state).toEqual({
+      kind: "complete",
+      primaryAction: { type: "view_final_leaderboard", label: "View final leaderboard" },
+      secondaryAction: { type: "view_tasting_recap", label: "View tasting recap" },
     });
   });
 });

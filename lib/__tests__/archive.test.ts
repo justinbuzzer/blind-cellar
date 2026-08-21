@@ -109,6 +109,7 @@ function hostSession(overrides: Partial<HostSessionResponse["session"]> = {}): H
     ],
     activeBottle: null,
     seenProgress: null,
+    matchProgress: null,
   };
 }
 
